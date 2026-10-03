@@ -39,6 +39,7 @@ export interface StoredRuntimeSession {
   readonly runtime: string;
   readonly nativeSessionId?: string;
   readonly processId?: number;
+  readonly instructionDigest?: string;
   readonly workspaceId: string;
   readonly status: string;
 }
@@ -145,6 +146,7 @@ const migrations = [
       CREATE TABLE workspace_leases (workspace_id TEXT PRIMARY KEY REFERENCES workspaces(workspace_id),
         run_id TEXT NOT NULL, instance_id TEXT NOT NULL, acquired_at INTEGER NOT NULL, renewed_at INTEGER NOT NULL);`,
   },
+  { version: 4, sql: "ALTER TABLE runtime_sessions ADD COLUMN instruction_digest TEXT;" },
 ] as const;
 
 export class LocalStateStore {
@@ -269,15 +271,16 @@ export class LocalStateStore {
 
   upsertRuntimeSession(session: StoredRuntimeSession): void {
     this.#db.prepare(`
-      INSERT INTO runtime_sessions (run_id, runtime, native_session_id, process_id, workspace_id, status, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO runtime_sessions (run_id, runtime, native_session_id, process_id, workspace_id, status, updated_at, instruction_digest)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(run_id) DO UPDATE SET
         runtime = excluded.runtime,
         native_session_id = excluded.native_session_id,
         process_id = excluded.process_id,
         workspace_id = excluded.workspace_id,
         status = excluded.status,
-        updated_at = excluded.updated_at
+        updated_at = excluded.updated_at,
+        instruction_digest = excluded.instruction_digest
     `).run(
       session.runId,
       session.runtime,
@@ -286,6 +289,7 @@ export class LocalStateStore {
       session.workspaceId,
       session.status,
       Date.now(),
+      session.instructionDigest ?? null,
     );
   }
 
@@ -341,6 +345,23 @@ export class LocalStateStore {
     const result = this.#db.prepare("DELETE FROM workspace_leases WHERE workspace_id = ? AND run_id = ? AND instance_id = ?")
       .run(id, runId, instanceId);
     if (result.changes !== 1) throw new Error("LEASE_OWNER_MISMATCH");
+  }
+
+  getRuntimeSession(runId: string): StoredRuntimeSession | undefined {
+    const row = this.#db.prepare("SELECT * FROM runtime_sessions WHERE run_id = ?").get(runId) as Record<string, unknown> | undefined;
+    if (!row) return undefined;
+    return { runId: String(row.run_id), runtime: String(row.runtime), workspaceId: String(row.workspace_id), status: String(row.status),
+      ...(row.native_session_id === null ? {} : { nativeSessionId: String(row.native_session_id) }),
+      ...(row.process_id === null ? {} : { processId: Number(row.process_id) }),
+      ...(row.instruction_digest === null ? {} : { instructionDigest: String(row.instruction_digest) }) };
+  }
+
+  reserveRuntimeSession(session: StoredRuntimeSession): boolean {
+    const result = this.#db.prepare(`INSERT OR IGNORE INTO runtime_sessions
+      (run_id, runtime, native_session_id, process_id, workspace_id, status, updated_at, instruction_digest)
+      VALUES (?, ?, NULL, NULL, ?, 'starting', ?, ?)`)
+      .run(session.runId, session.runtime, session.workspaceId, Date.now(), session.instructionDigest ?? null);
+    return result.changes === 1;
   }
 
   #migrate(): void {

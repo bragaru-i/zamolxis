@@ -18,5 +18,6 @@ export type NormalizedRunEventDto =
   | EventBase<"tool.completed", { tool: string; summary: string; success: boolean }>
   | EventBase<"files.changed", { paths: readonly string[] }>
   | EventBase<"run.waiting", { reason: string }>
+  | EventBase<"run.stopped", { reason: string }>
   | EventBase<"run.completed", { summary?: string }>
   | EventBase<"run.failed", { code?: string; message: string }>;

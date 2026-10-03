@@ -273,6 +273,9 @@ importers:
       '@zamolxis/domain':
         specifier: workspace:*
         version: link:../domain
+      '@zamolxis/runtime-core':
+        specifier: workspace:*
+        version: link:../runtime-core
     devDependencies:
       '@biomejs/biome':
         specifier: ^2.2.4

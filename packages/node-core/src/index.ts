@@ -5,3 +5,4 @@ export * from "./repository/repository-registry";
 export * from "./workspace/workspace-manager";
 export * from "./capabilities/repository-discovery";
 export * from "./capabilities/capability-trace";
+export * from "./runtime/runtime-manager";
