@@ -283,3 +283,19 @@ Implement only what is required for reliable repo-first behavior:
 - enforce security/policy after capability resolution
 
 Do not build a marketplace, organization-wide skill registry, skill recommendation engine or elaborate skill language in v0.1.
+
+## Implemented adapter conventions
+
+The v0.1 Node adapter inspects a verified managed Workspace before planning:
+
+- `AGENTS.md` and `CLAUDE.md` at the root or in subdirectories; each source retains its directory scope.
+- `.github/copilot-instructions.md` with repository scope.
+- `.agents/skills/<name>/SKILL.md`, `.codex/skills/<name>/SKILL.md`, and `.claude/skills/<name>/SKILL.md`.
+
+A skill's simple `name` frontmatter identifies its semantic capability; absent that field, its directory name does. Other named skills pass through unchanged. Repository prose is retained as untrusted context, never executed during discovery. Duplicate semantic capabilities fail explicitly. Source count and content size are bounded; symlink sources are rejected. Additional conventions require adapters rather than an expanded workflow language.
+
+`RepositoryDiscovery.prepareRole` exposes the same snapshot to Supervisor, Builder and Verifier. `planWithRepositoryContext` discovers and checks freshness before invoking a planner. Nested instructions apply only to their recorded directory scope; consumers must retain that scope when preparing runtime instructions. Conventions remain source-backed text rather than inferred policy.
+
+Context identity includes Git HEAD and a digest of discovered source paths and contents, so uncommitted additions, deletions and edits also invalidate context. `RepositoryDiscovery.select` checks freshness before resolving an action. Trusted caller policy separately supplies granted capabilities, proof acceptance and integration permission. Publishing capabilities (`create-pr`, `deploy`, `integrate`, `merge`) require all gates. Repository text cannot change these policy inputs.
+
+Every selection emits an allowed/denied trace with role, capability, origin, source, SHA and snapshot digest. `capabilityTraceRecorder(store)` routes this metadata through the durable local outbox without uploading instruction/skill contents. Runtime execution and the complete event-ingestion loop remain subsequent integration work.

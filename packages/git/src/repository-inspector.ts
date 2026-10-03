@@ -46,3 +46,7 @@ export function inspectRepository(path: string): RepositorySnapshot {
   return { path: topLevel, gitCommonDir, headSha, ...(branch === "HEAD" ? {} : { branch }),
     ...(remote === undefined ? {} : { remoteIdentity: remote }), dirty: status.length > 0, status };
 }
+
+export function repositoryFiles(path: string): string[] {
+  return [...new Set(git(path, ["ls-files", "--cached", "--others", "--exclude-standard", "-z"]).split("\0").filter(Boolean))].sort();
+}
