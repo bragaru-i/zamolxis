@@ -11,6 +11,9 @@ importers:
       '@biomejs/biome':
         specifier: ^2.2.4
         version: 2.5.15
+      convex:
+        specifier: ^1.28.0
+        version: 1.46.0(react@19.3.0)
       turbo:
         specifier: ^2.5.8
         version: 2.11.7
