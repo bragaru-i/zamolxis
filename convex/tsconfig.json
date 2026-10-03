@@ -3,6 +3,6 @@
   "compilerOptions": {
     "types": ["node"]
   },
-  "include": ["**/*.ts", "../tests/**/*.ts"],
+  "include": ["**/*.ts", "../tests/**/*.ts", "../scripts/live-smoke.mts"],
   "exclude": ["node_modules"]
 }

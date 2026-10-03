@@ -16,4 +16,8 @@ Run `pnpm --filter @zamolxis/node fake-loop` once to register the verified repos
 
 A minimal reactive debug consumer is available as `pnpm --filter @zamolxis/node watch-session`. It requires CONVEX_URL, ZAMOLXIS_USER_TOKEN and ZAMOLXIS_SESSION_ID and subscribes to Session counters and Run activity/status. This is a developer smoke viewer, not a completed product UI or authentication flow.
 
-No live deployment or enrollment validation has been performed yet. Local acceptance, generated types and production build do not substitute for that proof. Runtime completion also does not grant integration trust: the independent verification gate remains separate.
+Live verification on 2026-10-04 deployed these functions to a loopback Convex backend and ran the actual Node entry path with signed user/device tokens. Session and Run completed, three ordered events persisted, the reactive viewer updated, and canonical HEAD/status stayed unchanged. Invalid signatures, wrong audiences, incorrect ownership and revoked devices were rejected.
+
+`scripts/live-smoke.mts` reproduces this development-only test using a temporary RSA OIDC issuer. Run it from the repository root with `apps/node/node_modules/.bin/tsx scripts/live-smoke.mts` while the local Convex development backend is running. The fixture reads the local admin key only to configure its two development authentication environment variables and restore previous values, or disable the temporary provider with empty values if they were unset; API calls use real signed user/device tokens. Signing keys stay in memory, tokens are short lived, and the issuer and Git fixture are removed afterward.
+
+Production enrollment and a persistent identity provider remain separate work. Runtime completion does not grant integration trust: the independent verification gate remains separate.
