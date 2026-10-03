@@ -440,3 +440,41 @@ export const reconcile = mutation({
     return { runId: run._id, reconciliationRequired: args.observation === "missing" };
   },
 });
+
+export const recoverCompletedCommand = mutation({
+  args: { ...deviceArgs, commandId: v.id("commands"), instanceId: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const device = await requireNode(ctx, args.workstationId);
+    if (device.nodeInstanceId !== args.instanceId) fail("FORBIDDEN");
+    const command = await load(ctx, "commands", args.commandId);
+    if (command.workstationId !== device._id) fail("FORBIDDEN");
+    if (command.status === "completed") return null;
+    if (!["claimed", "acknowledged"].includes(command.status)) fail("RECONCILIATION_REQUIRED");
+    if (command.type === "workspace.provision") {
+      const id = ctx.db.normalizeId("workspaces", command.targetId);
+      if (!id) fail("INVALID_ARGUMENT");
+      const workspace = await load(ctx, "workspaces", id);
+      if (
+        workspace.workstationId !== device._id ||
+        workspace.status !== "ready" ||
+        !workspace.localPath ||
+        !workspace.baseSha
+      )
+        fail("RECONCILIATION_REQUIRED");
+    } else if (command.type === "runtime.start") {
+      const id = ctx.db.normalizeId("agentRuns", command.targetId);
+      if (!id) fail("INVALID_ARGUMENT");
+      const run = await nodeRun(ctx, device._id, id);
+      if (
+        !run.nativeSessionId ||
+        !["running", "waiting", "completed", "failed", "stopped"].includes(run.status) ||
+        (["completed", "failed", "stopped"].includes(run.status) && run.completedAt === undefined)
+      )
+        fail("RECONCILIATION_REQUIRED");
+    } else fail("RECONCILIATION_REQUIRED");
+    // Recovery acknowledges an already observed outcome. It does not re-claim or execute work.
+    await ctx.db.patch("commands", command._id, { status: "completed", completedAt: Date.now() });
+    return null;
+  },
+});

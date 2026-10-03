@@ -1,0 +1,299 @@
+import { rmSync, mkdirSync, symlinkSync, existsSync } from "node:fs";
+import { join } from "node:path";
+import { convexTest } from "convex-test";
+import { afterEach, expect, it } from "vitest";
+import { api } from "../convex/_generated/api";
+import schema from "../convex/schema";
+import { runFakeLoopOnce } from "../apps/node/src/fake-loop";
+import {
+  ConvexControlPlaneTransport,
+  parseExecutionCommand,
+} from "../apps/node/src/convex-control-plane";
+import { ControlPlaneDriver } from "../packages/node-core/src/control-plane/driver";
+import type { ControlPlaneTransport } from "../packages/node-core/src/control-plane/driver";
+import { LocalStateStore } from "../packages/node-core/src/persistence/local-state";
+import { RepositoryRegistry } from "../packages/node-core/src/repository/repository-registry";
+import { RuntimeManager } from "../packages/node-core/src/runtime/runtime-manager";
+import { WorkspaceManager } from "../packages/node-core/src/workspace/workspace-manager";
+import { repositoryFixture } from "../packages/node-core/src/testing/git-fixture";
+import { FakeRuntime } from "../packages/runtime-core/src/fake/fake-runtime";
+import { RuntimeRegistry } from "../packages/runtime-core/src/runtime-registry";
+import type { StartRunInput } from "../packages/runtime-core/src/agent-runtime";
+import type { WorkstationId } from "../packages/contracts/src/shared/ids";
+import { git } from "../packages/git/src/repository-inspector";
+const modules = {
+  "./_generated/server.ts": () => import("../convex/_generated/server"),
+  "./profiles.ts": () => import("../convex/profiles"),
+  "./workstations.ts": () => import("../convex/workstations"),
+  "./repositories.ts": () => import("../convex/repositories"),
+  "./sessions.ts": () => import("../convex/sessions"),
+  "./tasks.ts": () => import("../convex/tasks"),
+  "./workspaces.ts": () => import("../convex/workspaces"),
+  "./runs.ts": () => import("../convex/runs"),
+  "./events.ts": () => import("../convex/events"),
+  "./node.ts": () => import("../convex/node"),
+};
+const cleanup: Array<() => void> = [];
+afterEach(() => {
+  for (const fn of cleanup.splice(0).reverse()) fn();
+});
+class CountingRuntime extends FakeRuntime {
+  starts = 0;
+  override async start(input: StartRunInput) {
+    this.starts++;
+    return super.start(input);
+  }
+}
+async function fixture() {
+  const repo = repositoryFixture();
+  cleanup.push(() => rmSync(repo.root, { recursive: true, force: true }));
+  const originalHead = git(repo.path, ["rev-parse", "HEAD"]);
+  const originalStatus = git(repo.path, ["status", "--porcelain"]);
+  const t = convexTest(schema, modules);
+  const user = t.withIdentity({ subject: "alice", tokenIdentifier: "alice" });
+  await user.mutation(api.profiles.ensure, {});
+  const workstationId = await user.mutation(api.workstations.register, {
+    name: "Test",
+    nodeAuthSubject: "device",
+  });
+  const node = t.withIdentity({
+    subject: "device",
+    tokenIdentifier: "device",
+    ownerSubject: "alice",
+  });
+  const repositoryId = await user.mutation(api.repositories.create, { name: "Repository" });
+  const repositoryLocationId = await node.mutation(api.node.registerLocation, {
+    workstationId,
+    repositoryId,
+    canonicalPath: repo.path,
+    gitCommonDir: join(repo.path, ".git"),
+    headSha: originalHead,
+  });
+  const workSessionId = await user.mutation(api.sessions.create, {
+    title: "First loop",
+    goal: "Execute fake",
+    repositoryIds: [repositoryId],
+  });
+  const taskId = await user.mutation(api.tasks.create, {
+    workSessionId,
+    title: "Fake task",
+    description: "Deterministic execution",
+    kind: "implementation",
+    priority: 1,
+    runtimePolicy: { mode: "forced", runtime: "fake" },
+  });
+  const runtime = new CountingRuntime();
+  const boot = async (adapter: CountingRuntime = runtime) => {
+    const store = new LocalStateStore(join(repo.root, "state.sqlite"));
+    cleanup.push(() => store.close());
+    const identity = store.getOrCreateIdentity();
+    await node.mutation(api.node.heartbeat, {
+      workstationId,
+      instanceId: identity.instanceId,
+      runtimeCapabilities: [{ runtime: "fake", capabilities: ["start"] }],
+    });
+    const repositories = new RepositoryRegistry(store, () => true);
+    repositories.register({
+      repositoryLocationId,
+      repositoryId,
+      workstationId,
+      path: repo.path,
+      expectedIdentity: { remoteUrl: "https://example.invalid/team/repo" },
+    });
+    const workspaces = new WorkspaceManager(
+      store,
+      repositories,
+      join(repo.root, "managed"),
+      identity.instanceId,
+      () => true,
+    );
+    const runtimes = new RuntimeRegistry();
+    runtimes.register(adapter);
+    const manager = new RuntimeManager(
+      store,
+      workspaces,
+      runtimes,
+      workstationId as unknown as WorkstationId,
+      () => true,
+    );
+    const transport = new ConvexControlPlaneTransport(node, workstationId, identity.instanceId);
+    const driver = (port: ControlPlaneTransport = transport) =>
+      new ControlPlaneDriver(store, workspaces, runtimes, manager, port, workstationId);
+    return { store, workspaces, runtimes, manager, transport, driver };
+  };
+  return {
+    ...repo,
+    t,
+    user,
+    node,
+    workstationId,
+    repositoryId,
+    repositoryLocationId,
+    workSessionId,
+    taskId,
+    runtime,
+    boot,
+    originalHead,
+    originalStatus,
+  };
+}
+it("executes Session→Task→real isolated worktree→Fake Runtime→Convex events and persisted snapshot", async () => {
+  const f = await fixture();
+  const node = await f.boot();
+  const workspaceId = await f.user.mutation(api.workspaces.request, {
+    taskId: f.taskId,
+    repositoryLocationId: f.repositoryLocationId,
+    baseRef: "main",
+  });
+  await node.driver().tick();
+  const workspace = node.workspaces.inspect(workspaceId);
+  expect(workspace.path).not.toBe(f.path);
+  expect(workspace.branch).toBe(`zam/${f.repositoryId}/${workspaceId}`);
+  const runId = await f.user.mutation(api.runs.request, {
+    taskId: f.taskId,
+    workspaceId,
+    runtime: "fake",
+  });
+  await node.driver().tick();
+  await node.driver().tick();
+  expect(f.runtime.starts).toBe(1);
+  const run = await f.user.query(api.runs.get, { runId });
+  expect(run.status).toBe("completed");
+  expect(run.finalHeadSha).toBe(f.originalHead);
+  const session = await f.user.query(api.sessions.get, { workSessionId: f.workSessionId });
+  expect(session.status).toBe("completed");
+  expect(session.activeRunCount).toBe(0);
+  expect(session.completedTaskCount).toBe(1);
+  const events = await f.user.query(api.events.listByRun, {
+    runId,
+    paginationOpts: { numItems: 100, cursor: null },
+  });
+  expect(events.page).toHaveLength(3);
+  expect(node.store.listPendingEvents()).toEqual([]);
+  expect(node.store.getWorkspaceLease(workspaceId)).toBeUndefined();
+  expect(git(f.path, ["rev-parse", "HEAD"])).toBe(f.originalHead);
+  expect(git(f.path, ["status", "--porcelain"])).toBe(f.originalStatus);
+});
+it("recovers persisted delivery after a lost event acknowledgement and a new Node instance without starting twice", async () => {
+  const f = await fixture();
+  const first = await f.boot();
+  const workspaceId = await f.user.mutation(api.workspaces.request, {
+    taskId: f.taskId,
+    repositoryLocationId: f.repositoryLocationId,
+    baseRef: "main",
+  });
+  await first.driver().tick();
+  const runId = await f.user.mutation(api.runs.request, {
+    taskId: f.taskId,
+    workspaceId,
+    runtime: "fake",
+  });
+  let failed = false;
+  const disconnected: ControlPlaneTransport = {
+    listPending: () => first.transport.listPending(),
+    claim: (id) => first.transport.claim(id),
+    acknowledge: (id) => first.transport.acknowledge(id),
+    reconcile: (id) => first.transport.reconcile(id),
+    deliver: async (delivery) => {
+      await first.transport.deliver(delivery);
+      if (delivery.kind === "run.events" && !failed) {
+        failed = true;
+        throw new Error("ACK_LOST");
+      }
+    },
+  };
+  await expect(first.driver(disconnected).tick()).rejects.toThrow("ACK_LOST");
+  expect(first.store.listPendingEvents()).toHaveLength(3);
+  cleanup.pop()?.();
+  const replacementRuntime = new CountingRuntime();
+  const restarted = await f.boot(replacementRuntime);
+  await restarted.driver().tick();
+  expect(replacementRuntime.starts).toBe(0);
+  expect(f.runtime.starts).toBe(1);
+  expect(restarted.store.listPendingEvents()).toEqual([]);
+  expect((await f.user.query(api.runs.get, { runId })).status).toBe("completed");
+  expect(
+    (
+      await f.user.query(api.events.listByRun, {
+        runId,
+        paginationOpts: { numItems: 100, cursor: null },
+      })
+    ).page,
+  ).toHaveLength(3);
+  expect(
+    (await f.user.query(api.sessions.get, { workSessionId: f.workSessionId })).completedTaskCount,
+  ).toBe(1);
+});
+it("preserves an interrupted launch for reconciliation instead of replaying it", async () => {
+  const f = await fixture();
+  const n = await f.boot();
+  const workspaceId = await f.user.mutation(api.workspaces.request, {
+    taskId: f.taskId,
+    repositoryLocationId: f.repositoryLocationId,
+    baseRef: "main",
+  });
+  await n.driver().tick();
+  const runId = await f.user.mutation(api.runs.request, {
+    taskId: f.taskId,
+    workspaceId,
+    runtime: "fake",
+  });
+  const command = (await n.transport.listPending())[0];
+  if (!command) throw new Error("Missing command");
+  n.store.recordCommand(command);
+  await n.transport.claim(command.commandId);
+  await n.transport.acknowledge(command.commandId);
+  n.store.markCommandRunning(command.commandId);
+  cleanup.pop()?.();
+  const restarted = await f.boot();
+  await expect(restarted.driver().tick()).rejects.toThrow("RECONCILIATION_REQUIRED");
+  expect(f.runtime.starts).toBe(0);
+  expect((await f.user.query(api.runs.get, { runId })).status).toBe("lost");
+  expect(
+    (await f.user.query(api.workspaces.listBySession, { workSessionId: f.workSessionId }))[0]
+      ?.ownerRunId,
+  ).toBe(runId);
+});
+it("rejects wrong targets and arbitrary cloud commands before any local operation", () => {
+  expect(() =>
+    parseExecutionCommand({
+      _id: "command",
+      workstationId: "node",
+      idempotencyKey: "key",
+      type: "shell.execute",
+      payload: { cwd: "/canonical", command: "delete" },
+    }),
+  ).toThrow("UNSUPPORTED");
+  expect(() =>
+    parseExecutionCommand({
+      _id: "command",
+      workstationId: "node",
+      idempotencyKey: "key",
+      type: "runtime.start",
+      targetType: "run",
+      targetId: "other",
+      payload: { runId: "run", workspaceId: "workspace", runtime: "fake", instruction: "Task" },
+    }),
+  ).toThrow("TARGET");
+});
+
+it("rejects dangling state-file symlinks before opening the database or contacting Convex", async () => {
+  const repo = repositoryFixture();
+  cleanup.push(() => rmSync(repo.root, { recursive: true, force: true }));
+  const managedRoot = join(repo.root, "managed");
+  mkdirSync(managedRoot);
+  const target = join(repo.root, "outside.sqlite");
+  symlinkSync(target, join(managedRoot, "node-state.sqlite"));
+  await expect(
+    runFakeLoopOnce({
+      deploymentUrl: "https://example.invalid",
+      deviceToken: "unused",
+      workstationId: "node",
+      repositoryId: "repo",
+      repositoryPath: repo.path,
+      repositoryRemote: "https://example.invalid/team/repo",
+      managedRoot,
+    }),
+  ).rejects.toThrow("UNSAFE_STATE_FILE");
+  expect(existsSync(target)).toBe(false);
+});
