@@ -1,37 +1,267 @@
-# Trust, Verification & Execution Trace Architecture
+# Trust, Independent Verification & Execution Trace Architecture
 
-## Principle
+## Purpose
 
-Zamolxis does not trust an agent because the agent says it is done.
+Zamolxis is autonomous by default.
 
-Every meaningful result moves through a verifiable pipeline:
+The normal path is not "agent works, human approves." It is:
 
 ```text
-Intent
-  ↓
-Plan
-  ↓
-Task
-  ↓
-Agent Run
-  ↓
-Execution Trace
-  ↓
-Verification Run(s)
-  ↓
-Evidence Bundle
-  ↓
-Trust Gate
-  ├─ rejected
-  ├─ human verification required
-  └─ eligible for integration
+User Intent
+    ↓
+Acceptance Contract
+    ↓
+Implementation Run
+    ↓
+Candidate
+    ↓
+Independent Verification
+    ↓
+Trust Decision
+    ↓
+Policy allows?
+    ├─ yes → integrate automatically
+    └─ no  → repair / escalate
 ```
 
-Trust is an outcome of evidence and policy, not an LLM confidence score.
+A human may inspect, reproduce, challenge or override within policy, but routine successful work should not require human participation.
+
+Trust is not based on an agent saying it finished, nor on tests written by the same agent merely passing.
+
+## Threat model: self-confirming agents
+
+An implementation agent can accidentally or deliberately produce weak evidence:
+
+- write a test that matches its implementation instead of the user intent
+- omit important edge cases
+- mock away the behavior being changed
+- change tests to make a regression appear valid
+- claim a command passed without independently reproducing it
+- satisfy unit tests while the real UI is visually broken
+- satisfy DOM assertions while interaction is unusable
+- produce screenshots that do not exercise the requested behavior
+
+Therefore builder-produced tests, logs and artifacts are **candidate evidence**, not sufficient proof by themselves.
+
+## Separation of roles
+
+```text
+                    Acceptance Contract
+                           │
+               ┌───────────┴───────────┐
+               ▼                       ▼
+       Implementation Run        Verification Plan
+               │                       │
+               ▼                       │
+            Candidate ─────────────────┤
+                                       ▼
+                             Independent Verifier
+                                       │
+                   ┌───────────────────┼───────────────────┐
+                   ▼                   ▼                   ▼
+              deterministic        black-box          visual/product
+                 checks             probes             observation
+                   │                   │                   │
+                   └───────────────────┼───────────────────┘
+                                       ▼
+                                 Evidence Bundle
+                                       │
+                                       ▼
+                                   Trust Gate
+                                       │
+                                 auto integrate
+```
+
+Implementation and verification are different Runs with different responsibilities.
+
+For higher-risk work, policy may require a different model/runtime/context for verification.
+
+## Acceptance Contract
+
+Verification begins from user intent, not from the implementation.
+
+Before or during planning Zamolxis derives an explicit Acceptance Contract:
+
+```ts
+AcceptanceContract {
+  goal
+  observableOutcomes[]
+  constraints[]
+  forbiddenRegressions[]
+  references[]
+  riskHints[]
+}
+```
+
+Example:
+
+```text
+Goal:
+Mobile sidebar behaves as a drawer.
+
+Observable outcomes:
+- desktop navigation remains visible at desktop breakpoint
+- phone navigation is hidden until invoked
+- tapping menu opens a usable drawer
+- selecting destination closes/navigates correctly
+- content does not horizontally overflow
+
+Constraints:
+- use Zamolxis Design System
+- keyboard interaction remains functional
+```
+
+The Builder may clarify the contract, but cannot silently weaken required outcomes after implementation starts.
+
+## Verification independence
+
+Verifier input should prefer:
+
+1. Acceptance Contract
+2. Candidate Workspace/SHA
+3. repository/product verification capabilities
+4. relevant design/API references
+5. risk policy
+
+It should not depend on the Builder's explanation of how the feature was implemented.
+
+For appropriate tasks, some verifier probes may be generated independently or hidden from the Builder so implementation cannot simply optimize for known checks.
+
+## Verification modalities
+
+Verification is multimodal. Required modalities depend on the task.
+
+### Deterministic / structural
+
+Examples:
+
+- typecheck
+- lint
+- architecture boundaries
+- build
+- dependency policy
+- schema compatibility
+- static/security analysis
+
+These are useful constraints but do not prove product correctness.
+
+### Test execution
+
+Repository tests are re-run independently.
+
+Builder-written tests are treated as one signal. The Verifier may inspect test quality, generate additional tests, execute existing unaffected suites and challenge assumptions.
+
+### Black-box behavioral verification
+
+Prefer externally observable behavior where possible:
+
+- browser interaction
+- HTTP/API calls
+- CLI behavior
+- database state transitions
+- file outputs
+- process behavior
+- reconnect/retry/recovery flows
+
+The Verifier should exercise the product without relying on implementation internals when practical.
+
+### Visual verification
+
+Visual work requires visual evidence.
+
+For frontend changes the Verifier can:
+
+1. launch the actual application
+2. navigate to the affected surface
+3. render required viewports/states
+4. interact with the UI
+5. capture screenshots/recording
+6. compare against reference/design/previous state when available
+7. use vision reasoning to detect layout, clipping, overlap, hierarchy, responsive and obvious visual regressions
+
+A green component/unit test cannot substitute for required visual verification.
+
+### Interaction verification
+
+UI verification should test interaction, not screenshots alone:
+
+- click/tap
+- keyboard/focus
+- scrolling
+- opening/closing overlays
+- form entry
+- loading/error/empty states
+- navigation
+- responsive transitions
+
+### Adversarial / mutation verification
+
+When justified, the Verifier may challenge the evidence:
+
+- generate edge cases independently
+- fuzz inputs
+- mutate implementation or conditions
+- disable/remove a critical condition and verify tests detect it
+- alter response/error timing
+- test degraded network/service behavior
+
+Mutation is evidence about **test sensitivity**: if an important defect can be introduced while the verification remains green, confidence in that verification is reduced.
+
+## Verification Plan
+
+```ts
+VerificationPlan {
+  contractId
+  requiredModalities[]
+  requiredChecks[]
+  independentProbes[]
+  optionalChecks[]
+  escalationPolicy
+}
+```
+
+The plan is assembled from:
+
+- repository baseline
+- Acceptance Contract
+- task class
+- changed surface
+- risk/blast radius
+- product feature map
+- available verifier capabilities
+
+Implementation agents may add checks. They cannot remove policy-required verification.
+
+## Product / Feature Map
+
+Repositories can expose a versioned Product Verification Map describing how to exercise real product surfaces.
+
+```text
+Feature: session-composer
+route: /sessions/:id
+setup: seeded session
+states:
+  - idle
+  - submitting
+  - running
+  - stopped
+viewports:
+  - 1440x900
+  - 390x844
+critical interactions:
+  - type prompt
+  - submit
+  - stop
+  - reopen session
+```
+
+This is not a fixed test implementation. It teaches independent verifiers how to reach and observe the product.
+
+Feature Maps/verification skills require their own evals and versioning; a broken verifier is itself a trust risk.
 
 ## Execution Trace
 
-Every Agent Run produces an append-only normalized trace independent of the native runtime.
+Every Run produces an append-only normalized Trace independent of native runtime.
 
 ```ts
 ExecutionTrace {
@@ -39,236 +269,102 @@ ExecutionTrace {
   sessionId
   taskId
   runId
+  role: "builder" | "verifier" | "repairer"
   workspaceId
   runtime
   startedAt
   finishedAt?
-
-  steps: TraceStep[]
-  artifacts: TraceArtifact[]
-  verificationRuns: VerificationRun[]
+  steps[]
+  artifacts[]
 }
 ```
 
-A TraceStep is semantic, not merely raw stdout:
-
-```ts
-TraceStep =
-  | ThoughtSummary
-  | FileRead
-  | FileChanged
-  | CommandStarted
-  | CommandCompleted
-  | TestRun
-  | BuildRun
-  | BrowserAction
-  | GitOperation
-  | AgentMessage
-  | ApprovalRequested
-  | VerificationResult
-```
-
-Private chain-of-thought is never required or stored. ThoughtSummary means a short externally useful explanation such as "Inspecting authentication middleware", not hidden reasoning.
-
-Native runtime logs may be retained separately for diagnostics. Product UI consumes normalized TraceSteps.
-
-## Trace provenance
-
-Every step records provenance where applicable:
-
-```ts
-TraceStep {
-  stepId
-  sequence
-  type
-  timestamp
-  source: {
-    workstationId
-    runtime
-    nativeSessionId?
-    processId?
-  }
-
-  commandId?
-  exitCode?
-  workspaceSnapshotId?
-  artifactIds?
-}
-```
-
-This allows Zamolxis to answer:
-
-- who/what performed this action?
-- in which Workspace?
-- against which repository state?
-- what was the result?
-- what evidence was produced?
-
-## Verification Plan
-
-A Task receives a Verification Plan before it is eligible for completion.
-
-```ts
-VerificationPlan {
-  required: VerificationCheck[]
-  optional: VerificationCheck[]
-  humanChecks: HumanVerificationCheck[]
-}
-```
-
-Checks are declarative.
-
-Examples:
+Semantic TraceSteps include:
 
 ```text
-typecheck
-lint
-unit-tests
-integration-tests
-build
-architecture-boundaries
-git-diff-policy
-browser-smoke
-visual-proof
-api-contract
-custom-command
-human-product-check
+FileRead
+FileChanged
+CommandStarted
+CommandCompleted
+TestRun
+BuildRun
+BrowserAction
+VisualCapture
+ApiProbe
+MutationProbe
+GitOperation
+AgentMessage
+VerificationFinding
+TrustDecision
 ```
 
-The agent cannot silently redefine required checks after implementation.
+Private chain-of-thought is never stored or required. A short externally useful activity summary is allowed.
 
-## Verification Run
+## Provenance
 
-Verification is separate from Agent Run.
+Evidence and Trace steps record provenance:
+
+- Run and role
+- Workstation
+- Runtime/model where available
+- native session
+- Workspace
+- Git SHA/snapshot
+- verifier/check version
+- command/probe
+- timestamp
+- artifacts/result
+
+This lets a human answer: **what actually happened, where, against which code, and who/what observed it?**
+
+## Evidence quality
+
+Evidence has origin and modality, not merely pass/fail.
 
 ```ts
-VerificationRun {
-  verificationRunId
-  taskId
-  workspaceId
-  checkId
-  executor
-  startedAt
-  finishedAt
-  status
-  command?
-  exitCode?
-  evidenceArtifactIds[]
+Evidence {
+  origin: "builder" | "independent-verifier" | "deterministic-system" | "human"
+  modality: "static" | "test" | "behavioral" | "visual" | "interaction" | "mutation" | "security"
+  subjectSha
+  result
+  artifacts[]
+  reproducible
 }
 ```
 
-An implementation agent saying "tests pass" is not evidence. Zamolxis runs or observes the verification and records the result.
+Trust Policy may require independent evidence for specific modalities.
 
-## Evidence Bundle
+Builder evidence can support a decision but cannot masquerade as independent verification.
 
-Evidence is first-class and inspectable.
+## Evidence freshness
 
-```ts
-EvidenceBundle {
-  bundleId
-  taskId
-  runId
-  workspaceSnapshot
-  changedFiles
-  diffSummary
-  checks
-  artifacts
-  humanVerification
-}
-```
-
-Possible artifacts:
-
-- command output
-- test report
-- coverage report
-- build output
-- screenshots
-- browser recording
-- generated preview URL
-- API response
-- diff/patch
-- Git commit
-- structured runtime log
-
-Artifacts should be reproducible where practical and linked to the exact Workspace snapshot/SHA they verified.
-
-## Reproducibility
-
-A verification check may expose a Re-run action.
+Evidence belongs to an exact Workspace/Git state.
 
 ```text
-Verification Check
-  command: pnpm test
-  cwd: workspace root
-  env profile: test
-  workspace SHA: abc123
-  result: PASS
+verified SHA: abc123
+agent changes code
+current SHA: def456
 
-  [View output] [Re-run]
+abc123 evidence != proof for def456
 ```
 
-Re-running creates a new VerificationRun. Historical evidence is never overwritten.
-
-## Manual verification
-
-Some product behavior cannot or should not initially be auto-approved.
-
-Human verification is modeled explicitly:
-
-```ts
-HumanVerification {
-  checkId
-  instructions
-  expectedResult
-  evidenceToInspect[]
-  decision?: "passed" | "rejected"
-  decidedBy?
-  decidedAt?
-  note?
-}
-```
-
-Example:
-
-```text
-MANUAL CHECK
-
-Authentication redirect
-
-Expected:
-After signing in, user returns to /reports.
-
-Evidence:
-[Open preview]
-[View browser recording]
-[View changed files]
-
-Steps:
-1. Open preview
-2. Sign in with test account
-3. Confirm /reports loads
-
-[Reject] [Request changes] [Mark verified]
-```
-
-A human decision is itself appended to the Trace.
+Relevant verification must be rerun.
 
 ## Trust Gate
 
-Trust Gate is deterministic policy evaluation.
+The Trust Gate is deterministic application/domain policy.
 
 Inputs:
 
 ```text
-Task risk
-Repository policy
+Acceptance Contract
+Task/Risk classification
+Candidate SHA
 Verification Plan
-Verification Runs
-Evidence Bundle
-Human verification decisions
-Workspace/Git state
-Runtime history (optional contextual signal)
+Independent Verification Runs
+Evidence modalities + provenance
+Repository policy
+Historical outcomes
 ```
 
 Output:
@@ -276,238 +372,237 @@ Output:
 ```ts
 TrustDecision {
   decision:
-    | "verification_failed"
-    | "human_required"
+    | "repair_required"
+    | "insufficient_evidence"
+    | "human_escalation"
     | "eligible_for_integration"
-    | "blocked"
 
   reasons[]
-  satisfiedChecks[]
-  missingChecks[]
+  satisfiedRequirements[]
+  missingRequirements[]
 }
 ```
 
-No opaque LLM-generated trust score controls integration.
+No opaque LLM confidence score grants integration.
 
-## Risk / autonomy
+The LLM/vision verifier may produce findings. Policy decides whether the required independent evidence exists.
 
-Policy may classify work by blast radius:
+## Autonomous repair loop
 
-```text
-LOW
-copy, styling, isolated refactor
-
-MEDIUM
-application behavior, API changes, dependencies
-
-HIGH
-auth, permissions, billing, migrations,
-deployment, infrastructure, destructive operations
-```
-
-Higher risk requires stronger evidence and/or human verification.
-
-Historical success may increase permitted autonomy for a task class, but it never overrides explicit repository safety policy.
-
-## Trust feedback loop
-
-Human rejection should improve the system.
+Failure normally goes back to agents, not immediately to the human.
 
 ```text
-Human rejection
-      ↓
-Failure classification
-      ├─ missing test
-      ├─ missing verifier
-      ├─ architecture rule
-      ├─ skill/instruction gap
-      └─ runtime failure
-      ↓
-Guard / verifier / skill / eval
-      ↓
-Future Verification Plans
-```
-
-Repeated review comments should become executable constraints where possible.
-
-# UI
-
-Trust is visible, not hidden in Settings.
-
-## Conversation
-
-Agent/Task cards show compact verification state:
-
-```text
-API implementation                       Done
-
-7 files changed
-Verification  5/6 passed
-
-✓ Typecheck
-✓ Unit tests
-✓ Integration tests
-✓ Architecture
-✓ Build
-○ Manual product check
-
-[Review evidence]
-```
-
-"Done" for execution and "Verified" are visually distinct states.
-
-## Session Inspector
-
-Add a first-class **Verification** tab alongside Tasks, Agents, Activity, Changes and Context.
-
-```text
-INSPECTOR
-
-Tasks
-Agents
-Activity
-Changes
-Verification  ←
-Context
-```
-
-## Verification panel
-
-```text
-VERIFICATION
-
-Task: Authentication redirect
-
-AUTOMATED
-✓ Typecheck                    2.1s
-✓ Lint                         1.4s
-✓ Unit tests                  18.2s
-✓ Build                       31.7s
-✓ Architecture boundaries     0.4s
-
-PRODUCT
-○ Redirect behavior       Needs you
-
-EVIDENCE
-  4 files changed
-  workspace @ abc123
-  browser recording
-  test output
-
-[Re-run checks]
-[Open workspace evidence]
-
+Builder
+   ↓
+Verifier
+   ↓ fail
+Repair Run
+   ↓
+Verifier (fresh)
+   ↓
 Trust Gate
-Human verification required
 ```
 
-## Trace viewer
+The loop has budgets/limits to avoid infinite autonomous repair.
 
-Activity evolves into an inspectable execution trace:
+Human escalation happens when policy requires it or autonomous attempts cannot establish sufficient evidence.
+
+## Autonomy
+
+Human approval is **not** the default Trust Gate requirement.
+
+Typical successful path:
+
+```text
+Implement
+   ↓
+independently verify
+   ↓
+sufficient evidence
+   ↓
+auto integrate
+```
+
+Human involvement may be mandatory for explicitly high-risk classes or triggered by uncertainty/failure.
+
+Historical performance can influence permitted autonomy, but cannot override hard repository safety rules.
+
+## Human inspection and challenge
+
+Even when Zamolxis auto-integrates, proof remains inspectable.
+
+The user can:
+
+- inspect Acceptance Contract
+- inspect Builder Trace
+- inspect independent Verifier Trace
+- view exact commands/results
+- view screenshots/recordings
+- inspect black-box probes
+- inspect mutation results
+- inspect diff and Workspace SHA
+- re-run verification
+- mark "I disagree"
+- create a repair/revert task
+
+Human review is therefore **available**, not structurally required for routine work.
+
+## UI
+
+Trust is visible throughout the product without dominating Conversation.
+
+### Conversation card
+
+```text
+Authentication redirect                         Integrated
+
+✓ Implemented
+✓ Independently verified
+✓ Behavioral verification
+✓ Visual verification
+✓ Policy checks
+
+Integrated automatically
+
+[ Inspect proof ]
+```
+
+Do not label a Task simply "Verified" because Builder tests passed.
+
+### Verification / Proof inspector
+
+```text
+PROOF
+
+Acceptance
+✓ Redirect returns user to /reports
+✓ Mobile layout remains usable
+
+Independent verification
+✓ Browser behavior             12 probes
+✓ Visual                       2 viewports
+✓ Interaction                  keyboard + pointer
+✓ Repository tests             84 passed
+✓ Build
+✓ Architecture
+
+Evidence quality
+Independent modalities: 5
+Builder-only evidence:   2
+
+Candidate
+SHA abc123
+
+Trust decision
+ELIGIBLE FOR INTEGRATION
+Policy: low-risk application change
+
+[ View trace ] [ Re-run verification ] [ I disagree ]
+```
+
+### Visual proof
+
+```text
+VISUAL VERIFICATION
+
+Desktop 1440×900
+[ screenshot ]
+
+Mobile 390×844
+[ screenshot ]
+
+Interaction
+[ recording ]
+
+Verifier findings
+✓ no horizontal overflow
+✓ drawer opens/closes
+✓ content hierarchy intact
+✓ keyboard interaction works
+```
+
+### Trace viewer
+
+Builder and Verifier traces are visibly separate:
 
 ```text
 TRACE
 
-14:02  Agent started
-14:03  Read auth middleware
-14:05  Changed callback handler
-14:07  pnpm test
-       ✓ 84 passed
-14:08  pnpm build
-       ✓ exit 0
-14:09  Browser verification
-       artifact: recording
-14:10  Waiting for manual verification
+Builder
+14:02 changed callback handler
+14:05 added tests
+14:07 tests passed
+
+Independent verifier
+14:09 launched application
+14:10 exercised login
+14:11 tested expired session
+14:12 mobile visual capture
+14:13 mutation probe
+14:14 verification passed
+
+Trust Gate
+14:14 eligible for automatic integration
+
+Integration
+14:15 integrated
 ```
 
-Each row can reveal provenance, command output, files/artifacts and workspace snapshot.
+### Mobile
 
-## Mobile
-
-Conversation remains primary.
-
-Task card shows a compact trust state. Tapping it opens a full-height Verification Sheet:
+Conversation remains primary. Proof opens as a full-height Sheet with compact acceptance, verification modalities, visual artifacts, Trust Decision and actions:
 
 ```text
-Authentication redirect
-
-Verification 5/6
-
-✓ Tests
-✓ Build
-✓ Lint
-○ Manual check
-
-[Open preview]
-
-Expected:
-Sign in returns to /reports.
-
-[Reject] [Verified]
+[Re-run] [I disagree]
 ```
 
-A user must be able to manually verify and approve/reject from a phone.
+Manual verification is available when the user wants it, but routine success does not wait for it.
 
-## State model
+## Backend boundaries
 
-Task completion is not enough for integration.
+### Supervisor
 
-```text
-IMPLEMENTING
-   ↓
-IMPLEMENTED
-   ↓
-VERIFYING
-   ├── FAILED ──→ needs work
-   ↓
-AWAITING_HUMAN
-   ↓
-VERIFIED
-   ↓
-INTEGRATION_READY
-   ↓
-INTEGRATED
-```
+- plans work and Acceptance Contract
+- may request verification
+- cannot grant trust to its own result
+- cannot waive hard policy
 
-Not every Task needs every state, but integration always requires a satisfied Trust Gate.
+### Builder Runtime
 
-## Backend responsibilities
+- implements Candidate
+- can produce candidate evidence
+- cannot classify its evidence as independent
 
-Control Plane:
-- stores Verification Plans
-- stores normalized Trace metadata
-- stores Evidence metadata
-- evaluates Trust Policy
-- records human decisions
-- controls integration eligibility
+### Verifier
 
-Zamolxis Node:
-- captures local execution provenance
-- executes deterministic verification commands
-- produces artifacts
-- snapshots Workspace/Git state
-- uploads normalized events/evidence metadata
-- never grants itself integration permission
+- receives Acceptance Contract + Candidate
+- independently probes product/result
+- produces findings/evidence
+- does not grant integration permission
 
-Runtime Adapter:
-- translates native runtime activity into normalized TraceSteps
-- exposes native session provenance
-- does not decide trust
+### Trust Engine
 
-Supervisor:
-- may propose Verification Plan additions
-- may request human verification
-- cannot waive mandatory policy checks
+- deterministic policy
+- evaluates evidence provenance/modalities/freshness/risk
+- grants or denies integration eligibility
 
-## Invariants
+### Integration workflow
 
-1. Agent completion does not imply verification.
-2. Evidence belongs to a specific Workspace state/SHA.
-3. Re-runs append; they do not rewrite history.
-4. Human decisions are auditable Trace events.
-5. Runtime adapters cannot grant trust.
-6. Supervisor cannot bypass mandatory checks.
-7. Integration checks Trust Gate server-side.
-8. Manual verification is a first-class workflow, not a comment.
-9. Private chain-of-thought is never a trust requirement.
-10. UI always distinguishes running, implemented, verifying, needs-human, verified and integrated.
+- checks Trust Decision server-side
+- verifies decision applies to exact Candidate SHA
+- refuses stale/bypassed decisions
+
+## Required invariants
+
+1. Implementation completion != verification.
+2. Builder-produced tests are not sufficient independent proof.
+3. Visual acceptance requires visual/product observation when policy says it matters.
+4. Behavioral acceptance prefers black-box observation.
+5. Evidence records provenance and exact Candidate SHA.
+6. Changed Candidate invalidates affected evidence.
+7. Verifier and Builder roles are distinguishable in data and UI.
+8. Trust Gate is deterministic and server-side.
+9. Routine successful work can auto-integrate without human action.
+10. Human can inspect and re-run proof after or before integration.
+11. Private chain-of-thought is never required.
+12. Failed independent verification normally enters autonomous repair before human escalation.
