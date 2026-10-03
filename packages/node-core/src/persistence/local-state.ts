@@ -56,6 +56,23 @@ export interface RepositoryLocation {
   readonly dirty: boolean;
 }
 
+export interface ManagedWorkspace extends StoredWorkspace {
+  readonly repositoryLocationId: string;
+  readonly baseRef: string;
+  readonly baseSha: string;
+  readonly branch: string;
+  readonly kind: "worktree" | "integration";
+  readonly statusPorcelain?: string;
+  readonly commitsSinceBase?: readonly string[];
+}
+export interface WorkspaceLease {
+  readonly workspaceId: string;
+  readonly runId: string;
+  readonly nodeInstanceId: string;
+  readonly acquiredAt: number;
+  readonly renewedAt: number;
+}
+
 const migrations = [
   {
     version: 1,
@@ -121,6 +138,12 @@ const migrations = [
       metadata_json TEXT NOT NULL,
       UNIQUE(repository_id, workstation_id)
     );`,
+  },
+  {
+    version: 3,
+    sql: `CREATE TABLE workspace_details (workspace_id TEXT PRIMARY KEY REFERENCES workspaces(workspace_id), metadata_json TEXT NOT NULL);
+      CREATE TABLE workspace_leases (workspace_id TEXT PRIMARY KEY REFERENCES workspaces(workspace_id),
+        run_id TEXT NOT NULL, instance_id TEXT NOT NULL, acquired_at INTEGER NOT NULL, renewed_at INTEGER NOT NULL);`,
   },
 ] as const;
 
@@ -277,6 +300,47 @@ export class LocalStateStore {
     const row = this.#db.prepare("SELECT metadata_json FROM repository_locations WHERE location_id = ?")
       .get(id) as { metadata_json: string } | undefined;
     return row ? JSON.parse(row.metadata_json) as RepositoryLocation : undefined;
+  }
+
+  saveManagedWorkspace(workspace: ManagedWorkspace): void {
+    this.#db.exec("BEGIN IMMEDIATE");
+    try {
+      this.upsertWorkspace(workspace);
+      this.#db.prepare(`INSERT INTO workspace_details VALUES (?, ?)
+        ON CONFLICT(workspace_id) DO UPDATE SET metadata_json = excluded.metadata_json`)
+        .run(workspace.workspaceId, JSON.stringify(workspace));
+      this.#db.exec("COMMIT");
+    } catch (error) { this.#db.exec("ROLLBACK"); throw error; }
+  }
+
+  getManagedWorkspace(id: string): ManagedWorkspace | undefined {
+    const row = this.#db.prepare("SELECT metadata_json FROM workspace_details WHERE workspace_id = ?")
+      .get(id) as { metadata_json: string } | undefined;
+    return row ? JSON.parse(row.metadata_json) as ManagedWorkspace : undefined;
+  }
+
+  listManagedWorkspaces(): ManagedWorkspace[] {
+    return (this.#db.prepare("SELECT metadata_json FROM workspace_details ORDER BY workspace_id").all() as Array<{ metadata_json: string }>).map((row) => JSON.parse(row.metadata_json) as ManagedWorkspace);
+  }
+
+  getWorkspaceLease(id: string): WorkspaceLease | undefined {
+    const row = this.#db.prepare("SELECT * FROM workspace_leases WHERE workspace_id = ?").get(id) as { workspace_id: string; run_id: string; instance_id: string; acquired_at: number; renewed_at: number } | undefined;
+    return row ? { workspaceId: row.workspace_id, runId: row.run_id, nodeInstanceId: row.instance_id,
+      acquiredAt: row.acquired_at, renewedAt: row.renewed_at } : undefined;
+  }
+
+  acquireWorkspaceLease(id: string, runId: string, instanceId: string): void {
+    const now = Date.now();
+    const result = this.#db.prepare(`INSERT INTO workspace_leases VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(workspace_id) DO UPDATE SET renewed_at = excluded.renewed_at
+      WHERE run_id = excluded.run_id AND instance_id = excluded.instance_id`).run(id, runId, instanceId, now, now);
+    if (result.changes !== 1) throw new Error("WORKSPACE_BUSY");
+  }
+
+  releaseWorkspaceLease(id: string, runId: string, instanceId: string): void {
+    const result = this.#db.prepare("DELETE FROM workspace_leases WHERE workspace_id = ? AND run_id = ? AND instance_id = ?")
+      .run(id, runId, instanceId);
+    if (result.changes !== 1) throw new Error("LEASE_OWNER_MISMATCH");
   }
 
   #migrate(): void {
