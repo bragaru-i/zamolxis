@@ -1,1 +1,1 @@
-export function ProductMark() { return <span aria-label="Zamolxis">Z</span>; }
+export function ProductMark() { return <span title="Zamolxis">Z</span>; }
