@@ -1,0 +1,80 @@
+import type { AgentRunId, WorkspaceId, WorkstationId } from "@zamolxis/contracts";
+import { describe, expect, it } from "vitest";
+import { RuntimeRegistry } from "../runtime-registry";
+import { FakeRuntime } from "./fake-runtime";
+const input = {
+  runId: "run" as AgentRunId,
+  workstationId: "node" as WorkstationId,
+  instruction: "Task",
+  workspace: {
+    workspaceId: "workspace" as WorkspaceId,
+    cwd: "/workspace",
+    branch: "task",
+    headSha: "abc",
+  },
+};
+
+describe("deterministic fake runtime", () => {
+  it("waits for a message and then emits activity and failure", async () => {
+    const runtime = new FakeRuntime([
+      { type: "waiting", reason: "Need input" },
+      { type: "activity", label: "Continuing" },
+      { type: "failure", message: "Simulated failure" },
+    ]);
+    const waiting = await runtime.start(input);
+    expect(waiting.state).toBe("waiting");
+    await runtime.send({ nativeSessionId: waiting.nativeSessionId, message: "Continue" });
+    expect((await runtime.inspect(waiting.nativeSessionId)).state).toBe("failed");
+    const types = [];
+    for await (const event of runtime.subscribe({ nativeSessionId: waiting.nativeSessionId }))
+      types.push(event.type);
+    expect(types).toEqual([
+      "run.started",
+      "run.waiting",
+      "run.activity",
+      "run.activity",
+      "run.failed",
+    ]);
+    await expect(
+      runtime.send({ nativeSessionId: waiting.nativeSessionId, message: "Again" }),
+    ).rejects.toThrow("TERMINAL");
+  });
+  it("resumes within the same workspace and stops idempotently", async () => {
+    const runtime = new FakeRuntime([
+      { type: "waiting", reason: "First" },
+      { type: "waiting", reason: "Second" },
+    ]);
+    const started = await runtime.start(input);
+    await runtime.resume({ ...input, nativeSessionId: started.nativeSessionId });
+    await runtime.stop({ nativeSessionId: started.nativeSessionId });
+    const stopped = await runtime.inspect(started.nativeSessionId);
+    await runtime.stop({ nativeSessionId: started.nativeSessionId });
+    expect(await runtime.inspect(started.nativeSessionId)).toEqual(stopped);
+    expect(stopped.state).toBe("stopped");
+  });
+  it("returns defensive snapshots and deterministic event timestamps", async () => {
+    const runtime = new FakeRuntime(undefined, () => 42);
+    const session = await runtime.start(input);
+    Object.assign(session.workspace, { cwd: "/tampered" });
+    expect((await runtime.inspect(session.nativeSessionId)).workspace.cwd).toBe("/workspace");
+    for await (const event of runtime.subscribe({ nativeSessionId: session.nativeSessionId }))
+      expect(event.occurredAt).toBe(42);
+  });
+});
+it("selects eligible adapters without vendor branches and respects forced policy", () => {
+  const registry = new RuntimeRegistry();
+  registry.register(new FakeRuntime());
+  expect(
+    registry.resolve({ mode: "preferred", runtime: "missing" }, ["canStart"], () => true).id,
+  ).toBe("fake");
+  expect(() =>
+    registry.resolve({ mode: "forced", runtime: "missing" }, ["canStart"], () => true),
+  ).toThrow("UNAVAILABLE");
+  expect(() => registry.resolve({ mode: "auto" }, ["supportsSubagents"], () => true)).toThrow(
+    "UNAVAILABLE",
+  );
+  expect(() => registry.resolve({ mode: "auto" }, ["canStart"], () => false)).toThrow(
+    "UNAVAILABLE",
+  );
+  expect(() => registry.register(new FakeRuntime())).toThrow("ALREADY_REGISTERED");
+});

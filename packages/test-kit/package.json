@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./runtime-contract": "./src/runtime-contract.ts"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -14,7 +15,8 @@
   },
   "dependencies": {
     "@zamolxis/contracts": "workspace:*",
-    "@zamolxis/domain": "workspace:*"
+    "@zamolxis/domain": "workspace:*",
+    "@zamolxis/runtime-core": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.9.2",

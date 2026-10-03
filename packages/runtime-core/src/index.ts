@@ -1,1 +1,3 @@
-export interface AgentRuntime { readonly id: string }
+export * from "./agent-runtime";
+export * from "./runtime-registry";
+export * from "./fake/fake-runtime";
