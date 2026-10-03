@@ -1,0 +1,13 @@
+node_modules
+.pnpm-store
+.turbo
+dist
+coverage
+.next
+.env
+.env.local
+.env.*.local
+!.env.example
+convex/_generated
+.DS_Store
+*.log

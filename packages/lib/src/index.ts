@@ -1,0 +1,1 @@
+export const ZAMOLXIS_LIBRARY_VERSION = 1;
