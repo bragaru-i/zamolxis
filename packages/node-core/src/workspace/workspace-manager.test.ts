@@ -1,4 +1,4 @@
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { git } from "@zamolxis/git";
 import { afterEach, describe, expect, it } from "vitest";
@@ -24,6 +24,16 @@ function fixture() {
 const retention = { artifactsCaptured: true, integrationPending: false, retentionAllows: true };
 
 describe("workspace lifecycle with real Git", () => {
+  it("checks resolved root grants before creating directories through symlinks", () => {
+    const f = fixture();
+    const outside = join(f.root, "outside");
+    const redirect = join(f.root, "redirect");
+    mkdirSync(outside);
+    symlinkSync(outside, redirect);
+    expect(() => new WorkspaceManager(f.store, new RepositoryRegistry(f.store, () => true),
+      join(redirect, "new"), "instance", (path) => path.startsWith(redirect))).toThrow("ROOT_DENIED");
+    expect(existsSync(join(outside, "new"))).toBe(false);
+  });
   it("isolates parallel edits, retries provision and reuses dirty work after runtime replacement", () => {
     const f = fixture(); const a = f.provision("a"); const b = f.provision("b");
     expect(a.path).not.toBe(b.path);

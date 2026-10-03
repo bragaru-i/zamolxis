@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { createWorktree, listWorktrees, removeWorktree, resolveBase, validateWorktree, workspaceChanges } from "@zamolxis/git";
 import type { LocalStateStore, ManagedWorkspace } from "../persistence/local-state";
 import type { RepositoryRegistry } from "../repository/repository-registry";
@@ -20,13 +20,20 @@ function safeId(id: string): string {
   return id;
 }
 
+function canonicalDestination(path: string): string {
+  if (existsSync(path)) return realpathSync(path);
+  return join(canonicalDestination(dirname(path)), basename(path));
+}
+
 export class WorkspaceManager {
   readonly #root: string;
   constructor(private readonly store: LocalStateStore, private readonly repositories: RepositoryRegistry,
     root: string, private readonly nodeInstanceId: string, private readonly isGranted: (path: string) => boolean) {
     if (!isGranted(resolve(root))) throw new Error("WORKSPACE_ROOT_DENIED");
-    mkdirSync(root, { recursive: true });
-    this.#root = realpathSync(root);
+    const destination = canonicalDestination(resolve(root));
+    if (!isGranted(destination)) throw new Error("WORKSPACE_ROOT_DENIED");
+    mkdirSync(destination, { recursive: true });
+    this.#root = realpathSync(destination);
     if (!isGranted(this.#root)) throw new Error("WORKSPACE_ROOT_DENIED");
   }
 
