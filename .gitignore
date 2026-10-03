@@ -11,3 +11,5 @@ coverage
 convex/_generated
 .DS_Store
 *.log
+
+*.tsbuildinfo

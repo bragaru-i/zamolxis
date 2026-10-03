@@ -6,7 +6,7 @@
     "build": "next build",
     "lint": "biome check app",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "@zamolxis/ui": "workspace:*",
