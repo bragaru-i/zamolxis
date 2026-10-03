@@ -13,12 +13,14 @@
     "typecheck": "turbo typecheck",
     "test": "turbo test",
     "check:boundaries": "node scripts/check-boundaries.mjs",
-    "check": "pnpm lint && pnpm check:boundaries && pnpm typecheck && pnpm test && pnpm build"
+    "check": "pnpm lint && pnpm check:boundaries && pnpm typecheck && pnpm typecheck:convex && pnpm test && pnpm build",
+    "typecheck:convex": "tsc --noEmit --strict --skipLibCheck --module ESNext --moduleResolution Bundler --target ES2022 convex/schema.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.2.4",
     "turbo": "^2.5.8",
     "typescript": "^5.9.2",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "convex": "^1.28.0"
   }
 }
