@@ -5,3 +5,4 @@ export * from "./runtime/runtime";
 export * from "./shared/errors";
 export * from "./shared/ids";
 export * from "./workspaces/workspace";
+export * from "./repository/repository-context";
