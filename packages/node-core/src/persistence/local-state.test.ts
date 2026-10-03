@@ -62,3 +62,21 @@ describe("LocalStateStore", () => {
     second.close();
   });
 });
+
+
+describe("migration recovery", () => {
+  it("reopens the same version without losing acknowledged events or commands", () => {
+    const path = databasePath();
+    const first = new LocalStateStore(path);
+    first.recordCommand({ commandId: "cmd", idempotencyKey: "once", type: "start", payload: {} });
+    first.appendEvent({ eventId: "event", type: "ready", payload: {}, createdAt: 1 });
+    first.acknowledgeEvent("event");
+    first.close();
+    for (let i = 0; i < 3; i++) {
+      const reopened = new LocalStateStore(path);
+      expect(reopened.findCommandByIdempotencyKey("once")?.commandId).toBe("cmd");
+      expect(reopened.listPendingEvents()).toEqual([]);
+      reopened.close();
+    }
+  });
+});

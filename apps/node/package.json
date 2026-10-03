@@ -6,7 +6,7 @@
     "build": "tsc -p tsconfig.build.json",
     "lint": "biome check src",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "@zamolxis/node-core": "workspace:*"
@@ -14,6 +14,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.2.4",
     "typescript": "^5.9.2",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "@types/node": "^22.18.6"
   }
 }
