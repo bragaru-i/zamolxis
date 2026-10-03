@@ -11,9 +11,21 @@ importers:
       '@biomejs/biome':
         specifier: ^2.2.4
         version: 2.5.15
+      '@types/node':
+        specifier: ^22.20.5
+        version: 22.20.5
+      '@zamolxis/application':
+        specifier: workspace:*
+        version: link:packages/application
+      '@zamolxis/domain':
+        specifier: workspace:*
+        version: link:packages/domain
       convex:
         specifier: ^1.28.0
         version: 1.46.0(react@19.3.0)
+      convex-test:
+        specifier: ^0.0.60
+        version: 0.0.60(convex@1.46.0(react@19.3.0))
       turbo:
         specifier: ^2.5.8
         version: 2.11.7
@@ -1110,6 +1122,11 @@ packages:
   client-only@0.0.1:
     resolution: {integrity: sha512-IV3Ou0jSMzZrd3pZ48nLkT9DA7Ag1pnPzaiQhpW7c3RbcqqzvzzVu+L8gfqMp/8IM2MQtSiqaCxrrcfu8I8rMA==}
 
+  convex-test@0.0.60:
+    resolution: {integrity: sha512-qCAFx+CO6bmpXNc9s1jZvw8NJPS4yM074ib87PUY675FsiaRRW4ALotEB+RbVCYDRMYxh623KMnYZBlrMJIv1Q==}
+    peerDependencies:
+      convex: ^1.43.0
+
   convex@1.46.0:
     resolution: {integrity: sha512-dhBwDQTZDOhi5SUGAX17EWNehCdNq6/UFrSL0eLZuGfMkdsQbCVWVRZCzbZ5CF+/pgvoGxtApbEoTSipqL4JTw==}
     engines: {node: '>=20.0.0', npm: '>=7.0.0'}
@@ -1948,6 +1965,10 @@ snapshots:
   check-error@2.1.3: {}
 
   client-only@0.0.1: {}
+
+  convex-test@0.0.60(convex@1.46.0(react@19.3.0)):
+    dependencies:
+      convex: 1.46.0(react@19.3.0)
 
   convex@1.46.0(react@19.3.0):
     dependencies:
