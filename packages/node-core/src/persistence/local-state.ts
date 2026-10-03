@@ -43,6 +43,19 @@ export interface StoredRuntimeSession {
   readonly status: string;
 }
 
+export interface RepositoryLocation {
+  readonly repositoryLocationId: string;
+  readonly repositoryId: string;
+  readonly workstationId: string;
+  readonly path: string;
+  readonly gitCommonDir: string;
+  readonly remoteIdentity?: string;
+  readonly status: "available" | "missing" | "invalid";
+  readonly headSha: string;
+  readonly branch?: string;
+  readonly dirty: boolean;
+}
+
 const migrations = [
   {
     version: 1,
@@ -98,6 +111,16 @@ const migrations = [
         applied_at INTEGER NOT NULL
       );
     `,
+  },
+  {
+    version: 2,
+    sql: `CREATE TABLE repository_locations (
+      location_id TEXT PRIMARY KEY,
+      repository_id TEXT NOT NULL,
+      workstation_id TEXT NOT NULL,
+      metadata_json TEXT NOT NULL,
+      UNIQUE(repository_id, workstation_id)
+    );`,
   },
 ] as const;
 
@@ -241,6 +264,19 @@ export class LocalStateStore {
       session.status,
       Date.now(),
     );
+  }
+
+  saveRepositoryLocation(location: RepositoryLocation): void {
+    this.#db.prepare(`INSERT INTO repository_locations VALUES (?, ?, ?, ?)
+      ON CONFLICT(location_id) DO UPDATE SET metadata_json = excluded.metadata_json
+      WHERE repository_id = excluded.repository_id AND workstation_id = excluded.workstation_id`)
+      .run(location.repositoryLocationId, location.repositoryId, location.workstationId, JSON.stringify(location));
+  }
+
+  getRepositoryLocation(id: string): RepositoryLocation | undefined {
+    const row = this.#db.prepare("SELECT metadata_json FROM repository_locations WHERE location_id = ?")
+      .get(id) as { metadata_json: string } | undefined;
+    return row ? JSON.parse(row.metadata_json) as RepositoryLocation : undefined;
   }
 
   #migrate(): void {
