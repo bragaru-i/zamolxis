@@ -14,14 +14,19 @@
     "test": "turbo test",
     "check:boundaries": "node scripts/check-boundaries.mjs",
     "check": "pnpm lint && pnpm check:boundaries && pnpm typecheck && pnpm typecheck:convex && pnpm test && pnpm test:convex && pnpm build",
-    "typecheck:convex": "tsc --noEmit --strict --skipLibCheck --module ESNext --moduleResolution Bundler --target ES2022 convex/schema.ts convex/schema.test.ts",
-    "test:convex": "vitest run convex/schema.test.ts"
+    "typecheck:convex": "tsc -p convex/tsconfig.json",
+    "test:convex": "vitest run convex",
+    "codegen:convex": "convex codegen"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.2.4",
+    "@types/node": "^22.20.5",
+    "convex": "^1.28.0",
+    "convex-test": "^0.0.60",
     "turbo": "^2.5.8",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4",
-    "convex": "^1.28.0"
+    "@zamolxis/application": "workspace:*",
+    "@zamolxis/domain": "workspace:*"
   }
 }

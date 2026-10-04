@@ -1,0 +1,442 @@
+import { valueKey } from "./lib/value";
+import { applyRunEvent } from "@zamolxis/application";
+import { assertRunTransition } from "@zamolxis/domain";
+import { v } from "convex/values";
+import { mutation, query } from "./_generated/server";
+import { bounded, fail, load, nodeRun, requireNode } from "./lib/access";
+import { settleRun } from "./lib/settlement";
+const deviceArgs = { workstationId: v.id("workstations") };
+export const heartbeat = mutation({
+  args: {
+    ...deviceArgs,
+    instanceId: v.string(),
+    runtimeCapabilities: v.array(
+      v.object({ runtime: v.string(), capabilities: v.array(v.string()) }),
+    ),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await requireNode(ctx, args.workstationId);
+    if (args.runtimeCapabilities.length > 32) fail("INVALID_ARGUMENT");
+    await ctx.db.patch("workstations", args.workstationId, {
+      nodeInstanceId: args.instanceId,
+      status: "online",
+      lastHeartbeatAt: Date.now(),
+    });
+    if (
+      new Set(args.runtimeCapabilities.map((item) => item.runtime)).size !==
+      args.runtimeCapabilities.length
+    )
+      fail("INVALID_ARGUMENT");
+    const previous = await ctx.db
+      .query("runtimeInstallations")
+      .withIndex("by_workstation", (q) => q.eq("workstationId", args.workstationId))
+      .take(33);
+    if (previous.length > 32) fail("LIMIT_EXCEEDED");
+    for (const installation of previous)
+      if (!args.runtimeCapabilities.some((item) => item.runtime === installation.runtime))
+        await ctx.db.patch("runtimeInstallations", installation._id, { status: "unavailable" });
+    for (const advertised of args.runtimeCapabilities) {
+      const existing = await ctx.db
+        .query("runtimeInstallations")
+        .withIndex("by_workstation_runtime", (q) =>
+          q.eq("workstationId", args.workstationId).eq("runtime", advertised.runtime),
+        )
+        .unique();
+      const patch = {
+        capabilities: advertised.capabilities,
+        status: "available" as const,
+        detectedAt: Date.now(),
+      };
+      if (existing) await ctx.db.patch("runtimeInstallations", existing._id, patch);
+      else
+        await ctx.db.insert("runtimeInstallations", {
+          workstationId: args.workstationId,
+          runtime: advertised.runtime,
+          ...patch,
+        });
+    }
+    return null;
+  },
+});
+export const registerLocation = mutation({
+  args: {
+    ...deviceArgs,
+    repositoryId: v.id("repositories"),
+    canonicalPath: v.string(),
+    gitCommonDir: v.string(),
+    headSha: v.string(),
+    defaultBranch: v.optional(v.string()),
+  },
+  returns: v.id("repositoryLocations"),
+  handler: async (ctx, args) => {
+    const device = await requireNode(ctx, args.workstationId);
+    const repository = await load(ctx, "repositories", args.repositoryId);
+    if (repository.ownerId !== device.ownerId) fail("FORBIDDEN");
+    const existing = await ctx.db
+      .query("repositoryLocations")
+      .withIndex("by_repository_workstation", (q) =>
+        q.eq("repositoryId", args.repositoryId).eq("workstationId", args.workstationId),
+      )
+      .unique();
+    const metadata = {
+      canonicalPath: args.canonicalPath,
+      gitCommonDir: args.gitCommonDir,
+      lastKnownHead: args.headSha,
+      status: "available" as const,
+      verifiedAt: Date.now(),
+      updatedAt: Date.now(),
+      ...(args.defaultBranch ? { defaultBranch: args.defaultBranch } : {}),
+    };
+    if (existing) {
+      await ctx.db.patch("repositoryLocations", existing._id, metadata);
+      return existing._id;
+    }
+    return ctx.db.insert("repositoryLocations", {
+      repositoryId: args.repositoryId,
+      workstationId: args.workstationId,
+      ...metadata,
+    });
+  },
+});
+export const verifyLocation = mutation({
+  args: {
+    ...deviceArgs,
+    repositoryLocationId: v.id("repositoryLocations"),
+    status: v.union(v.literal("available"), v.literal("missing"), v.literal("invalid")),
+    headSha: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await requireNode(ctx, args.workstationId);
+    const location = await load(ctx, "repositoryLocations", args.repositoryLocationId);
+    if (location.workstationId !== args.workstationId) fail("FORBIDDEN");
+    await ctx.db.patch("repositoryLocations", location._id, {
+      status: args.status,
+      verifiedAt: Date.now(),
+      updatedAt: Date.now(),
+      ...(args.headSha ? { lastKnownHead: args.headSha } : {}),
+    });
+    return null;
+  },
+});
+export const listPending = query({
+  args: { ...deviceArgs, limit: v.optional(v.number()) },
+  returns: v.array(v.any()),
+  handler: async (ctx, args) => {
+    await requireNode(ctx, args.workstationId);
+    return ctx.db
+      .query("commands")
+      .withIndex("by_workstation_status", (q) =>
+        q.eq("workstationId", args.workstationId).eq("status", "pending"),
+      )
+      .take(bounded(args.limit ?? 50));
+  },
+});
+export const claim = mutation({
+  args: { ...deviceArgs, commandId: v.id("commands"), instanceId: v.string() },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const device = await requireNode(ctx, args.workstationId);
+    if (device.nodeInstanceId !== args.instanceId) fail("FORBIDDEN");
+    const command = await load(ctx, "commands", args.commandId);
+    if (command.workstationId !== device._id) fail("FORBIDDEN");
+    if (command.status !== "pending") {
+      if (
+        command.claimNodeInstanceId === args.instanceId &&
+        ["claimed", "acknowledged", "completed"].includes(command.status)
+      )
+        return command;
+      fail("COMMAND_CONFLICT");
+    }
+    if (command.expiresAt !== undefined && command.expiresAt <= Date.now()) fail("INVALID_STATE");
+    if (command.type === "runtime.start") {
+      const runId = ctx.db.normalizeId("agentRuns", command.targetId);
+      if (!runId) fail("INVALID_ARGUMENT");
+      const run = await nodeRun(ctx, device._id, runId);
+      assertRunTransition(run.status, "starting");
+      await ctx.db.patch("agentRuns", run._id, { status: "starting" });
+    }
+    if (command.type === "workspace.provision") {
+      const workspaceId = ctx.db.normalizeId("workspaces", command.targetId);
+      if (!workspaceId) fail("INVALID_ARGUMENT");
+      const workspace = await load(ctx, "workspaces", workspaceId);
+      if (workspace.workstationId !== device._id || workspace.status !== "requested")
+        fail("INVALID_STATE");
+      await ctx.db.patch("workspaces", workspace._id, {
+        status: "provisioning",
+        updatedAt: Date.now(),
+      });
+    }
+    await ctx.db.patch("commands", command._id, {
+      status: "claimed",
+      claimNodeInstanceId: args.instanceId,
+      claimedAt: Date.now(),
+    });
+    return load(ctx, "commands", command._id);
+  },
+});
+export const acknowledge = mutation({
+  args: { ...deviceArgs, commandId: v.id("commands"), instanceId: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const device = await requireNode(ctx, args.workstationId);
+    if (device.nodeInstanceId !== args.instanceId) fail("FORBIDDEN");
+    const command = await load(ctx, "commands", args.commandId);
+    if (
+      command.workstationId !== args.workstationId ||
+      command.claimNodeInstanceId !== args.instanceId
+    )
+      fail("FORBIDDEN");
+    if (command.status === "acknowledged" || command.status === "completed") return null;
+    if (command.status !== "claimed") fail("INVALID_STATE");
+    await ctx.db.patch("commands", command._id, {
+      status: "acknowledged",
+      acknowledgedAt: Date.now(),
+    });
+    return null;
+  },
+});
+export const completeCommand = mutation({
+  args: {
+    ...deviceArgs,
+    commandId: v.id("commands"),
+    instanceId: v.string(),
+    result: v.optional(v.any()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const device = await requireNode(ctx, args.workstationId);
+    if (device.nodeInstanceId !== args.instanceId) fail("FORBIDDEN");
+    const command = await load(ctx, "commands", args.commandId);
+    if (
+      command.workstationId !== args.workstationId ||
+      command.claimNodeInstanceId !== args.instanceId
+    )
+      fail("FORBIDDEN");
+    if (args.result !== undefined && JSON.stringify(args.result).length > 16384)
+      fail("INVALID_ARGUMENT");
+    if (command.status === "completed") return null;
+    if (!["claimed", "acknowledged"].includes(command.status)) fail("INVALID_STATE");
+    await ctx.db.patch("commands", command._id, {
+      status: "completed",
+      completedAt: Date.now(),
+      ...(args.result !== undefined ? { result: args.result } : {}),
+    });
+    return null;
+  },
+});
+export const failCommand = mutation({
+  args: { ...deviceArgs, commandId: v.id("commands"), instanceId: v.string(), code: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const device = await requireNode(ctx, args.workstationId);
+    if (device.nodeInstanceId !== args.instanceId) fail("FORBIDDEN");
+    const command = await load(ctx, "commands", args.commandId);
+    if (
+      command.workstationId !== args.workstationId ||
+      command.claimNodeInstanceId !== args.instanceId
+    )
+      fail("FORBIDDEN");
+    if (command.status === "failed") return null;
+    if (!["claimed", "acknowledged"].includes(command.status)) fail("INVALID_STATE");
+    await ctx.db.patch("commands", command._id, {
+      status: "failed",
+      error: args.code,
+      completedAt: Date.now(),
+    });
+    return null;
+  },
+});
+export const markReady = mutation({
+  args: {
+    ...deviceArgs,
+    workspaceId: v.id("workspaces"),
+    commandId: v.id("commands"),
+    localPath: v.string(),
+    baseSha: v.string(),
+    branchName: v.string(),
+    headSha: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await requireNode(ctx, args.workstationId);
+    const workspace = await load(ctx, "workspaces", args.workspaceId);
+    const command = await load(ctx, "commands", args.commandId);
+    if (
+      workspace.workstationId !== args.workstationId ||
+      command.workstationId !== args.workstationId ||
+      command.targetId !== workspace._id ||
+      command.type !== "workspace.provision" ||
+      !["claimed", "acknowledged", "completed"].includes(command.status)
+    )
+      fail("FORBIDDEN");
+    if (workspace.status === "ready") {
+      if (
+        workspace.localPath !== args.localPath ||
+        workspace.baseSha !== args.baseSha ||
+        workspace.branchName !== args.branchName
+      )
+        fail("COMMAND_CONFLICT");
+      return null;
+    }
+    if (workspace.status !== "provisioning") fail("INVALID_STATE");
+    await ctx.db.patch("workspaces", workspace._id, {
+      status: "ready",
+      localPath: args.localPath,
+      baseSha: args.baseSha,
+      branchName: args.branchName,
+      currentHeadSha: args.headSha,
+      updatedAt: Date.now(),
+    });
+    return null;
+  },
+});
+const runEventType = v.union(
+  v.literal("run.started"),
+  v.literal("run.activity"),
+  v.literal("run.waiting"),
+  v.literal("run.completed"),
+  v.literal("run.failed"),
+  v.literal("run.stopped"),
+  v.literal("tool.started"),
+  v.literal("tool.completed"),
+  v.literal("files.changed"),
+);
+export const ingestBatch = mutation({
+  args: {
+    ...deviceArgs,
+    runId: v.id("agentRuns"),
+    events: v.array(
+      v.object({
+        eventId: v.string(),
+        sequence: v.number(),
+        type: runEventType,
+        occurredAt: v.number(),
+        payload: v.any(),
+      }),
+    ),
+  },
+  returns: v.array(v.string()),
+  handler: async (ctx, args) => {
+    let run = await nodeRun(ctx, args.workstationId, args.runId);
+    if (args.events.length > 100) fail("INVALID_ARGUMENT");
+    const latest = (
+      await ctx.db
+        .query("runEvents")
+        .withIndex("by_run_sequence", (q) => q.eq("runId", run._id))
+        .order("desc")
+        .take(1)
+    )[0];
+    let sequence = latest?.sequence ?? 0;
+    const ack: string[] = [];
+    for (const event of args.events) {
+      if (
+        !Number.isSafeInteger(event.sequence) ||
+        event.sequence < 1 ||
+        JSON.stringify(event.payload).length > 16 * 1024
+      )
+        fail("INVALID_ARGUMENT");
+      const duplicate = await ctx.db
+        .query("runEvents")
+        .withIndex("by_run_event_id", (q) => q.eq("runId", run._id).eq("eventId", event.eventId))
+        .unique();
+      if (duplicate) {
+        if (
+          duplicate.sequence !== event.sequence ||
+          duplicate.type !== event.type ||
+          valueKey(duplicate.payload) !== valueKey(event.payload)
+        )
+          fail("COMMAND_CONFLICT");
+        ack.push(event.eventId);
+        continue;
+      }
+      if (event.sequence !== sequence + 1) fail("EVENT_SEQUENCE_CONFLICT");
+      const status = applyRunEvent(run.status, event.type);
+      await ctx.db.insert("runEvents", {
+        ...event,
+        runId: run._id,
+        workstationId: args.workstationId,
+      });
+      await ctx.db.patch("agentRuns", run._id, {
+        status,
+        lastActivityAt: event.occurredAt,
+        ...(event.type === "run.started" && typeof event.payload?.nativeSessionId === "string"
+          ? { nativeSessionId: event.payload.nativeSessionId, startedAt: event.occurredAt }
+          : {}),
+        ...(event.type === "run.activity" && typeof event.payload?.label === "string"
+          ? { activityLabel: event.payload.label }
+          : {}),
+      });
+      run = { ...run, status };
+      sequence = event.sequence;
+      ack.push(event.eventId);
+    }
+    return ack;
+  },
+});
+export const completeRun = mutation({
+  args: {
+    ...deviceArgs,
+    runId: v.id("agentRuns"),
+    headSha: v.string(),
+    dirty: v.boolean(),
+    changedFileCount: v.number(),
+    summary: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const run = await nodeRun(ctx, args.workstationId, args.runId);
+    if (!Number.isSafeInteger(args.changedFileCount) || args.changedFileCount < 0)
+      fail("INVALID_ARGUMENT");
+    await settleRun(ctx, run._id, args);
+    return null;
+  },
+});
+export const reportSnapshot = mutation({
+  args: {
+    ...deviceArgs,
+    workspaceId: v.id("workspaces"),
+    headSha: v.string(),
+    dirty: v.boolean(),
+    changedFileCount: v.number(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await requireNode(ctx, args.workstationId);
+    const workspace = await load(ctx, "workspaces", args.workspaceId);
+    if (workspace.workstationId !== args.workstationId) fail("FORBIDDEN");
+    if (!Number.isSafeInteger(args.changedFileCount) || args.changedFileCount < 0)
+      fail("INVALID_ARGUMENT");
+    await ctx.db.patch("workspaces", workspace._id, {
+      currentHeadSha: args.headSha,
+      dirty: args.dirty,
+      changedFileCount: args.changedFileCount,
+      updatedAt: Date.now(),
+    });
+    return null;
+  },
+});
+export const reconcile = mutation({
+  args: {
+    ...deviceArgs,
+    runId: v.id("agentRuns"),
+    observation: v.union(v.literal("missing"), v.literal("active")),
+  },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const run = await nodeRun(ctx, args.workstationId, args.runId);
+    if (
+      args.observation === "missing" &&
+      ["starting", "running", "waiting", "stopping"].includes(run.status)
+    ) {
+      assertRunTransition(run.status, "lost");
+      await ctx.db.patch("agentRuns", run._id, {
+        status: "lost",
+        exitReason: "Native session missing after reconnect",
+      });
+    }
+    // This reports uncertainty; it never starts another runtime or removes workspaces/leases.
+    return { runId: run._id, reconciliationRequired: args.observation === "missing" };
+  },
+});

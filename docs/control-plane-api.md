@@ -1,0 +1,15 @@
+# Control-plane API v0.1
+
+Convex owns Session, Task, Workspace, Run and command state. Public user functions require an authenticated profile and enforce ownership on every resource. Node functions require a separately registered device token whose signed `ownerSubject` matches its owner's token identifier. Tokens are verified by the configured OIDC issuer; a caller cannot supply this claim as a mutation argument. Revoked devices are rejected.
+
+Set `ZAMOLXIS_AUTH_ISSUER` and `ZAMOLXIS_AUTH_AUDIENCE` on the development deployment before using the API. The issuer must issue distinct user and device subjects and bind the device's owner claim during trusted enrollment. An empty provider configuration accepts no identities. This change does not implement an identity provider or device token minting.
+
+The API exposes bounded reads, workspace provisioning requests and typed runtime start/message/stop commands. It does not expose arbitrary shell execution, patches or force-trust. Queued cancellation expires the pending start and releases cloud ownership; active cancellation waits for a confirmed terminal snapshot. Missing native sessions become lost and retain ownership until reconciliation.
+
+Task dependency edges point from newly created tasks to existing tasks, preventing cycles. Completed prerequisites unblock eligible tasks. Event batches are ordered, transactional and deduplicated by stable event identity, with conflicting retries rejected. A terminal event is separate from a final workspace snapshot; only the latter settles counters and releases cloud ownership.
+
+Verification links are internal-only. A verifier must have a distinct Run and Workspace based on the completed builder SHA. Evidence must come from that verifier's authenticated Node and a clean, completed snapshot at the subject SHA. Trust requires independent static and behavioral evidence; failed evidence or changed snapshots block eligibility. Human approval records permission and cannot bypass the evidence gate. Eligibility is not a merge operation; future integration must re-evaluate the exact SHA immediately before acting.
+
+Automated acceptance tests use `convex-test`. Live development verification additionally deployed the real functions and validated RSA-signed OIDC user/device identities, rejected invalid signatures, wrong audiences, incorrect ownership and revoked devices, and completed the execution loop. The issuer was a temporary loopback test fixture; production enrollment and a persistent identity provider remain separate work.
+
+`pnpm codegen:convex` uses the official Convex CLI against the selected development deployment. `convex.json` pins TypeScript bindings, which remain checked in so CI typechecking does not require a deployment. Live verification replaced the temporary offline generator; no private CLI templates are depended on.
