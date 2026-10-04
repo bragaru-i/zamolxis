@@ -18,7 +18,12 @@ describe("LocalStateStore", () => {
   it("keeps unsent events across restart", () => {
     const path = databasePath();
     const first = new LocalStateStore(path);
-    first.appendEvent({ eventId: "evt-1", type: "run.started", payload: { runId: "run-1" }, createdAt: 1 });
+    first.appendEvent({
+      eventId: "evt-1",
+      type: "run.started",
+      payload: { runId: "run-1" },
+      createdAt: 1,
+    });
     first.close();
 
     const second = new LocalStateStore(path);
@@ -32,8 +37,18 @@ describe("LocalStateStore", () => {
 
   it("deduplicates command delivery by idempotency key", () => {
     const store = new LocalStateStore(databasePath());
-    const first = store.recordCommand({ commandId: "cmd-1", idempotencyKey: "start:run-1", type: "runtime.start", payload: { runId: "run-1" } });
-    const duplicate = store.recordCommand({ commandId: "cmd-2", idempotencyKey: "start:run-1", type: "runtime.start", payload: { runId: "run-1" } });
+    const first = store.recordCommand({
+      commandId: "cmd-1",
+      idempotencyKey: "start:run-1",
+      type: "runtime.start",
+      payload: { runId: "run-1" },
+    });
+    const duplicate = store.recordCommand({
+      commandId: "cmd-2",
+      idempotencyKey: "start:run-1",
+      type: "runtime.start",
+      payload: { runId: "run-1" },
+    });
     expect(duplicate.commandId).toBe(first.commandId);
     store.close();
   });
@@ -41,11 +56,23 @@ describe("LocalStateStore", () => {
   it("keeps dirty workspace metadata across restart", () => {
     const path = databasePath();
     const first = new LocalStateStore(path);
-    first.upsertWorkspace({ workspaceId: "ws-1", repositoryId: "repo-1", path: "/tmp/repo", branch: "task-1", headSha: "abc", dirty: true, status: "in_use" });
+    first.upsertWorkspace({
+      workspaceId: "ws-1",
+      repositoryId: "repo-1",
+      path: "/tmp/repo",
+      branch: "task-1",
+      headSha: "abc",
+      dirty: true,
+      status: "in_use",
+    });
     first.close();
 
     const second = new LocalStateStore(path);
-    expect(second.getWorkspace("ws-1")).toMatchObject({ workspaceId: "ws-1", dirty: true, headSha: "abc" });
+    expect(second.getWorkspace("ws-1")).toMatchObject({
+      workspaceId: "ws-1",
+      dirty: true,
+      headSha: "abc",
+    });
     second.close();
   });
 
@@ -63,7 +90,6 @@ describe("LocalStateStore", () => {
   });
 });
 
-
 describe("migration recovery", () => {
   it("reopens the same version without losing acknowledged events or commands", () => {
     const path = databasePath();
@@ -79,4 +105,27 @@ describe("migration recovery", () => {
       reopened.close();
     }
   });
+});
+
+it("rejects changed command content and rolls back completion if outbox persistence fails", () => {
+  const store = new LocalStateStore(databasePath());
+  const command = {
+    commandId: "cmd",
+    idempotencyKey: "key",
+    type: "runtime.start",
+    payload: { runId: "run" },
+  };
+  store.recordCommand(command);
+  expect(() => store.recordCommand({ ...command, payload: { runId: "other" } })).toThrow(
+    "CONFLICT",
+  );
+  store.markCommandRunning("cmd");
+  expect(() =>
+    store.completeCommandWithEvents("cmd", [
+      { eventId: "invalid", type: "delivery", createdAt: 1, payload: BigInt(1) },
+    ]),
+  ).toThrow();
+  expect(store.findCommandByIdempotencyKey("key")?.status).toBe("running");
+  expect(store.listPendingEvents()).toEqual([]);
+  store.close();
 });

@@ -15,7 +15,7 @@
     "check:boundaries": "node scripts/check-boundaries.mjs",
     "check": "pnpm lint && pnpm check:boundaries && pnpm typecheck && pnpm typecheck:convex && pnpm test && pnpm test:convex && pnpm build",
     "typecheck:convex": "tsc -p convex/tsconfig.json",
-    "test:convex": "vitest run convex",
+    "test:convex": "vitest run convex tests",
     "codegen:convex": "convex codegen"
   },
   "devDependencies": {

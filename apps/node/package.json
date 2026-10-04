@@ -6,15 +6,22 @@
     "build": "tsc -p tsconfig.build.json",
     "lint": "biome check src",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "fake-loop": "tsx src/index.ts --fake-loop-once",
+    "watch-session": "tsx src/index.ts --watch-session"
   },
   "dependencies": {
-    "@zamolxis/node-core": "workspace:*"
+    "@zamolxis/node-core": "workspace:*",
+    "convex": "^1.46.0",
+    "@zamolxis/runtime-core": "workspace:*",
+    "@zamolxis/contracts": "workspace:*",
+    "@zamolxis/git": "workspace:*"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.2.4",
+    "@types/node": "^22.18.6",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4",
-    "@types/node": "^22.18.6"
+    "tsx": "^4.20.6"
   }
 }
