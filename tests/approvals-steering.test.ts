@@ -42,6 +42,11 @@ const modules = {
   "./events.ts": () => import("../convex/events"),
   "./node.ts": () => import("../convex/node"),
 };
+// The single row a step expects; anything else fails the test.
+function only<T>(rows: T[]): T {
+  expect(rows).toHaveLength(1);
+  return rows[0] as T;
+}
 const cleanup: Array<() => void> = [];
 afterEach(() => {
   for (const fn of cleanup.splice(0).reverse()) fn();
@@ -220,7 +225,7 @@ describe("approvals", { timeout: 60_000 }, () => {
     const f = await fixture(new FakeRuntime(approvalThenSuccess));
     await f.driver.tick();
     expect((await f.run()).status).toBe("needs_approval");
-    const [approval] = await f.user.query(api.approvals.listPending, {});
+    const approval = only(await f.user.query(api.approvals.listPending, {}));
     expect(approval).toMatchObject({
       workSessionId: f.workSessionId,
       runId: f.runId,
@@ -248,7 +253,7 @@ describe("approvals", { timeout: 60_000 }, () => {
   it("resolves idempotently, enqueues one approval command and completes the run", async () => {
     const f = await fixture(new FakeRuntime(approvalThenSuccess));
     await f.driver.tick();
-    const [approval] = await f.user.query(api.approvals.listPending, {});
+    const approval = only(await f.user.query(api.approvals.listPending, {}));
     for (let attempt = 0; attempt < 2; attempt++)
       await f.user.mutation(api.approvals.resolve, {
         approvalId: approval._id,
@@ -273,7 +278,7 @@ describe("approvals", { timeout: 60_000 }, () => {
     const run = await f.run();
     expect(run.status).toBe("completed");
     expect(run.resultSummary).toBe("Installed");
-    const [settled] = await f.approvals();
+    const settled = only(await f.approvals());
     expect(settled).toMatchObject({
       status: "approved",
       runtimeOutcome: { decision: "approved", reason: "user" },
@@ -293,12 +298,12 @@ describe("approvals", { timeout: 60_000 }, () => {
     const f = await fixture(runtime);
     const ticking = f.driver.tick();
     await f.until(async () => (await f.run()).status === "needs_approval");
-    const [first] = await f.user.query(api.approvals.listPending, {});
+    const first = only(await f.user.query(api.approvals.listPending, {}));
     await f.user.mutation(api.approvals.resolve, { approvalId: first._id, decision: "rejected" });
     await f.driver.control();
     // The runtime confirmed the rejection, worked on and asked again.
     await f.until(async () => (await f.user.query(api.approvals.listPending, {})).length === 1);
-    const [second] = await f.user.query(api.approvals.listPending, {});
+    const second = only(await f.user.query(api.approvals.listPending, {}));
     expect(second.risk).toBe("medium");
     expect((await f.run()).status).toBe("needs_approval");
     await f.user.mutation(api.approvals.resolve, { approvalId: second._id, decision: "approved" });
@@ -328,7 +333,7 @@ describe("approvals", { timeout: 60_000 }, () => {
     const run = await f.run();
     expect(run.status).toBe("stopped");
     expect(run.completedAt).toBeDefined();
-    const [approval] = await f.approvals();
+    const approval = only(await f.approvals());
     expect(approval).toMatchObject({
       status: "expired",
       runtimeOutcome: { decision: "rejected", reason: "stopped" },
@@ -395,7 +400,7 @@ describe("steering", { timeout: 60_000 }, () => {
     await f.driver.control();
     const sent = (await f.commands()).find((command) => command._id === commandId);
     expect(sent?.status).toBe("completed");
-    const [approval] = await f.user.query(api.approvals.listPending, {});
+    const approval = only(await f.user.query(api.approvals.listPending, {}));
     await f.user.mutation(api.approvals.resolve, {
       approvalId: approval._id,
       decision: "approved",
@@ -471,7 +476,7 @@ describe("steering", { timeout: 60_000 }, () => {
 it("never lets an id from another session's run be resolved through a forged row", async () => {
   const f = await fixture(new FakeRuntime(approvalThenSuccess));
   await f.driver.tick();
-  const [approval] = await f.user.query(api.approvals.listPending, {});
+  const approval = only(await f.user.query(api.approvals.listPending, {}));
   const other = await f.mallory.mutation(api.sessions.create, {
     title: "Other",
     goal: "Other",
