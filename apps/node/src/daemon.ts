@@ -17,11 +17,15 @@ import { RuntimeRegistry } from "@zamolxis/runtime-core";
 import { ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
 import { ConvexControlPlaneTransport } from "./convex-control-plane";
+import { KeychainCredentialStore, loadDeviceCredential } from "./credential-store";
 import { configPath, pause, readConfig } from "./setup";
 
 const pathIndex = process.argv.indexOf("--config");
 const config = readConfig(pathIndex >= 0 ? process.argv[pathIndex + 1] : configPath());
-if (!config.credential || !config.workstationId) throw new Error("SETUP_REQUIRED");
+if (!config.workstationId) throw new Error("SETUP_REQUIRED");
+// launchd runs this agent in the user's GUI session, so the login Keychain is reachable
+// while unlocked; a legacy plaintext value is used until setup migrates it.
+config.credential = loadDeviceCredential(config, new KeychainCredentialStore());
 const root = realpathSync.native(config.managedRoot);
 const canonical = config.repositories.map((repository) => realpathSync.native(repository.path));
 const grant = (path: string) => {
