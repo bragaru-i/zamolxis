@@ -36,6 +36,8 @@ export function parseExecutionCommand(value: unknown): ExecutionCommand {
     };
   }
   if (command.type === "runtime.start") {
+    if (payload.role !== undefined && payload.role !== "builder" && payload.role !== "verifier")
+      throw new Error("INVALID_COMMAND_ROLE");
     const runId = field(payload, "runId");
     if (command.targetType !== "run" || command.targetId !== runId)
       throw new Error("INVALID_COMMAND_TARGET");
@@ -46,6 +48,7 @@ export function parseExecutionCommand(value: unknown): ExecutionCommand {
         runId,
         workspaceId: field(payload, "workspaceId"),
         runtime: field(payload, "runtime"),
+        role: payload.role === "verifier" ? "verifier" : "builder",
         instruction: field(payload, "instruction", 32768),
       },
     };

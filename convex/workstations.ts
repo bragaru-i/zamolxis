@@ -10,7 +10,19 @@ export const listMine = query({
       .query("workstations")
       .withIndex("by_owner", (q) => q.eq("ownerId", owner._id))
       .take(bounded(args.limit ?? 50));
-    return devices.map(({ nodeAuthSubject: _, ...device }) => device);
+    return Promise.all(
+      devices.map(async ({ nodeAuthSubject: _, ...device }) => {
+        const runtimes = await ctx.db
+          .query("runtimeInstallations")
+          .withIndex("by_workstation", (q) => q.eq("workstationId", device._id))
+          .take(33);
+        if (runtimes.length > 32) fail("LIMIT_EXCEEDED");
+        return {
+          ...device,
+          runtimes: runtimes.map(({ runtime, status }) => ({ runtime, status })),
+        };
+      }),
+    );
   },
 });
 export const register = mutation({

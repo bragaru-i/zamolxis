@@ -1,5 +1,6 @@
 import { paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
+import type { Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { fail, load, ownSession, requireUser } from "./lib/access";
 import { stopRun } from "./lib/commands";
@@ -46,13 +47,21 @@ export const create = mutation({
     const owner = await requireUser(ctx);
     const ids = [...new Set(args.repositoryIds ?? [])];
     if (ids.length > 32) fail("INVALID_ARGUMENT");
+    let productId: Id<"products"> | undefined;
     for (const id of ids) {
       const repository = await load(ctx, "repositories", id);
       if (repository.ownerId !== owner._id) fail("FORBIDDEN");
+      if (productId !== undefined && repository.productId !== productId) fail("PRODUCT_MISMATCH");
+      productId = repository.productId;
+    }
+    if (productId && ids.length > 1) {
+      for (const id of ids)
+        if ((await load(ctx, "repositories", id)).productId !== productId) fail("PRODUCT_MISMATCH");
     }
     const now = Date.now();
     const id = await ctx.db.insert("workSessions", {
       ownerId: owner._id,
+      ...(productId ? { productId } : {}),
       title: args.title,
       goal: args.goal,
       status: "planning",

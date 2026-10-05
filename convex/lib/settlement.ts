@@ -1,6 +1,6 @@
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
-import { load, fail } from "./access";
+import { fail, load } from "./access";
 
 export async function refreshDependents(ctx: MutationCtx, taskId: Id<"tasks">) {
   const edges = await ctx.db
@@ -77,20 +77,27 @@ export async function settleRun(
     ["completed", "failed", "cancelled"].includes(item.status),
   );
   const activeRunCount = Math.max(0, session.activeRunCount - 1);
+  // A completed implementation is a candidate, never proof of completion.
+  // Keep successful Sessions open until independent verification/integration
+  // has explicitly settled; task counters alone cannot authorize auto-close.
+  const successfulCandidate = tasks.some((item) => item.status === "completed");
+  const canClose = allTerminal && activeRunCount === 0 && !successfulCandidate;
   const sessionStatus =
     session.status === "cancelled"
       ? "cancelled"
-      : allTerminal && activeRunCount === 0
+      : canClose
         ? tasks.some((item) => item.status === "failed")
           ? "failed"
           : "completed"
-        : session.status;
+        : allTerminal && activeRunCount === 0
+          ? "waiting"
+          : session.status;
   await ctx.db.patch("workSessions", session._id, {
     status: sessionStatus,
     activeRunCount,
     completedTaskCount: session.completedTaskCount + (status === "completed" ? 1 : 0),
     lastActivityAt: now,
     updatedAt: now,
-    ...(allTerminal && activeRunCount === 0 ? { completedAt: now } : {}),
+    ...(canClose ? { completedAt: now } : {}),
   });
 }

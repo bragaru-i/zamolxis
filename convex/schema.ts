@@ -65,6 +65,31 @@ const commandStatus = v.union(
 );
 
 export default defineSchema({
+  textCommands: defineTable({
+    ownerId: v.id("users"),
+    idempotencyKey: v.string(),
+    text: v.string(),
+    productId: v.id("products"),
+    repositoryId: v.id("repositories"),
+    workSessionId: v.id("workSessions"),
+    requestedSessionId: v.optional(v.id("workSessions")),
+  }).index("by_owner_key", ["ownerId", "idempotencyKey"]),
+  pairingRequests: defineTable({
+    approvalHash: v.string(),
+    pollHash: v.string(),
+    name: v.string(),
+    expiresAt: v.number(),
+    status: v.union(v.literal("pending"), v.literal("approved"), v.literal("consumed")),
+    workstationId: v.optional(v.id("workstations")),
+    ownerSubject: v.optional(v.string()),
+  }).index("by_approval_hash", ["approvalHash"]),
+  deviceCredentials: defineTable({
+    workstationId: v.id("workstations"),
+    secretHash: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_secret_hash", ["secretHash"])
+    .index("by_workstation", ["workstationId"]),
   users: defineTable({
     authSubject: v.string(),
     displayName: v.optional(v.string()),
