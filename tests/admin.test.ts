@@ -1,4 +1,4 @@
-import { convexTest } from "convex-test";
+import { convexTest, type TestConvex } from "convex-test";
 import { expect, it } from "vitest";
 import { api, internal } from "../convex/_generated/api";
 import type { Id } from "../convex/_generated/dataModel";
@@ -12,7 +12,7 @@ const modules = {
   "./repositories.ts": () => import("../convex/repositories"),
 };
 
-type T = ReturnType<typeof convexTest<typeof schema>>;
+type T = TestConvex<typeof schema>;
 
 async function makeAdmin(t: T, userId: Id<"users">) {
   await t.run((ctx) => ctx.db.patch("users", userId, { role: "admin" }));
