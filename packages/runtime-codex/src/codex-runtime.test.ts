@@ -5,9 +5,16 @@ import type {
   WorkstationId,
 } from "@zamolxis/contracts";
 import type { StartRunInput } from "@zamolxis/runtime-core";
-import { defineRuntimeAdapterContract } from "@zamolxis/test-kit/runtime-contract";
+import {
+  defineRuntimeAdapterContract,
+  defineRuntimeApprovalContract,
+} from "@zamolxis/test-kit/runtime-contract";
 import { describe, expect, it, vi } from "vitest";
-import type { AppServerNotification } from "./app-server-client";
+import type {
+  AppServerNotification,
+  AppServerRequestHandler,
+  AppServerRequestId,
+} from "./app-server-client";
 import { type CodexConnection, CodexRuntime } from "./codex-runtime";
 
 const input = (): StartRunInput => ({
@@ -57,11 +64,37 @@ class ControlledConnection implements CodexConnection {
     for (const listener of this.listeners)
       listener({ method, params: { threadId: "native", turnId: "turn", ...params } });
   }
+  handler: AppServerRequestHandler | undefined;
+  responses: { id: AppServerRequestId; result: Record<string, unknown> }[] = [];
+  onServerRequest(handler: AppServerRequestHandler) {
+    this.handler = handler;
+    return () => {
+      this.handler = undefined;
+    };
+  }
+  respond(id: AppServerRequestId, result: Record<string, unknown>) {
+    this.responses.push({ id, result });
+  }
+  // Returns whether the runtime held the request (the transport refuses it otherwise).
+  ask(id: AppServerRequestId, method: string, params: Record<string, unknown>): boolean {
+    return (
+      this.handler?.({
+        id,
+        method,
+        params: { threadId: "native", turnId: "turn", itemId: "item", ...params },
+      }) ?? false
+    );
+  }
 }
-function harness() {
+function harness(approvalTimeoutMs?: number) {
   const connection = new ControlledConnection();
   const connect = vi.fn(() => connection);
-  const runtime = new CodexRuntime({ connect, stopTimeoutMs: 5, now: () => 0 });
+  const runtime = new CodexRuntime({
+    connect,
+    stopTimeoutMs: 5,
+    now: () => 0,
+    ...(approvalTimeoutMs ? { approvalTimeoutMs } : {}),
+  });
   return { runtime, connection, connect };
 }
 async function events(runtime: CodexRuntime): Promise<NormalizedRunEventDto[]> {
@@ -76,6 +109,203 @@ defineRuntimeAdapterContract("CodexRuntime", {
     return h.runtime;
   },
   input,
+});
+{
+  let current: ControlledConnection | undefined;
+  defineRuntimeApprovalContract("CodexRuntime", {
+    create: () => {
+      const h = harness();
+      current = h.connection;
+      return h.runtime;
+    },
+    input,
+    requestApproval: async () => {
+      expect(
+        current?.ask(1, "item/commandExecution/requestApproval", { command: "pnpm test" }),
+      ).toBe(true);
+    },
+  });
+}
+describe("Codex approval bridge", () => {
+  // Reads events until the count-th event of a type (Codex subscriptions block until terminal).
+  const until = async (runtime: CodexRuntime, type: string, count = 1) => {
+    const seen: NormalizedRunEventDto[] = [];
+    let matched = 0;
+    for await (const event of runtime.subscribe({ nativeSessionId: "native" })) {
+      seen.push(event);
+      if (event.type === type && ++matched === count) break;
+    }
+    return seen;
+  };
+  it("holds a command approval and answers with the app-server accept/decline shape", async () => {
+    const h = harness();
+    await h.runtime.start(input());
+    expect(
+      h.connection.ask(7, "item/commandExecution/requestApproval", {
+        command: "curl https://example.com",
+        cwd: "/assigned/worktree",
+        reason: "Fetch docs",
+      }),
+    ).toBe(true);
+    expect(h.connection.responses).toEqual([]);
+    const requested = (await until(h.runtime, "approval.requested")).at(-1);
+    expect(requested?.payload).toEqual({
+      approvalId: "run:7",
+      kind: "command",
+      summary: "Run: curl https://example.com\nReason: Fetch docs",
+      risk: "high",
+    });
+    expect((await h.runtime.inspect("native")).state).toBe("running");
+    await h.runtime.resolveApproval({
+      nativeSessionId: "native",
+      approvalId: "run:7",
+      decision: "approve",
+    });
+    expect(h.connection.responses).toEqual([{ id: 7, result: { decision: "accept" } }]);
+    expect(
+      h.connection.ask(8, "item/commandExecution/requestApproval", { command: "rm -rf x" }),
+    ).toBe(true);
+    await h.runtime.resolveApproval({
+      nativeSessionId: "native",
+      approvalId: "run:8",
+      decision: "reject",
+    });
+    expect(h.connection.responses[1]).toEqual({ id: 8, result: { decision: "decline" } });
+    const resolved = (await until(h.runtime, "approval.resolved", 2)).filter(
+      (event) => event.type === "approval.resolved",
+    );
+    expect(resolved.map((event) => event.payload)).toEqual([
+      { approvalId: "run:7", decision: "approved", reason: "user" },
+      { approvalId: "run:8", decision: "rejected", reason: "user" },
+    ]);
+    await expect(
+      h.runtime.resolveApproval({
+        nativeSessionId: "native",
+        approvalId: "run:8",
+        decision: "approve",
+      }),
+    ).rejects.toThrow("APPROVAL_NOT_PENDING");
+  });
+  it("describes file changes from the proposed item and flags deletion and outside writes", async () => {
+    const h = harness();
+    await h.runtime.start(input());
+    h.connection.emit("item/started", {
+      item: {
+        id: "item",
+        type: "fileChange",
+        status: "inProgress",
+        changes: [
+          { path: "src/a.ts", kind: { type: "update", move_path: null }, diff: "" },
+          { path: "old.ts", kind: { type: "delete" }, diff: "" },
+        ],
+      },
+    });
+    expect(h.connection.ask("f1", "item/fileChange/requestApproval", {})).toBe(true);
+    expect(
+      h.connection.ask("f2", "item/fileChange/requestApproval", { grantRoot: "/Users/me" }),
+    ).toBe(true);
+    const all = await until(h.runtime, "approval.requested", 2);
+    const requests = all.filter((event) => event.type === "approval.requested");
+    expect(requests.map((event) => event.payload)).toEqual([
+      {
+        approvalId: "run:f1",
+        kind: "fileChange",
+        summary: "Change files: src/a.ts, old.ts (delete)",
+        risk: "high",
+      },
+      {
+        approvalId: "run:f2",
+        kind: "fileChange",
+        summary:
+          "Change files: src/a.ts, old.ts (delete)\nWrite access outside the workspace: /Users/me",
+        risk: "critical",
+      },
+    ]);
+  });
+  it("rejects after the timeout and refuses unsupported, foreign and read-only requests", async () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness(1000);
+      await h.runtime.start(input());
+      expect(h.connection.ask(1, "item/commandExecution/requestApproval", { command: "ls" })).toBe(
+        true,
+      );
+      vi.advanceTimersByTime(1001);
+      expect(h.connection.responses).toEqual([{ id: 1, result: { decision: "decline" } }]);
+      for (const method of [
+        "account/chatgptAuthTokens/refresh",
+        "attestation/generate",
+        "item/permissions/requestApproval",
+        "item/tool/call",
+        "item/tool/requestUserInput",
+        "execCommandApproval",
+      ])
+        expect(h.connection.ask(2, method, {})).toBe(false);
+      expect(
+        h.connection.ask(3, "item/commandExecution/requestApproval", {
+          threadId: "foreign",
+          command: "ls",
+        }),
+      ).toBe(false);
+      expect(
+        h.connection.ask(4, "mcpServer/elicitation/request", {
+          mode: "form",
+          serverName: "s",
+          message: "Your password?",
+          requestedSchema: { type: "object", properties: { password: { type: "string" } } },
+        }),
+      ).toBe(false);
+      const verifier = harness();
+      await verifier.runtime.start({ ...input(), role: "verifier" });
+      expect(
+        verifier.connection.ask(5, "item/commandExecution/requestApproval", { command: "ls" }),
+      ).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("rejects pending approvals before the terminal event when the turn ends", async () => {
+    const h = harness();
+    await h.runtime.start(input());
+    expect(
+      h.connection.ask("t", "mcpServer/elicitation/request", {
+        mode: "form",
+        serverName: "docs",
+        message: "Allow lookup?",
+        requestedSchema: { type: "object", properties: {} },
+      }),
+    ).toBe(true);
+    h.connection.emit("turn/completed", { turn: { id: "turn", status: "completed" } });
+    const all = await events(h.runtime);
+    expect(all.map((event) => event.type).slice(-3)).toEqual([
+      "approval.requested",
+      "approval.resolved",
+      "run.completed",
+    ]);
+    expect(all.find((event) => event.type === "approval.requested")?.payload).toMatchObject({
+      kind: "tool",
+      summary: "Tool docs: Allow lookup?",
+      risk: "high",
+    });
+    expect(h.connection.responses).toEqual([
+      { id: "t", result: { action: "decline", content: null, _meta: null } },
+    ]);
+  });
+  it("forgets a request the runtime withdrew without answering it", async () => {
+    const h = harness();
+    await h.runtime.start(input());
+    expect(h.connection.ask(9, "item/commandExecution/requestApproval", { command: "ls" })).toBe(
+      true,
+    );
+    h.connection.emit("serverRequest/resolved", { requestId: 9 });
+    const all = await until(h.runtime, "approval.resolved");
+    expect(all.at(-1)?.payload).toEqual({
+      approvalId: "run:9",
+      decision: "rejected",
+      reason: "withdrawn",
+    });
+    expect(h.connection.responses).toEqual([]);
+  });
 });
 describe("Codex native lifecycle", () => {
   it("reserves concurrent starts, binds cwd and constrains local permissions", async () => {
