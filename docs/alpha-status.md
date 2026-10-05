@@ -78,13 +78,17 @@ planned capability as shipped.
   live under `~/Library/Application Support/Zamolxis/worktrees` and belong to the Node.
 - Production: Convex deployment `cheery-fox-709` (eu-west-1), app
   `https://zamolxis.bragaru.cc`. The private prod setup directory (deploy key, Google
-  credentials, signing keys) was created at `/private/tmp/zamolxis-google-prod`; macOS
-  clears `/private/tmp`, so it should be moved to a permanent private location and
-  passed with `--directory` or `ZAMOLXIS_PROD_SETUP_DIR`. Never print or commit its
-  contents.
-- Vercel is not connected to GitHub (no deployments are reported there); pushing to
-  main does not deploy. `pnpm deploy:prod` deploys Convex, then Vercel (needs
-  `pnpm dlx vercel@62 login` once), then restarts the Node.
+  credentials, signing keys) is passed with `--directory` or
+  `ZAMOLXIS_PROD_SETUP_DIR`. Never print or commit its contents.
+- Merges to main deploy Convex and the web app automatically through the "Deploy
+  production" GitHub Actions workflow (after CI passes). Vercel itself is not
+  connected to GitHub; the workflow deploys with a Vercel token. The Mac Node is not
+  updated by it: `git pull` in the canonical checkout, then
+  `launchctl kickstart -k gui/$(id -u)/app.zamolxis.node` (or
+  `pnpm deploy:prod --pull --skip-convex --skip-web`). `pnpm deploy:prod` is the
+  manual full release (needs `pnpm dlx vercel@62 login` once).
+- The private prod setup directory is at
+  `~/Library/Application Support/Zamolxis/prod-setup` (moved out of `/private/tmp`).
 - CI on GitHub occasionally leaves jobs queued with no runner until they are cancelled
   after 15 minutes; that shows as a failure without any step running. Re-run the job
   before treating it as a code failure.

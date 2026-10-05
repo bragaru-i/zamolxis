@@ -1,0 +1,79 @@
+name: Deploy production
+# Runs after CI succeeds on main: Convex backend first, then the web app on Vercel.
+# The Node service on the owner's Mac is not updated here (see docs/alpha-status.md).
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+concurrency:
+  group: production
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
+      APP_URL: ${{ vars.ZAMOLXIS_APP_URL }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.COMMIT }}
+          fetch-depth: 0
+      - name: Skip superseded commits
+        id: current
+        run: |
+          latest=$(git ls-remote origin refs/heads/main | cut -f1)
+          if [ "$latest" != "$COMMIT" ]; then
+            echo "main moved to $latest; a later run deploys it"
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: pnpm/action-setup@v4
+        if: steps.current.outputs.deploy == 'true'
+        with:
+          version: 10.17.1
+      - uses: actions/setup-node@v4
+        if: steps.current.outputs.deploy == 'true'
+        with:
+          node-version: 22
+      - if: steps.current.outputs.deploy == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: Deploy Convex backend
+        if: steps.current.outputs.deploy == 'true'
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+        run: |
+          case "$CONVEX_DEPLOY_KEY" in
+            prod:*) ;;
+            *) echo "CONVEX_DEPLOY_KEY must be a production deployment key"; exit 1 ;;
+          esac
+          pnpm exec convex deploy
+      - name: Build and deploy web app
+        if: steps.current.outputs.deploy == 'true'
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          ZAMOLXIS_COMMIT: ${{ env.COMMIT }}
+        run: |
+          pnpm dlx vercel@62 pull --yes --environment=production --token="$VERCEL_TOKEN"
+          pnpm dlx vercel@62 build --prod --token="$VERCEL_TOKEN"
+          pnpm dlx vercel@62 deploy --prebuilt --prod --token="$VERCEL_TOKEN"
+      - name: Verify the live commit
+        if: steps.current.outputs.deploy == 'true'
+        run: |
+          for attempt in $(seq 1 60); do
+            live=$(curl -fsS --max-time 10 "$APP_URL/api/bootstrap" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).commit??"")}catch{console.log("")}})')
+            if [ "$live" = "$COMMIT" ]; then echo "$APP_URL serves $COMMIT"; exit 0; fi
+            sleep 5
+          done
+          echo "$APP_URL does not serve $COMMIT after 5 minutes"
+          exit 1
