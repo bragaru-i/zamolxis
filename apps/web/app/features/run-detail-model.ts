@@ -1,0 +1,329 @@
+// Pure view-model helpers for the Run detail view: event grouping and formatting.
+
+export interface RunEvent {
+  _id: string;
+  sequence: number;
+  type: string;
+  occurredAt: number;
+  // biome-ignore lint/suspicious/noExplicitAny: payload is runtime-normalized JSON, validated here.
+  payload: any;
+}
+
+export interface ToolItem {
+  tool: string;
+  summary: string;
+  /** undefined while the tool is still running (or its result was never reported). */
+  success?: boolean;
+}
+
+export type TimelineEntry =
+  | { kind: "started"; key: string; at: number }
+  | { kind: "activity"; key: string; at: number; label: string; detail?: string; count: number }
+  | {
+      kind: "tools";
+      key: string;
+      at: number;
+      endAt: number;
+      items: ToolItem[];
+      failed: number;
+      open: number;
+    }
+  | { kind: "files"; key: string; at: number; paths: string[] }
+  | { kind: "waiting"; key: string; at: number; reason: string }
+  | { kind: "completed"; key: string; at: number; summary?: string }
+  | { kind: "failed"; key: string; at: number; message: string; code?: string }
+  | { kind: "stopped"; key: string; at: number; reason: string }
+  | { kind: "other"; key: string; at: number; type: string };
+
+export const ACTIVE_RUN = [
+  "queued",
+  "starting",
+  "running",
+  "waiting",
+  "needs_approval",
+  "stopping",
+];
+export const ROLE_LABEL: Record<string, string> = {
+  builder: "Builder",
+  verifier: "Verifier",
+  repair: "Repair",
+};
+const RUNTIME_LABEL: Record<string, string> = {
+  codex: "Codex",
+  claude: "Claude Code",
+  hermes: "Hermes",
+  fake: "Test runtime",
+};
+export const MODALITY_LABEL: Record<string, string> = {
+  static: "Static checks",
+  test: "Tests",
+  behavioral: "Behavior",
+  visual: "Visual",
+  interaction: "Interaction",
+  mutation: "Mutation",
+  security: "Security",
+};
+const GENERIC_TOOL_SUMMARY = new Set(["tool started", "tool finished", "tool completed", ""]);
+
+function text(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function toolName(value: unknown): string {
+  return text(value) || "tool";
+}
+
+/** Prefer an informative summary over runtime placeholders such as "Tool started". */
+export function toolSummary(tool: string, started?: string, completed?: string): string {
+  for (const candidate of [completed, started]) {
+    const value = text(candidate);
+    if (!GENERIC_TOOL_SUMMARY.has(value.toLowerCase())) return value;
+  }
+  return tool === "command" ? "Command" : tool === "mcp" ? "MCP tool" : tool;
+}
+
+/**
+ * Turns chronological normalized events into a compact timeline: consecutive tool events
+ * become one group (starts paired with completions), consecutive identical activity labels
+ * collapse, consecutive file changes merge, and usage events are hidden.
+ */
+export function groupEvents(events: readonly RunEvent[]): TimelineEntry[] {
+  const entries: TimelineEntry[] = [];
+  let openStarts: { tool: string; summary: string; item: ToolItem }[] = [];
+  const last = () => entries[entries.length - 1];
+  for (const event of events) {
+    const payload = event.payload && typeof event.payload === "object" ? event.payload : {};
+    const key = event._id;
+    const at = event.occurredAt;
+    if (event.type !== "tool.started" && event.type !== "tool.completed") openStarts = [];
+    switch (event.type) {
+      case "run.usage":
+        break;
+      case "run.started":
+        entries.push({ kind: "started", key, at });
+        if (text(payload.activity))
+          entries.push({
+            kind: "activity",
+            key: `${key}:a`,
+            at,
+            label: payload.activity,
+            count: 1,
+          });
+        break;
+      case "run.activity": {
+        const label = text(payload.label) || "Working";
+        const detail = text(payload.detail) || undefined;
+        const previous = last();
+        if (previous?.kind === "activity" && previous.label === label && !detail) {
+          previous.count++;
+          break;
+        }
+        entries.push({ kind: "activity", key, at, label, count: 1, ...(detail ? { detail } : {}) });
+        break;
+      }
+      case "tool.started":
+      case "tool.completed": {
+        let group = last();
+        if (group?.kind !== "tools") {
+          group = { kind: "tools", key, at, endAt: at, items: [], failed: 0, open: 0 };
+          entries.push(group);
+          openStarts = [];
+        }
+        group.endAt = at;
+        const tool = toolName(payload.tool);
+        if (event.type === "tool.started") {
+          const item: ToolItem = { tool, summary: toolSummary(tool, payload.summary) };
+          group.items.push(item);
+          group.open++;
+          openStarts.push({ tool, summary: text(payload.summary), item });
+        } else {
+          const success = payload.success !== false;
+          const index = openStarts.findIndex((start) => start.tool === tool);
+          if (index >= 0) {
+            const [start] = openStarts.splice(index, 1);
+            if (start) {
+              start.item.summary = toolSummary(tool, start.summary, payload.summary);
+              start.item.success = success;
+            }
+            group.open--;
+          } else {
+            group.items.push({
+              tool,
+              summary: toolSummary(tool, undefined, payload.summary),
+              success,
+            });
+          }
+          if (!success) group.failed++;
+        }
+        break;
+      }
+      case "files.changed": {
+        const paths = Array.isArray(payload.paths)
+          ? payload.paths.filter(
+              (path: unknown): path is string => typeof path === "string" && !!path,
+            )
+          : [];
+        const previous = last();
+        if (previous?.kind === "files") {
+          for (const path of paths) if (!previous.paths.includes(path)) previous.paths.push(path);
+          break;
+        }
+        entries.push({ kind: "files", key, at, paths: [...new Set<string>(paths)] });
+        break;
+      }
+      case "run.waiting":
+        entries.push({ kind: "waiting", key, at, reason: text(payload.reason) });
+        break;
+      case "run.completed":
+        entries.push({
+          kind: "completed",
+          key,
+          at,
+          ...(text(payload.summary) ? { summary: payload.summary } : {}),
+        });
+        break;
+      case "run.failed":
+        entries.push({
+          kind: "failed",
+          key,
+          at,
+          message: text(payload.message) || "The agent failed",
+          ...(text(payload.code) ? { code: payload.code } : {}),
+        });
+        break;
+      case "run.stopped":
+        entries.push({ kind: "stopped", key, at, reason: text(payload.reason) });
+        break;
+      default:
+        entries.push({ kind: "other", key, at, type: event.type });
+    }
+  }
+  return entries;
+}
+
+function plural(count: number, one: string, many = `${one}s`): string {
+  return `${count.toLocaleString("en-US")} ${count === 1 ? one : many}`;
+}
+
+/** "Ran 3 commands" / "Used 2 tools", based on the tools in the group. */
+export function toolGroupTitle(items: readonly ToolItem[]): string {
+  if (items.length > 0 && items.every((item) => item.tool === "command"))
+    return `Ran ${plural(items.length, "command")}`;
+  return `Used ${plural(items.length, "tool")}`;
+}
+
+export function toolGroupMeta(
+  group: { failed: number; open: number },
+  active: boolean,
+): string | undefined {
+  const parts: string[] = [];
+  if (group.failed > 0) parts.push(`${group.failed} failed`);
+  if (group.open > 0) parts.push(active ? `${group.open} running` : `${group.open} without result`);
+  return parts.length ? parts.join(" · ") : undefined;
+}
+
+/** Distinct paths from loaded files.changed events (used while a run is still active). */
+export function pathsFromEvents(events: readonly RunEvent[]): string[] {
+  const paths = new Set<string>();
+  for (const event of events)
+    if (event.type === "files.changed" && Array.isArray(event.payload?.paths))
+      for (const path of event.payload.paths) if (typeof path === "string" && path) paths.add(path);
+  return [...paths];
+}
+
+export function shortSha(sha?: string): string | undefined {
+  return sha ? sha.slice(0, 7) : undefined;
+}
+
+export function durationLabel(milliseconds: number): string {
+  const seconds = Math.max(0, Math.round(milliseconds / 1000));
+  if (seconds < 60) return `${seconds} s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return seconds % 60 ? `${minutes} min ${seconds % 60} s` : `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  return minutes % 60 ? `${hours} h ${minutes % 60} min` : `${hours} h`;
+}
+
+export interface RunTiming {
+  _creationTime: number;
+  status: string;
+  startedAt?: number;
+  completedAt?: number;
+  lastActivityAt?: number;
+}
+
+export function runDuration(run: RunTiming, now: number): string | undefined {
+  const start = run.startedAt ?? run._creationTime;
+  const active = ACTIVE_RUN.includes(run.status);
+  const end = run.completedAt ?? (active ? now : run.lastActivityAt);
+  if (end === undefined) return undefined;
+  return durationLabel(end - start);
+}
+
+export interface RunUsage {
+  inputTokens?: number;
+  cachedInputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  estimatedCostUsd?: number;
+}
+
+/** Usage exactly as reported by the provider; nothing is estimated here. */
+export function tokensLabel(run: RunUsage): string | undefined {
+  if (run.totalTokens === undefined) return undefined;
+  const parts: string[] = [];
+  if (run.inputTokens !== undefined) parts.push(`${run.inputTokens.toLocaleString("en-US")} in`);
+  if (run.cachedInputTokens) parts.push(`${run.cachedInputTokens.toLocaleString("en-US")} cached`);
+  if (run.outputTokens !== undefined) parts.push(`${run.outputTokens.toLocaleString("en-US")} out`);
+  const total = plural(run.totalTokens, "token");
+  return parts.length ? `${total} (${parts.join(" · ")})` : total;
+}
+
+export function runtimeLabel(run: {
+  runtime: string;
+  modelRequested?: string;
+  modelActual?: string;
+}): string {
+  const runtime = RUNTIME_LABEL[run.runtime] ?? run.runtime;
+  const model = run.modelActual ?? run.modelRequested;
+  if (!model) return runtime;
+  const requested =
+    run.modelActual && run.modelRequested && run.modelRequested !== run.modelActual
+      ? ` (requested ${run.modelRequested})`
+      : "";
+  return `${runtime} · ${model}${requested}`;
+}
+
+export function clockTime(timestamp: number): string {
+  const date = new Date(timestamp);
+  return [date.getHours(), date.getMinutes(), date.getSeconds()]
+    .map((part) => String(part).padStart(2, "0"))
+    .join(":");
+}
+
+export interface EvidenceRecord {
+  modality: string;
+  result: "passed" | "failed";
+}
+
+/** Required modalities without passing independent evidence. */
+export function missingModalities(
+  required: readonly string[],
+  evidence: readonly EvidenceRecord[],
+): string[] {
+  const passed = new Set(
+    evidence.filter((item) => item.result === "passed").map((item) => item.modality),
+  );
+  return required.filter((modality) => !passed.has(modality));
+}
+
+/** Plain text for failure messages; machine codes (FOO_BAR) become readable words. */
+export function failureText(message: string): string {
+  const trimmed = message.trim();
+  if (/^[A-Z][A-Z0-9_]*$/.test(trimmed)) return trimmed.replaceAll("_", " ").toLowerCase();
+  return trimmed;
+}
+
+export function modalityLabel(modality: string): string {
+  return MODALITY_LABEL[modality] ?? modality;
+}
