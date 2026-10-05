@@ -83,3 +83,12 @@ Agent Profiles are the configuration boundary for role, runtime, requested model
 ## Status
 
 Pre-alpha. Mac onboarding, QR pairing, outbound Node control, isolated workspaces and native Codex execution are under active Alpha integration. Autonomous Supervisor planning and the complete verifier/repair/integration trust loop are not yet production-complete.
+
+## Agent profiles and usage
+
+Agent roles are configuration, not hard-coded model choices. Zamolxis resolves an enabled Product-specific profile first, then an owner-wide default profile. Alpha falls back to Codex only when no profile has been configured, preserving existing onboarding while profiles are introduced.
+
+A profile selects a logical role, runtime, optional model and reasoning effort. Builder and Verifier are separate profiles even when budget constraints make them use the same underlying model. Every Agent Run snapshots the profile revision, requested model, reasoning policy and detected runtime version at launch so historical execution remains auditable after settings change.
+
+Run telemetry has dedicated fields for actual model, input/cached/output/total tokens and estimated cost. Provider/runtime-reported usage is authoritative; Zamolxis should not fabricate token counts from prompt length.
+
