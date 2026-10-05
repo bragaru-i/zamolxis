@@ -129,11 +129,18 @@ On a Mac with Node >=22, pnpm, Git, Codex CLI and an existing Codex login:
 ./scripts/setup.sh
 # Or, with dependencies installed:
 pnpm zamolxis setup
+pnpm zamolxis setup --repair   # non-interactive check and repair
 pnpm zamolxis doctor
 ```
 
 The wizard selects repositories, validates a managed root outside canonical
-checkouts, pairs the Node and installs its launchd service. Native execution uses
+checkouts, pairs the Node, stores its device credential in the macOS login Keychain
+(service `app.zamolxis.node`) and installs its launchd service. Running setup again
+offers Check and repair (default: Keychain migration of an older plaintext
+credential, credential refresh with re-pairing when revoked, service reinstall when
+it points elsewhere, heartbeat), Add or remove repositories, Pair again and Exit.
+Renaming a Mac and removing a repository from Zamolxis are not supported by the
+backend yet; removal only drops the local grant. Native execution uses
 a temporary auth-only Codex profile; user plugins/MCP/config are not copied.
 No inbound Mac server is required. See [Alpha setup](docs/alpha-onboarding.md) for
 public HTTPS/Google login and device-signing deployment requirements.
