@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 
+export { KeyValueList, SegmentedControl, Stat, StatGrid, TextInput } from "./data";
 export type { Block as MarkdownBlock, Inline as MarkdownInline } from "./markdown";
 export { Markdown, parseInline, parseMarkdown, safeHref } from "./markdown";
 

@@ -260,7 +260,7 @@ code,
   width: 100%;
 }
 .z-button--small {
-  min-height: 36px;
+  min-height: calc(var(--z-touch) - 2 * var(--z-space-1));
   padding: 0 var(--z-space-3);
   font-size: var(--z-text-sm);
 }
@@ -681,4 +681,145 @@ code,
 }
 .z-collapsible__toggle {
   margin-left: calc(-1 * var(--z-space-2));
+}
+
+/* Lane E: data display (key-value lists, stats), text input, segmented control, usage */
+.z-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.z-kv {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+}
+.z-kv__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0 var(--z-space-3);
+  padding: var(--z-space-1) 0;
+  border-top: 1px solid var(--z-border);
+  font-size: var(--z-text-sm);
+}
+.z-kv__row:first-child {
+  border-top: 0;
+}
+.z-kv__label {
+  min-width: 0;
+  color: var(--z-muted);
+  overflow-wrap: anywhere;
+}
+.z-kv__value {
+  min-width: 0;
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.z-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: var(--z-space-2);
+}
+.z-stat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--z-space-1);
+  min-width: 0;
+  padding: var(--z-space-3);
+  background: var(--z-surface-muted);
+  border-radius: var(--z-radius-md);
+}
+.z-stat__label,
+.z-stat__detail {
+  font-size: var(--z-text-xs);
+  color: var(--z-muted);
+}
+.z-stat__value {
+  font-size: var(--z-text-lg);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.z-input {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--z-touch);
+  padding: 0 var(--z-space-3);
+  font: inherit;
+  /* 16px or larger prevents iOS from zooming on focus. */
+  font-size: var(--z-text-md);
+  font-weight: 400;
+  color: var(--z-fg);
+  background: var(--z-surface);
+  border: 1px solid var(--z-input);
+  border-radius: var(--z-radius-md);
+}
+.z-segmented {
+  display: flex;
+  min-width: 0;
+  margin: 0;
+  padding: var(--z-space-1);
+  gap: var(--z-space-1);
+  border: 0;
+  background: var(--z-surface-muted);
+  border-radius: var(--z-radius-md);
+}
+.z-segmented__option {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: calc(var(--z-touch) - 2 * var(--z-space-1));
+  padding: 0 var(--z-space-2);
+  border: 0;
+  border-radius: var(--z-radius-sm);
+  background: none;
+  color: var(--z-secondary-fg);
+  font: inherit;
+  font-size: var(--z-text-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+.z-segmented__option[aria-pressed="true"] {
+  background: var(--z-surface);
+  color: var(--z-fg);
+  box-shadow: var(--z-shadow-subtle);
+}
+.z-check {
+  display: flex;
+  align-items: center;
+  gap: var(--z-space-2);
+  min-height: var(--z-touch);
+  font-size: var(--z-text-sm);
+}
+.z-check input {
+  width: var(--z-space-5);
+  height: var(--z-space-5);
+  accent-color: var(--z-primary);
+}
+.z-usage {
+  border: 1px solid var(--z-border);
+  border-radius: var(--z-radius-md);
+  background: var(--z-surface);
+}
+.z-usage > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--z-space-2);
+  min-height: var(--z-touch);
+  padding: 0 var(--z-space-3);
+  font-size: var(--z-text-sm);
+  color: var(--z-muted);
+  cursor: pointer;
+}
+.z-usage__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--z-space-3);
+  padding: 0 var(--z-space-3) var(--z-space-3);
 }
