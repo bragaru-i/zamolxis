@@ -9,6 +9,9 @@ export interface StartAssignedRun {
   readonly workspaceId: WorkspaceId;
   readonly runtime: string;
   readonly instruction: string;
+  readonly model?: string;
+  readonly reasoningEffort?: string;
+  readonly role?: "builder" | "verifier" | "repair";
 }
 export class RuntimeManager {
   constructor(
@@ -37,7 +40,16 @@ export class RuntimeManager {
       this.isAllowed,
     );
     const instructionDigest = createHash("sha256")
-      .update(JSON.stringify([input.workspaceId, input.runtime, input.instruction]))
+      .update(
+        JSON.stringify([
+          input.workspaceId,
+          input.runtime,
+          input.instruction,
+          input.model,
+          input.reasoningEffort,
+          input.role,
+        ]),
+      )
       .digest("hex");
     const previous = this.store.getRuntimeSession(input.runId);
     if (previous) {
@@ -68,6 +80,9 @@ export class RuntimeManager {
       runId: input.runId,
       workstationId: this.workstationId,
       instruction: input.instruction,
+      ...(input.model ? { model: input.model } : {}),
+      ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
+      ...(input.role ? { role: input.role } : {}),
       workspace: {
         workspaceId: input.workspaceId,
         cwd: workspace.path,

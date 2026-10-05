@@ -23,7 +23,12 @@ function digest(value: string): string {
 }
 const skillPattern = /^(?:\.agents|\.codex|\.claude)\/skills\/([a-zA-Z0-9_-]+)\/SKILL\.md$/;
 function isInstruction(path: string): boolean {
-  return /(^|\/)(AGENTS|CLAUDE)\.md$/.test(path) || path === ".github/copilot-instructions.md";
+  return (
+    /(^|\/)(AGENTS|CLAUDE)\.md$/.test(path) ||
+    path === ".github/copilot-instructions.md" ||
+    ["README.md", "package.json", "pnpm-workspace.yaml"].includes(path) ||
+    /^docs\/(?:architecture|backend)\/.*\.md$/.test(path)
+  );
 }
 function skillName(content: string, directoryName: string): string {
   const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(content)?.[1];

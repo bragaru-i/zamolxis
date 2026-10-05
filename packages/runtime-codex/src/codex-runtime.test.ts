@@ -192,3 +192,35 @@ describe("Codex native lifecycle", () => {
     expect(h.runtime.capabilities().canResume).toBe(false);
   });
 });
+
+it("propagates requested model/effort, reports provider usage and makes verifier read-only", async () => {
+  const h = harness();
+  await h.runtime.start({
+    ...input(),
+    role: "verifier",
+    model: "requested",
+    reasoningEffort: "high",
+  });
+  expect(h.connection.request.mock.calls[0]?.[1]).toMatchObject({
+    model: "requested",
+    sandbox: "read-only",
+  });
+  expect(h.connection.request.mock.calls[1]?.[1]).toMatchObject({
+    effort: "high",
+    sandboxPolicy: { type: "readOnly", networkAccess: false },
+  });
+  expect(h.connection.request.mock.calls[1]?.[1].sandboxPolicy).not.toHaveProperty("writableRoots");
+  h.connection.emit("thread/tokenUsage/updated", {
+    tokenUsage: {
+      total: { inputTokens: 100, cachedInputTokens: 40, outputTokens: 20, totalTokens: 120 },
+    },
+  });
+  h.connection.emit("turn/completed", { turn: { id: "turn", status: "completed" } });
+  const result = await events(h.runtime);
+  expect(result.find((event) => event.type === "run.usage")?.payload).toEqual({
+    inputTokens: 100,
+    cachedInputTokens: 40,
+    outputTokens: 20,
+    totalTokens: 120,
+  });
+});

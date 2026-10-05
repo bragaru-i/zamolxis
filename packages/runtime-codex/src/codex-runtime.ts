@@ -108,9 +108,11 @@ export class CodexRuntime implements AgentRuntime {
       const response = record(
         await client.request("thread/start", {
           cwd: input.workspace.cwd,
-          sandbox: "workspace-write",
+          sandbox: input.role === "verifier" ? "read-only" : "workspace-write",
           approvalPolicy: "on-request",
-          ...(this.options.model ? { model: this.options.model } : {}),
+          ...((input.model ?? this.options.model)
+            ? { model: input.model ?? this.options.model }
+            : {}),
         }),
       );
       const thread = record(response.thread);
@@ -119,15 +121,18 @@ export class CodexRuntime implements AgentRuntime {
         throw new Error("RUNTIME_WORKSPACE_MISMATCH");
       this.#sessions.set(session.id, session);
       this.#emit(session, "run.started", { nativeSessionId: session.id });
+      if (typeof response.model === "string")
+        this.#emit(session, "run.usage", { modelActual: response.model });
       const result = record(
         await client.request("turn/start", {
           threadId: session.id,
+          ...(input.reasoningEffort ? { effort: input.reasoningEffort } : {}),
           cwd: input.workspace.cwd,
           input: [{ type: "text", text: input.instruction }],
           approvalPolicy: "on-request",
           sandboxPolicy: {
-            type: "workspaceWrite",
-            writableRoots: [input.workspace.cwd],
+            type: input.role === "verifier" ? "readOnly" : "workspaceWrite",
+            ...(input.role === "verifier" ? {} : { writableRoots: [input.workspace.cwd] }),
             networkAccess: false,
             excludeTmpdirEnvVar: true,
             excludeSlashTmp: true,
@@ -236,6 +241,17 @@ export class CodexRuntime implements AgentRuntime {
       const turnId =
         event.method === "turn/completed" ? text(record(params.turn).id) : params.turnId;
       if (!session.turnId || turnId !== session.turnId) return;
+      if (event.method === "thread/tokenUsage/updated") {
+        const usage = record(record(params.tokenUsage).total);
+        const payload: Record<string, number> = {};
+        for (const field of ["inputTokens", "cachedInputTokens", "outputTokens", "totalTokens"]) {
+          const value = usage[field];
+          if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) return;
+          payload[field] = value;
+        }
+        this.#emit(session, "run.usage", payload);
+        return;
+      }
       if (event.method === "turn/completed") {
         this.#turnFinished(session, record(params.turn).status);
         return;

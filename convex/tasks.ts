@@ -9,10 +9,27 @@ export const listBySession = query({
   returns: v.array(v.any()),
   handler: async (ctx, args) => {
     await ownSession(ctx, args.workSessionId);
-    return ctx.db
+    const tasks = await ctx.db
       .query("tasks")
       .withIndex("by_session", (q) => q.eq("workSessionId", args.workSessionId))
       .take(bounded(args.limit ?? 100));
+    return Promise.all(
+      tasks.map(async (task) => {
+        const decision = task.lastTrustDecisionId
+          ? await load(ctx, "trustDecisions", task.lastTrustDecisionId)
+          : undefined;
+        return {
+          ...task,
+          ...(decision
+            ? {
+                trustOutcome: decision.eligible ? "passed" : "failed",
+                trustReasons: decision.reasons,
+                trustedSubjectSha: decision.subjectSha,
+              }
+            : {}),
+        };
+      }),
+    );
   },
 });
 export const create = mutation({
