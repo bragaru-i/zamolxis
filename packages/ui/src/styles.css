@@ -781,6 +781,124 @@ code,
   background: none;
   color: var(--z-secondary-fg);
   font: inherit;
+
+/* Lane G */
+/* Pressable row: a tap target that opens detail (e.g. a run row in a work card). */
+.z-pressable {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--z-space-1) var(--z-space-2);
+  min-width: 0;
+  min-height: var(--z-touch);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--z-radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.z-pressable__chevron {
+  color: var(--z-muted);
+  font-weight: 600;
+}
+.z-break {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.z-plain-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--z-space-1);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.z-plain-list > li {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Timeline */
+.z-timeline {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.z-timeline__item {
+  position: relative;
+  display: flex;
+  gap: var(--z-space-3);
+  min-width: 0;
+  padding-bottom: var(--z-space-3);
+}
+.z-timeline__item:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  top: 18px;
+  bottom: 2px;
+  left: 4px;
+  width: 2px;
+  background: var(--z-surface-muted);
+}
+.z-timeline__dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  margin-top: 5px;
+  border-radius: var(--z-radius-full);
+  background: currentColor;
+}
+.z-timeline__content {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--z-space-1);
+  min-width: 0;
+}
+.z-timeline__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--z-space-2);
+  min-width: 0;
+}
+.z-timeline__title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--z-text-sm);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.z-timeline__meta {
+  font-size: var(--z-text-xs);
+  color: var(--z-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.z-timeline__body {
+  min-width: 0;
+  font-size: var(--z-text-sm);
+  color: var(--z-muted);
+  overflow-wrap: anywhere;
+}
+
+/* Disclosure */
+.z-disclosure {
+  min-width: 0;
+}
+.z-disclosure__summary {
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+  color: var(--z-secondary-fg);
   font-size: var(--z-text-sm);
   font-weight: 600;
   cursor: pointer;
@@ -832,4 +950,38 @@ code,
   flex-direction: column;
   gap: var(--z-space-3);
   padding: 0 var(--z-space-3) var(--z-space-3);
+
+.z-disclosure__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--z-space-2);
+  min-width: 0;
+  padding-top: var(--z-space-1);
+}
+
+/* Facts (label / value pairs) */
+.z-facts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--z-space-2);
+  min-width: 0;
+  margin: 0;
+}
+.z-facts__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--z-space-3);
+  min-width: 0;
+}
+.z-facts__label {
+  flex: 0 0 6.5rem;
+  font-size: var(--z-text-sm);
+  color: var(--z-muted);
+}
+.z-facts__value {
+  flex: 1 1 10rem;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--z-text-sm);
+  overflow-wrap: anywhere;
 }

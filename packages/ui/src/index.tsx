@@ -13,6 +13,7 @@ import {
 export { KeyValueList, SegmentedControl, Stat, StatGrid, TextInput } from "./data";
 export type { Block as MarkdownBlock, Inline as MarkdownInline } from "./markdown";
 export { Markdown, parseInline, parseMarkdown, safeHref } from "./markdown";
+export { Disclosure, Facts, Timeline, TimelineItem } from "./timeline";
 
 export type Tone = "success" | "warning" | "danger" | "info" | "neutral";
 
