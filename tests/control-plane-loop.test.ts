@@ -310,7 +310,7 @@ it("executes the Codex adapter through Node workspace assignment, Convex settlem
       if (method === "thread/start") return { thread: { id: "codex-native", cwd: params.cwd } };
       if (method === "turn/start") {
         listener?.({ method: "turn/started", params: { threadId: "codex-native", turn: { id: "native-turn" } } });
-        listener?.({ method: "turn/completed", params: { threadId: "codex-native", turn: { id: "native-turn", status: "completed" } } });
+        setTimeout(() => listener?.({ method: "turn/completed", params: { threadId: "codex-native", turn: { id: "native-turn", status: "completed" } } }), 20);
         return { turn: { id: "native-turn", status: "inProgress" } };
       }
       throw new Error("UNEXPECTED_NATIVE_CALL");
