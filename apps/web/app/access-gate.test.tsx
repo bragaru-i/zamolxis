@@ -5,11 +5,12 @@ import { getFunctionName } from "convex/server";
 
 const state = vi.hoisted(() => ({
   authenticated: true,
+  loading: false,
   accessStatus: "pending" as "pending" | "allowed" | "blocked",
   queries: [] as string[],
 }));
 vi.mock("convex/react", () => ({
-  useConvexAuth: () => ({ isAuthenticated: state.authenticated, isLoading: false }),
+  useConvexAuth: () => ({ isAuthenticated: state.authenticated, isLoading: state.loading }),
   useMutation: () => vi.fn(),
   useQuery: (reference: Parameters<typeof getFunctionName>[0]) => {
     const name = getFunctionName(reference);
@@ -26,6 +27,7 @@ import HomePage from "./page";
 afterEach(() => vi.unstubAllEnvs());
 beforeEach(() => {
   state.authenticated = true;
+  state.loading = false;
   state.accessStatus = "pending";
   state.queries = [];
   vi.stubEnv("NEXT_PUBLIC_CONVEX_URL", "https://fixture.convex.cloud");
@@ -36,6 +38,13 @@ it.each(["pending", "blocked"] as const)(
     state.accessStatus = status;
     const html = renderToStaticMarkup(createElement(HomePage));
     expect(html).toContain(status === "blocked" ? "Access revoked" : "Access pending");
+    expect(html).not.toContain("Continue with Google");
+    expect(html).toContain("Sign out");
+    expect(html).toContain(
+      status === "blocked"
+        ? "Contact an admin to restore access"
+        : "Wait until an admin adds you to the system",
+    );
     expect(html).not.toContain("New command");
     expect(html).not.toContain("Approve this Mac");
     expect(state.queries).toEqual(["profiles:viewer"]);
@@ -48,4 +57,12 @@ it("renders the dashboard only after a database grant", () => {
 it("offers Google sign-in to signed-out users", () => {
   state.authenticated = false;
   expect(renderToStaticMarkup(createElement(HomePage))).toContain("Continue with Google");
+});
+
+it("hides Google sign-in while authentication is being restored", () => {
+  state.authenticated = false;
+  state.loading = true;
+  const html = renderToStaticMarkup(createElement(HomePage));
+  expect(html).toContain("Checking access");
+  expect(html).not.toContain("Continue with Google");
 });

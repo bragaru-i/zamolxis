@@ -35,11 +35,13 @@ function AccessGate() {
     <main>
       <h1>Zamolxis</h1>
       {isAuthenticated ? (
-        <section>
+        <section aria-live="polite">
           <h2>{viewer?.accessStatus === "blocked" ? "Access revoked" : "Access pending"}</h2>
           <p>
-            {viewer?.email ? `Signed in as ${viewer.email}. ` : ""}The owner must approve your
-            account before you can access projects or pair a Mac.
+            {viewer?.email ? `Signed in as ${viewer.email}. ` : ""}
+            {viewer?.accessStatus === "blocked"
+              ? "Your access has been revoked. Contact an admin to restore access."
+              : "Wait until an admin adds you to the system. This page will update automatically when your access is approved."}
           </p>
           <button
             type="button"
@@ -65,12 +67,11 @@ function AccessGate() {
                 });
               } catch {
                 setError("Could not start Google sign-in. Try again.");
-              } finally {
                 setBusy(false);
               }
             }}
           >
-            Continue with Google
+            {busy ? "Connecting to Google…" : "Continue with Google"}
           </button>
         </section>
       )}
