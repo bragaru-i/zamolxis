@@ -66,6 +66,20 @@ See [PROJECT.md](PROJECT.md) and GitHub Issues.
 
 Detailed architecture/build specifications currently live in the companion `zamolxis-docs` repository.
 
+## Identity, PWA and Node security
+
+The public UI is a PWA served from one configured canonical HTTPS origin (`ZAMOLXIS_APP_URL`). Human identity and local Node identity are deliberately separate. A human authenticates through the configured OIDC provider; a Mac is enrolled only after an authenticated user approves a short-lived, single-use QR pairing request.
+
+The QR points to the canonical PWA origin. OAuth callbacks, post-login redirects and bootstrap metadata use that same configured origin rather than trusting an incoming Host header or a preview deployment URL. The Mac makes outbound connections to the control plane; Zamolxis does not require a public inbound port on the workstation.
+
+Authorization is server-side: authenticated ownership binds Products, Repositories, Work Sessions and Workstations. A paired Node receives a Node-scoped credential and can be revoked independently from human browser sessions.
+
+## Agent roles and trust
+
+The intended execution model separates the human-facing Supervisor from repository executors. Builder Runs create candidate changes in isolated worktrees. Verifier Runs are independent and produce evidence for an exact candidate SHA. A deterministic Trust Engine, not a Builder or Verifier assertion, decides whether required evidence is sufficient for integration. Builder and Verifier may temporarily use the same underlying model in budget Alpha, but they remain distinct roles, Runs and contexts so either model can be changed independently.
+
+Agent Profiles are the configuration boundary for role, runtime, requested model and reasoning policy. Each Run snapshots its effective configuration so historical model/usage data does not change when a profile is edited.
+
 ## Status
 
-Pre-alpha / architecture and foundation.
+Pre-alpha. Mac onboarding, QR pairing, outbound Node control, isolated workspaces and native Codex execution are under active Alpha integration. Autonomous Supervisor planning and the complete verifier/repair/integration trust loop are not yet production-complete.
