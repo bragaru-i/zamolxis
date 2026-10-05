@@ -50,6 +50,8 @@ export function parseExecutionCommand(value: unknown): ExecutionCommand {
         runtime: field(payload, "runtime"),
         role: payload.role === "verifier" ? "verifier" : "builder",
         instruction: field(payload, "instruction", 32768),
+        ...(payload.model !== undefined ? { model: field(payload, "model", 256) } : {}),
+        ...(payload.reasoningEffort !== undefined ? { reasoningEffort: field(payload, "reasoningEffort", 64) } : {}),
       },
     };
   }
