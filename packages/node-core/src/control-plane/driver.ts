@@ -1,12 +1,21 @@
-import { commitCandidate, mergeDependencies } from "@zamolxis/git";
-import { planAlpha } from "../capabilities/alpha-plan";
-import { runVerificationChecks, type CheckEvidence } from "../verification/checks";
 import type { PlannedTask } from "@zamolxis/application";
 import type { AgentRunId, NormalizedRunEventDto, WorkspaceId } from "@zamolxis/contracts";
+import { commitCandidate, mergeDependencies } from "@zamolxis/git";
 import type { RuntimeRegistry } from "@zamolxis/runtime-core";
 import type { RepositoryDiscovery } from "../capabilities/repository-discovery";
+import {
+  type ConversationMessage,
+  explicitPlan,
+  parseSupervisorDecision,
+  REPLY_LIMIT,
+  repositoryChecks,
+  type SupervisorDecision,
+  type SupervisorDecisionKind,
+  supervisorInstruction,
+} from "../capabilities/supervisor";
 import type { LocalStateStore, OutboxEvent, StoredCommand } from "../persistence/local-state";
 import type { RuntimeManager } from "../runtime/runtime-manager";
+import { type CheckEvidence, runVerificationChecks } from "../verification/checks";
 import type { WorkspaceManager } from "../workspace/workspace-manager";
 
 export type ExecutionCommand = {
@@ -27,7 +36,14 @@ export type ExecutionCommand = {
     }
   | {
       readonly type: "repository.plan";
-      readonly payload: { textCommandId: string; workspaceId: string; text: string };
+      readonly payload: {
+        textCommandId: string;
+        workspaceId: string;
+        text: string;
+        // Absent when an older backend sends the command.
+        supervisor?: SupervisorSelection;
+        conversation?: ConversationMessage[];
+      };
     }
   | {
       readonly type: "integration.prepare";
@@ -57,6 +73,27 @@ export type ExecutionCommand = {
   | { readonly type: "invalid"; readonly payload: { code: string } }
 );
 const TERMINAL = ["completed", "failed", "stopped"];
+export interface SupervisorSelection {
+  readonly runtime: string;
+  readonly model?: string;
+  readonly reasoningEffort?: string;
+}
+export interface SupervisorUsage {
+  modelActual?: string;
+  inputTokens?: number;
+  cachedInputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+}
+const USAGE_COUNTERS = ["inputTokens", "cachedInputTokens", "outputTokens", "totalTokens"] as const;
+function boundedSummary(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const text = value.trim().slice(0, REPLY_LIMIT);
+  return text || undefined;
+}
+export function supervisorRunId(textCommandId: string): string {
+  return `supervisor:${textCommandId}`;
+}
 export type Delivery =
   | {
       readonly kind: "repository.plan";
@@ -64,6 +101,9 @@ export type Delivery =
       readonly contextSha: string;
       readonly contextDigest: string;
       readonly tasks: PlannedTask[];
+      readonly decision: SupervisorDecisionKind;
+      readonly reply: string;
+      readonly usage?: SupervisorUsage;
     }
   | {
       readonly kind: "integration.ready";
@@ -96,6 +136,8 @@ export type Delivery =
       readonly dirty: boolean;
       readonly changedFileCount: number;
       readonly evidence?: CheckEvidence[];
+      // The agent's final message, bounded to REPLY_LIMIT characters.
+      readonly summary?: string;
     }
   | { readonly kind: "command.failed"; readonly commandId: string; readonly code: string }
   | { readonly kind: "command.complete"; readonly commandId: string };
@@ -186,7 +228,9 @@ export class ControlPlaneDriver {
       return;
     }
     if (stored.status === "running" || stored.status === "failed") {
+      // Throws unless the interrupted command could be settled locally.
       await this.reconcileInterrupted(stored);
+      return;
     }
     await this.transport.claim(command.commandId);
     await this.transport.acknowledge(command.commandId);
@@ -220,14 +264,40 @@ export class ControlPlaneDriver {
         const context = this.#discovery.discover(command.payload.workspaceId);
         this.#discovery.assertCurrent(context);
         const workspace = this.workspaces.inspect(command.payload.workspaceId);
-        const tasks = planAlpha(command.payload.text, workspace.path);
+        const legacy = explicitPlan(command.payload.text);
+        let result: SupervisorDecision;
+        let usage: SupervisorUsage = {};
+        if (legacy) {
+          result = {
+            decision: "plan",
+            reply: `Planned ${legacy.length} task${legacy.length === 1 ? "" : "s"} from the provided plan.`,
+            tasks: legacy,
+          };
+        } else {
+          const checks = repositoryChecks(workspace.path);
+          const outcome = await this.#supervise(
+            command.payload,
+            supervisorInstruction({
+              text: command.payload.text,
+              conversation: command.payload.conversation ?? [],
+              context,
+              checks,
+            }),
+          );
+          usage = outcome.usage;
+          result = parseSupervisorDecision(outcome.summary, checks);
+        }
+        // The Supervisor is read-only: the planned context must still be the current one.
         this.#discovery.assertCurrent(context);
         deliveries.push({
           kind: "repository.plan",
           textCommandId: command.payload.textCommandId,
           contextSha: context.gitSha,
           contextDigest: context.snapshotDigest,
-          tasks,
+          tasks: result.tasks,
+          decision: result.decision,
+          reply: result.reply,
+          ...(Object.keys(usage).length ? { usage } : {}),
         });
       } else if (command.type === "integration.prepare") {
         const workspace = this.workspaces.inspect(command.payload.workspaceId);
@@ -306,6 +376,7 @@ export class ControlPlaneDriver {
         let session = await this.manager.start(input);
         const runtime = this.runtimes.get(input.runtime);
         const events: NormalizedRunEventDto[] = [];
+        let summary: string | undefined;
         for await (const event of runtime.subscribe({ nativeSessionId: session.nativeSessionId })) {
           if (
             event.runId !== input.runId ||
@@ -313,6 +384,7 @@ export class ControlPlaneDriver {
             event.workstationId !== this.workstationId
           )
             throw new Error("RUNTIME_EVENT_PROVENANCE_MISMATCH");
+          if (event.type === "run.completed") summary = boundedSummary(event.payload.summary);
           events.push(event);
           this.#cursors.set(input.runId, event.sequence);
           if (events.length === 50) {
@@ -348,6 +420,7 @@ export class ControlPlaneDriver {
           deliveries.push({
             kind: "run.complete",
             ...(evidence ? { evidence } : {}),
+            ...(summary ? { summary } : {}),
             runId: input.runId,
             headSha: workspace.headSha ?? workspace.baseSha,
             dirty: workspace.dirty,
@@ -379,7 +452,118 @@ export class ControlPlaneDriver {
     this.store.completeCommandWithEvents(command.commandId, outbox);
     await this.flush();
   }
-  private async reconcileInterrupted(command: StoredCommand): Promise<never> {
+  // The backend may name a Supervisor runtime this Node does not run (it falls back to
+  // "codex" without knowing what is installed). Use the requested runtime when registered,
+  // otherwise "codex" when registered, otherwise the first registered runtime.
+  #supervisorRuntime(requested: string | undefined): string {
+    const ids = this.runtimes.ids();
+    if (requested && ids.includes(requested)) return requested;
+    if (ids.includes("codex")) return "codex";
+    const first = ids[0];
+    if (!first) throw new Error("RUNTIME_UNAVAILABLE");
+    return first;
+  }
+  // Runs the Supervisor as a Node-local, read-only run on the planning workspace. Its
+  // events are not delivered; only its final reply and reported usage are returned.
+  async #supervise(
+    payload: { textCommandId: string; workspaceId: string; supervisor?: SupervisorSelection },
+    instruction: string,
+  ): Promise<{ summary?: string; usage: SupervisorUsage }> {
+    const runId = supervisorRunId(payload.textCommandId) as AgentRunId;
+    const workspaceId = payload.workspaceId as WorkspaceId;
+    const runtimeId = this.#supervisorRuntime(payload.supervisor?.runtime);
+    const runtime = this.runtimes.get(runtimeId);
+    let nativeSessionId: string | undefined;
+    let settled = false;
+    try {
+      const session = await this.manager.start({
+        runId,
+        workspaceId,
+        runtime: runtimeId,
+        role: "supervisor",
+        instruction,
+        ...(payload.supervisor?.model ? { model: payload.supervisor.model } : {}),
+        ...(payload.supervisor?.reasoningEffort
+          ? { reasoningEffort: payload.supervisor.reasoningEffort }
+          : {}),
+      });
+      nativeSessionId = session.nativeSessionId;
+      let summary: string | undefined;
+      const usage: SupervisorUsage = {};
+      for await (const event of runtime.subscribe({ nativeSessionId })) {
+        if (
+          event.runId !== runId ||
+          event.workspaceId !== workspaceId ||
+          event.workstationId !== this.workstationId
+        )
+          throw new Error("RUNTIME_EVENT_PROVENANCE_MISMATCH");
+        if (event.type === "run.usage") {
+          const reported = event.payload;
+          if (
+            typeof reported.modelActual === "string" &&
+            reported.modelActual.length > 0 &&
+            reported.modelActual.length <= 256
+          )
+            usage.modelActual = reported.modelActual;
+          for (const counter of USAGE_COUNTERS) {
+            const value = reported[counter];
+            if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0)
+              usage[counter] = value;
+          }
+        }
+        if (event.type === "run.completed") summary = boundedSummary(event.payload.summary);
+        if (["run.waiting", "run.completed", "run.failed", "run.stopped"].includes(event.type))
+          break;
+      }
+      const final = await this.manager.observe(runId);
+      settled = TERMINAL.includes(final.state);
+      if (final.state === "completed") return { ...(summary ? { summary } : {}), usage };
+      throw new Error(
+        final.state === "stopped"
+          ? "SUPERVISOR_STOPPED"
+          : final.state === "failed"
+            ? "SUPERVISOR_FAILED"
+            : "SUPERVISOR_INCOMPLETE",
+      );
+    } finally {
+      // The Supervisor never keeps the planning workspace: stop it if it is still
+      // active (it cannot ask for input) and release its lease.
+      if (!settled && nativeSessionId) {
+        try {
+          await runtime.stop({ nativeSessionId });
+        } catch {
+          /* The command fails either way; the read-only workspace is released below. */
+        }
+      }
+      if (this.store.getWorkspaceLease(workspaceId)?.runId === runId)
+        this.workspaces.release(workspaceId, runId);
+    }
+  }
+  private async reconcileInterrupted(command: StoredCommand): Promise<void> {
+    if (command.type === "repository.plan" && command.status === "running") {
+      // An interrupted Supervisor only read the planning workspace: release it and
+      // fail the plan visibly instead of blocking the queue on reconciliation.
+      const payload = command.payload as Record<string, unknown>;
+      if (typeof payload.textCommandId === "string" && typeof payload.workspaceId === "string") {
+        const runId = supervisorRunId(payload.textCommandId);
+        if (this.store.getWorkspaceLease(payload.workspaceId)?.runId === runId)
+          this.workspaces.release(payload.workspaceId, runId);
+      }
+      this.store.completeCommandWithEvents(command.commandId, [
+        {
+          eventId: `delivery:${command.commandId}:000`,
+          type: "control-plane.delivery",
+          payload: {
+            kind: "command.failed",
+            commandId: command.commandId,
+            code: "SUPERVISOR_INTERRUPTED",
+          } satisfies Delivery,
+          createdAt: Date.now(),
+        },
+      ]);
+      await this.flush();
+      return;
+    }
     if (command.type === "runtime.start") {
       const payload = command.payload as Record<string, unknown>;
       if (typeof payload.runId !== "string" || typeof payload.runtime !== "string")

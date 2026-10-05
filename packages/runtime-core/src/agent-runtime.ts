@@ -6,6 +6,8 @@ import type {
   WorkstationId,
 } from "@zamolxis/contracts";
 
+// "supervisor" is a Node-local, read-only planning run; it is never reported as a backend agent run.
+export type AgentRole = "builder" | "verifier" | "repair" | "supervisor";
 export interface RuntimeWorkspace {
   readonly workspaceId: WorkspaceId;
   readonly cwd: string;
@@ -17,7 +19,7 @@ export interface StartRunInput {
   readonly workstationId: WorkstationId;
   readonly workspace: RuntimeWorkspace;
   readonly instruction: string;
-  readonly role?: "builder" | "verifier" | "repair";
+  readonly role?: AgentRole;
   readonly model?: string;
   readonly reasoningEffort?: string;
 }

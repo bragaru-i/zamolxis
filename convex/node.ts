@@ -476,7 +476,11 @@ export const completeRun = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const run = await nodeRun(ctx, args.workstationId, args.runId);
-    if (!Number.isSafeInteger(args.changedFileCount) || args.changedFileCount < 0)
+    if (
+      !Number.isSafeInteger(args.changedFileCount) ||
+      args.changedFileCount < 0 ||
+      (args.summary?.length ?? 0) > 8000
+    )
       fail("INVALID_ARGUMENT");
     await settleRun(ctx, run._id, args);
     if (run.role === "verifier") {

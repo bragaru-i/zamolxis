@@ -224,3 +224,36 @@ it("propagates requested model/effort, reports provider usage and makes verifier
     totalTokens: 120,
   });
 });
+
+it("runs the Supervisor read-only and reports the last agent message as the final summary", async () => {
+  const h = harness();
+  await h.runtime.start({ ...input(), role: "supervisor" });
+  expect(h.connection.request.mock.calls[0]?.[1]).toMatchObject({ sandbox: "read-only" });
+  expect(h.connection.request.mock.calls[1]?.[1]).toMatchObject({
+    sandboxPolicy: { type: "readOnly", networkAccess: false },
+  });
+  expect(h.connection.request.mock.calls[1]?.[1].sandboxPolicy).not.toHaveProperty("writableRoots");
+  h.connection.emit("item/started", { item: { id: "m1", type: "agentMessage", text: "" } });
+  h.connection.emit("item/completed", {
+    item: { id: "m1", type: "agentMessage", text: "Reading the repository" },
+  });
+  h.connection.emit("item/completed", {
+    item: { id: "m2", type: "agentMessage", text: `  ${"x".repeat(9000)}  ` },
+  });
+  h.connection.emit("turn/completed", { turn: { id: "turn", status: "completed" } });
+  const all = await events(h.runtime);
+  expect(all.find((event) => event.type === "run.completed")?.payload).toEqual({
+    summary: "x".repeat(8000),
+  });
+});
+
+it("keeps the fixed completion summary when the agent sent no message", async () => {
+  const h = harness();
+  await h.runtime.start(input());
+  h.connection.emit("item/completed", { item: { id: "m1", type: "agentMessage", text: "  " } });
+  h.connection.emit("turn/completed", { turn: { id: "turn", status: "completed" } });
+  const all = await events(h.runtime);
+  expect(all.find((event) => event.type === "run.completed")?.payload).toEqual({
+    summary: "Codex turn completed",
+  });
+});

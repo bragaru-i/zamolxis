@@ -9,6 +9,9 @@ export class RuntimeRegistry {
     if (runtime.capabilities().runtime !== runtime.id) throw new Error("RUNTIME_IDENTITY_MISMATCH");
     this.#runtimes.set(runtime.id, runtime);
   }
+  ids(): string[] {
+    return [...this.#runtimes.keys()];
+  }
   get(id: string): AgentRuntime {
     const runtime = this.#runtimes.get(id);
     if (!runtime) throw new Error("RUNTIME_UNAVAILABLE");

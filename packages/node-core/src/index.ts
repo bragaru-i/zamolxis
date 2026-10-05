@@ -9,6 +9,7 @@ export * from "./repository/repository-registry";
 export * from "./workspace/workspace-manager";
 export * from "./capabilities/repository-discovery";
 export * from "./capabilities/capability-trace";
+export * from "./capabilities/supervisor";
 export * from "./runtime/runtime-manager";
 
 export * from "./control-plane/driver";

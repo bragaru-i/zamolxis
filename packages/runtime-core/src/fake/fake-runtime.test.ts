@@ -2,6 +2,7 @@ import type { AgentRunId, WorkspaceId, WorkstationId } from "@zamolxis/contracts
 import { describe, expect, it } from "vitest";
 import { RuntimeRegistry } from "../runtime-registry";
 import { FakeRuntime } from "./fake-runtime";
+
 const input = {
   runId: "run" as AgentRunId,
   workstationId: "node" as WorkstationId,
@@ -77,4 +78,21 @@ it("selects eligible adapters without vendor branches and respects forced policy
     "UNAVAILABLE",
   );
   expect(() => registry.register(new FakeRuntime())).toThrow("ALREADY_REGISTERED");
+  expect(registry.ids()).toEqual(["fake"]);
+});
+it("plays a per-run scenario and reports an arbitrary final summary", async () => {
+  const runtime = new FakeRuntime((run) => [
+    { type: "success", summary: run.role === "supervisor" ? '{"decision":"answer"}' : "Built" },
+  ]);
+  const supervisor = await runtime.start({
+    ...input,
+    runId: "s" as AgentRunId,
+    role: "supervisor",
+  });
+  const builder = await runtime.start({ ...input, runId: "b" as AgentRunId, role: "builder" });
+  const summaries: Array<string | undefined> = [];
+  for (const session of [supervisor, builder])
+    for await (const event of runtime.subscribe({ nativeSessionId: session.nativeSessionId }))
+      if (event.type === "run.completed") summaries.push(event.payload.summary);
+  expect(summaries).toEqual(['{"decision":"answer"}', "Built"]);
 });

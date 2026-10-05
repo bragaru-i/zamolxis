@@ -1,26 +1,42 @@
 "use client";
-import { AppHeader, AppShell, Button, Composer, Message, Notice, StatusBadge } from "@zamolxis/ui";
+import {
+  AppHeader,
+  AppShell,
+  Button,
+  Collapsible,
+  Composer,
+  Markdown,
+  Message,
+  Notice,
+  StatusBadge,
+  Thinking,
+} from "@zamolxis/ui";
 import { useMutation, useQuery } from "convex/react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
+import {
+  assistantReply,
+  type ConversationMessage,
+  likelyLongSummary,
+  plannedLabel,
+  startsNewSession,
+  usageLine,
+} from "./conversation";
 import { explainError, explainFailure } from "./errors";
 
 interface Session {
   _id: Id<"workSessions">;
   title: string;
   status: string;
+  activeRunCount?: number;
   contextSummary?: string;
 }
-interface UserMessage {
+interface UserMessage extends ConversationMessage {
   _id: string;
   text: string;
   productId: Id<"products">;
   repositoryId: Id<"repositories">;
-  planned: boolean;
-  planTaskCount: number;
-  planStatus: string;
-  planError?: string;
 }
 interface Task {
   _id: Id<"tasks">;
@@ -40,6 +56,7 @@ interface Run {
   status: string;
   activityLabel?: string;
   totalTokens?: number;
+  resultSummary?: string;
 }
 
 const ENDED = ["completed", "failed", "cancelled"];
@@ -81,6 +98,8 @@ export function SessionView({
   }, [count]);
   const ended = session ? ENDED.includes(session.status) : false;
   const last = messages?.[messages.length - 1];
+  const startsNew = startsNewSession(session?.status);
+  const asking = last ? assistantReply(last).kind === "ask" : false;
   const sortedTasks = [...(tasks ?? [])].sort((a, b) => a._creationTime - b._creationTime);
   const runsFor = (taskId: Id<"tasks">) =>
     (runs ?? [])
@@ -104,7 +123,9 @@ export function SessionView({
           }
           trailing={
             session &&
-            !ended && (
+            // An idle session waiting for the user has nothing to stop.
+            !ended &&
+            (session.status !== "waiting" || (session.activeRunCount ?? 0) > 0) && (
               <Button variant="danger" size="small" onClick={() => setConfirmStop(true)}>
                 Stop
               </Button>
@@ -118,9 +139,11 @@ export function SessionView({
           onChange={setText}
           busy={busy}
           disabled={!ready || !last}
-          placeholder={ended ? "Start a new session…" : "Add to this session…"}
-          submitLabel={ended ? "Start" : "Send"}
-          hint={ended ? "This session has ended. Sending starts a new session." : undefined}
+          placeholder={
+            startsNew ? "Start a new session…" : asking ? "Reply…" : "Add to this session…"
+          }
+          submitLabel={startsNew ? "Start" : "Send"}
+          hint={startsNew ? "This session has ended. Sending starts a new session." : undefined}
           onSubmit={async () => {
             if (!last) return;
             setBusy(true);
@@ -131,7 +154,7 @@ export function SessionView({
                 repositoryId: last.repositoryId,
                 text,
                 idempotencyKey: crypto.randomUUID(),
-                ...(ended ? {} : { sessionId }),
+                ...(startsNew ? {} : { sessionId }),
               });
               setText("");
               if (id !== sessionId) onOpen(id);
@@ -185,17 +208,7 @@ export function SessionView({
               <Message author="user" label="You">
                 {message.text}
               </Message>
-              <Message author="assistant" label="Zamolxis">
-                {message.planned ? (
-                  `Planned ${message.planTaskCount} ${message.planTaskCount === 1 ? "task" : "tasks"}.`
-                ) : message.planStatus === "failed" ? (
-                  `I couldn't plan this: ${explainFailure(message.planError ?? "unknown error")}.`
-                ) : message.planStatus === "expired" ? (
-                  "Planning didn't start in time. Send the message again."
-                ) : (
-                  <span role="status">Reading the repository and planning…</span>
-                )}
-              </Message>
+              <AssistantMessage message={message} />
             </div>
           ))}
           {sortedTasks.length > 0 && (
@@ -253,6 +266,13 @@ export function SessionView({
                           {run.activityLabel && ACTIVE_RUN.includes(run.status) && (
                             <span className="z-xsmall z-muted">{run.activityLabel}</span>
                           )}
+                          {run.resultSummary?.trim() && (
+                            <div className="z-small">
+                              <Collapsible likelyLong={likelyLongSummary(run.resultSummary)}>
+                                <Markdown>{run.resultSummary}</Markdown>
+                              </Collapsible>
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -279,5 +299,34 @@ export function SessionView({
       {notice && <Notice tone={notice.tone}>{notice.text}</Notice>}
       <div ref={end} />
     </AppShell>
+  );
+}
+
+function AssistantMessage({ message }: { message: UserMessage }) {
+  const state = assistantReply(message);
+  const meta = usageLine(message);
+  return (
+    <Message author="assistant" label="Zamolxis" meta={meta}>
+      {state.kind === "error" ? (
+        state.text
+      ) : state.kind === "thinking" ? (
+        <>
+          {state.reply && <Markdown>{state.reply}</Markdown>}
+          <Thinking
+            detail={message.decision === "plan" ? "Preparing tasks" : "Reading the repository"}
+          />
+        </>
+      ) : state.kind === "plan" ? (
+        <>
+          {state.reply && <Markdown>{state.reply}</Markdown>}
+          <p className="z-small z-muted">{plannedLabel(state.taskCount)}</p>
+        </>
+      ) : (
+        <>
+          {state.kind === "ask" && <StatusBadge status="needs_input" label="Needs your answer" />}
+          <Markdown>{state.reply}</Markdown>
+        </>
+      )}
+    </Message>
   );
 }

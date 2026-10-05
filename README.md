@@ -23,10 +23,13 @@ reuse before requesting a separate planning worktree. The Node discovers
 repository instructions, skills and package conventions at a concrete SHA and
 context digest **before** producing a plan. Backend validation bounds plan size,
 requires unique task keys and topologically ordered dependencies, and rejects
-arbitrary shell commands in check specifications. Planning is deterministic:
-prose creates one Task; a structured text plan can express multiple Tasks and a
-DAG. An LLM does not authorize commands or trust. Semantic LLM decomposition of
-arbitrary prose is not implemented.
+arbitrary shell commands in check specifications. Each message runs a read-only
+Supervisor agent on the Node (runtime/model from the Supervisor profile). It decides
+to **answer** in chat (no tasks), **plan** self-contained tasks that run in parallel
+where independent, or **ask** a clarifying question. Output that is not a valid
+decision is shown as an answer and never starts builders. A message that is itself
+a structured text plan skips the Supervisor. The Supervisor proposes; the backend
+validates the plan, and an LLM never authorizes commands or trust.
 
 Ready independent Tasks dispatch concurrently, subject to transactional Node and
 profile capacity. Downstream worktrees inherit trusted prerequisite commits;
@@ -76,8 +79,9 @@ and role. Resolution is enabled Product profile -> enabled global profile ->
 Alpha Codex fallback (explicit legacy runtime requests remain supported).
 Disabled profiles neither block fallback nor create false conflicts. At most one
 enabled profile per scope/role is accepted. Builder, Verifier and Repair use their
-own effective configuration. Supervisor and Integration profile roles are stored
-for future runtime execution; those two boundaries are deterministic in Alpha.
+own effective configuration. The Supervisor profile selects the planning runtime
+and model; the Integration role is stored for future runtime execution and is
+deterministic in Alpha.
 
 Each Run snapshots profile ID/revision, runtime, requested model, reasoning effort
 and detected runtime version when available. Model/effort propagate through
@@ -145,8 +149,9 @@ activity label, reported token totals) and a Stop control per active Run and per
 The composer stays pinned to the bottom; in an ended Session, sending starts a new Session.
 Mac status, removal of a Mac and sign-out are in Settings.
 
-Not yet: Supervisor or agent replies as conversation text (planning is deterministic, see
-above), steering a running agent, run activity detail, agent profile and usage screens.
+Supervisor replies (answers, plans, questions) and each agent's final reply appear in
+the conversation, rendered as safe Markdown. Not yet: steering a running agent,
+stopping the Supervisor, run activity detail, agent profile and usage screens.
 
 ## Structured text plan
 
@@ -189,8 +194,8 @@ not deployed Google/device authentication.
 
 Public phone -> Google/Convex Auth -> pairing -> deployed Convex -> launchd E2E remains untested
 without an operator-configured deployment. Native process resumption after Node
-restart, a native approval bridge, richer verification modalities, semantic LLM
-planning and automatic publishing are not implemented. Repository scripts execute
+restart, a native approval bridge, richer verification modalities and automatic
+publishing are not implemented. Repository scripts execute
 with local Node authority and must be trusted by the repository owner; Alpha is
 not a sandbox for hostile repository code. Node reconciliation preserves ambiguous
 leases instead of silently starting a second process.

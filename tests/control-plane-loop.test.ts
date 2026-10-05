@@ -687,14 +687,39 @@ it("runs text intent through discovery, native Builder, independent Verifier, de
       })
     : new (class extends FakeRuntime {
         override async start(input: StartRunInput) {
-          if (input.role !== "verifier")
+          if (input.role === "builder" || input.role === "repair")
             writeFileSync(
               join(input.workspace.cwd, "outcome.txt"),
               ++buildStarts === 1 ? "FAIL\n" : "ALPHA_OK\n",
             );
           return super.start(input);
         }
-      })();
+      })((input) => [
+        { type: "activity", label: "Fake runtime executing" },
+        {
+          type: "success",
+          // The fixture Supervisor plans the prose request as one task.
+          summary:
+            input.role === "supervisor"
+              ? JSON.stringify({
+                  decision: "plan",
+                  reply: "One task: create outcome.txt.",
+                  tasks: [
+                    {
+                      key: "outcome",
+                      title: "Create outcome.txt",
+                      description: input.instruction.includes("ALPHA_OK")
+                        ? "Create outcome.txt containing exactly ALPHA_OK and a newline."
+                        : "Missing request",
+                      dependencies: [],
+                      verificationScripts: ["test"],
+                      requiredModalities: ["static", "test"],
+                    },
+                  ],
+                })
+              : `${input.role} finished: wrote outcome.txt`,
+        },
+      ]);
   const n = await f.boot(runtime);
   const driver = n.driver();
   const { RepositoryDiscovery } = await import(
@@ -723,7 +748,9 @@ it("runs text intent through discovery, native Builder, independent Verifier, de
     planTaskCount: 1,
     planStatus: "completed",
     repositoryId: f.repositoryId,
+    decision: "plan",
   });
+  expect(messages[0]?.reply).toEqual(expect.any(String));
   const { user: other } = await seedHuman(f.t, "mallory");
   await expect(
     other.query(api.supervisor.messages, { workSessionId: sessionId }),
@@ -732,6 +759,9 @@ it("runs text intent through discovery, native Builder, independent Verifier, de
   const repaired = !authenticated || nativeRepair;
   const candidate = runs.find((run) => run.role === (repaired ? "repair" : "builder"));
   if (!candidate) throw new Error("Missing accepted candidate run");
+  // The agent's final message is stored as the run's result summary.
+  if (authenticated) expect(candidate.resultSummary).toEqual(expect.any(String));
+  else expect(candidate.resultSummary).toBe(`${candidate.role} finished: wrote outcome.txt`);
   if (repaired) {
     const initial = runs.find((run) => run.role === "builder");
     if (!initial) throw new Error("Missing initial Builder run");
@@ -863,4 +893,131 @@ it("runs independent builders concurrently and provisions a dependent task with 
   ).toBe(true);
   expect(git(f.path, ["rev-parse", "HEAD"])).toBe(base);
   expect(git(f.path, ["status", "--porcelain"])).toBe("");
+}, 60_000);
+
+it("parses optional Supervisor selection and bounded conversation on repository.plan", () => {
+  const base = {
+    _id: "command",
+    workstationId: "node",
+    idempotencyKey: "key",
+    type: "repository.plan",
+    targetType: "textCommand",
+    targetId: "text",
+  };
+  const legacy = parseExecutionCommand({
+    ...base,
+    payload: { textCommandId: "text", workspaceId: "workspace", text: "Hi" },
+  });
+  expect(legacy.payload).toEqual({ textCommandId: "text", workspaceId: "workspace", text: "Hi" });
+  const conversation = Array.from({ length: 25 }, (_, index) => ({
+    role: index % 2 ? "supervisor" : "user",
+    text: `${index}`.padEnd(5000, "x"),
+  }));
+  const parsed = parseExecutionCommand({
+    ...base,
+    payload: {
+      textCommandId: "text",
+      workspaceId: "workspace",
+      text: "Hi",
+      supervisor: { runtime: "codex", model: "gpt", reasoningEffort: "high" },
+      conversation,
+    },
+  });
+  if (parsed.type !== "repository.plan") throw new Error("Wrong command");
+  expect(parsed.payload.supervisor).toEqual({
+    runtime: "codex",
+    model: "gpt",
+    reasoningEffort: "high",
+  });
+  expect(parsed.payload.conversation).toHaveLength(20);
+  expect(parsed.payload.conversation?.[0]?.text.startsWith("5x")).toBe(true);
+  expect(parsed.payload.conversation?.every((message) => message.text.length === 4000)).toBe(true);
+  for (const payload of [
+    { supervisor: { model: "gpt" } },
+    { supervisor: "codex" },
+    { conversation: [{ role: "system", text: "x" }] },
+    { conversation: "x" },
+  ])
+    expect(
+      parsePendingCommand({
+        ...base,
+        payload: { textCommandId: "text", workspaceId: "workspace", text: "Hi", ...payload },
+      })?.type,
+    ).toBe("invalid");
+});
+
+it("answers a question through the Supervisor without starting builders", async () => {
+  const f = await fixture();
+  const productId = await f.t.run(async (ctx) => {
+    const session = await ctx.db.get("workSessions", f.workSessionId);
+    const id = await ctx.db.insert("products", {
+      ownerId: session!.ownerId,
+      name: "Question",
+      slug: "question",
+      createdAt: 0,
+      updatedAt: 0,
+    });
+    await ctx.db.patch("repositories", f.repositoryId, { productId: id });
+    await ctx.db.patch("repositoryLocations", f.repositoryLocationId, {
+      lastKnownHead: f.originalHead,
+    });
+    return id;
+  });
+  for (const role of ["builder", "verifier", "repair"] as const)
+    await f.user.mutation(api.agentProfiles.upsert, {
+      name: role,
+      role,
+      runtime: "fake",
+      enabled: true,
+    });
+  const roles: Array<string | undefined> = [];
+  const runtime = new (class extends FakeRuntime {
+    override async start(input: StartRunInput) {
+      roles.push(input.role);
+      return super.start(input);
+    }
+  })((input) => [
+    {
+      type: "success",
+      summary: input.instruction.includes("What does source.txt contain?")
+        ? `\`\`\`json\n${JSON.stringify({ decision: "answer", reply: "It contains `base`.", tasks: [] })}\n\`\`\``
+        : "Unexpected instruction",
+    },
+  ]);
+  const n = await f.boot(runtime);
+  const driver = n.driver();
+  const { RepositoryDiscovery } = await import(
+    "../packages/node-core/src/capabilities/repository-discovery"
+  );
+  driver.setRepositoryDiscovery(new RepositoryDiscovery(n.workspaces));
+  const sessionId = await f.user.mutation(api.supervisor.submit, {
+    productId,
+    repositoryId: f.repositoryId,
+    text: "What does source.txt contain?",
+    idempotencyKey: "question",
+  });
+  for (let tick = 0; tick < 5; tick++) {
+    await f.node.mutation(api.supervisor.dispatch, { workstationId: f.workstationId });
+    await driver.tick();
+  }
+  expect(roles).toEqual(["supervisor"]);
+  const session = await f.user.query(api.sessions.get, { workSessionId: sessionId });
+  expect(session.status).toBe("waiting");
+  expect(session.totalTaskCount).toBe(0);
+  expect(await f.user.query(api.tasks.listBySession, { workSessionId: sessionId })).toEqual([]);
+  expect(await f.user.query(api.runs.listBySession, { workSessionId: sessionId })).toEqual([]);
+  const messages = await f.user.query(api.supervisor.messages, { workSessionId: sessionId });
+  expect(messages).toHaveLength(1);
+  expect(messages[0]).toMatchObject({
+    text: "What does source.txt contain?",
+    planned: true,
+    planTaskCount: 0,
+    decision: "answer",
+    reply: "It contains `base`.",
+  });
+  expect(n.store.listPendingEvents()).toEqual([]);
+  expect(n.store.listInterruptedCommands()).toEqual([]);
+  expect(await n.transport.listPending()).toEqual([]);
+  expect(git(f.path, ["rev-parse", "HEAD"])).toBe(f.originalHead);
+  expect(git(f.path, ["status", "--porcelain"])).toBe(f.originalStatus);
 }, 60_000);
