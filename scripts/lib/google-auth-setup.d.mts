@@ -20,3 +20,5 @@ export function convexInvocation(
   credentials: SetupCredentials,
   inheritedEnv: Record<string, string | undefined>,
 ): { args: string[]; env: Record<string, string | undefined>; envFileContent: string };
+
+export function serializeAuthVariables(variables: Record<string, string>): string;

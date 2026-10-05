@@ -3,8 +3,10 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { parse } from "dotenv";
 import {
   convexInvocation,
+  serializeAuthVariables,
   validateConfig,
   validateCredentials,
 } from "../scripts/lib/google-auth-setup.mjs";
@@ -154,4 +156,18 @@ describe("environment-specific Google auth setup", () => {
       rmSync(parent, { recursive: true, force: true });
     }
   });
+});
+
+it("preserves signing-key JSON and PEM through the dotenv version bundled by Convex", () => {
+  const variables = {
+    SITE_URL: "https://zamolxis.example.com",
+    AUTH_GOOGLE_SECRET: "GOCSPX-test",
+    JWKS: JSON.stringify({ keys: [{ kty: "RSA", n: "public-test", e: "AQAB" }] }),
+    ZAMOLXIS_DEVICE_JWKS: JSON.stringify({ keys: [{ kty: "RSA", n: "device-test" }] }),
+    JWT_PRIVATE_KEY: "-----BEGIN PRIVATE KEY-----\nfixture\n-----END PRIVATE KEY-----",
+  };
+  const parsed = parse(serializeAuthVariables(variables));
+  expect(parsed).toEqual(variables);
+  expect(JSON.parse(parsed.JWKS ?? "")).toEqual(JSON.parse(variables.JWKS));
+  expect(() => serializeAuthVariables({ SECRET: "can't quote" })).toThrow();
 });
