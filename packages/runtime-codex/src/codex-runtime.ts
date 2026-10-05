@@ -110,7 +110,7 @@ export class CodexRuntime implements AgentRuntime {
           cwd: input.workspace.cwd,
           sandbox: "workspace-write",
           approvalPolicy: "on-request",
-          ...(this.options.model ? { model: this.options.model } : {}),
+          ...(input.model ?? this.options.model ? { model: input.model ?? this.options.model } : {}),
         }),
       );
       const thread = record(response.thread);
