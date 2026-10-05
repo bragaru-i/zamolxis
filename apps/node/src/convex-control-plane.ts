@@ -1,4 +1,10 @@
-import type { ControlPlaneTransport, Delivery, ExecutionCommand } from "@zamolxis/node-core";
+import type {
+  ControlPlaneTransport,
+  ConversationMessage,
+  Delivery,
+  ExecutionCommand,
+  SupervisorSelection,
+} from "@zamolxis/node-core";
 import { makeFunctionReference, type FunctionReference } from "convex/server";
 import type { Value } from "convex/values";
 function object(value: unknown): Record<string, unknown> {
@@ -11,6 +17,30 @@ function field(value: Record<string, unknown>, name: string, max = 128): string 
   if (typeof result !== "string" || !result.length || result.length > max)
     throw new Error("INVALID_COMMAND");
   return result;
+}
+function parseSupervisorSelection(value: unknown): SupervisorSelection {
+  const selection = object(value);
+  return {
+    runtime: field(selection, "runtime"),
+    ...(selection.model !== undefined ? { model: field(selection, "model", 256) } : {}),
+    ...(selection.reasoningEffort !== undefined
+      ? { reasoningEffort: field(selection, "reasoningEffort", 64) }
+      : {}),
+  };
+}
+// Prior messages are context for the Supervisor: keep the latest 20, each bounded.
+function parseConversation(value: unknown): ConversationMessage[] {
+  if (!Array.isArray(value)) throw new Error("INVALID_COMMAND");
+  return value.slice(-20).flatMap((entry): ConversationMessage[] => {
+    const message = object(entry);
+    if (
+      (message.role !== "user" && message.role !== "supervisor") ||
+      typeof message.text !== "string"
+    )
+      throw new Error("INVALID_COMMAND");
+    const text = message.text.slice(0, 4000);
+    return text.trim() ? [{ role: message.role, text }] : [];
+  });
 }
 export function parseExecutionCommand(value: unknown): ExecutionCommand {
   const command = object(value);
@@ -96,6 +126,12 @@ export function parseExecutionCommand(value: unknown): ExecutionCommand {
         textCommandId,
         workspaceId: field(payload, "workspaceId"),
         text: field(payload, "text", 16000),
+        ...(payload.supervisor !== undefined
+          ? { supervisor: parseSupervisorSelection(payload.supervisor) }
+          : {}),
+        ...(payload.conversation !== undefined
+          ? { conversation: parseConversation(payload.conversation) }
+          : {}),
       },
     };
   }
@@ -203,13 +239,14 @@ export class ConvexControlPlaneTransport implements ControlPlaneTransport {
         instanceId: this.instanceId,
       });
     } else if (delivery.kind === "repository.plan") {
-      const { kind: _, ...args } = delivery;
+      const { kind: _, usage, ...args } = delivery;
       await this.client.mutation(
         makeFunctionReference<"mutation", Record<string, Value>, unknown>("supervisor:acceptPlan"),
         {
           workstationId: this.workstationId,
           ...args,
           tasks: delivery.tasks.map((task) => ({ ...task })),
+          ...(usage && Object.keys(usage).length ? { usage: { ...usage } } : {}),
         },
       );
     } else if (delivery.kind === "integration.ready") {
