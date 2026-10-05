@@ -815,7 +815,17 @@ code,
   padding: 0 var(--z-space-3);
   font-size: var(--z-text-sm);
   color: var(--z-muted);
+  list-style: none;
   cursor: pointer;
+}
+.z-usage > summary::-webkit-details-marker {
+  display: none;
+}
+.z-usage > summary::before {
+  content: "▸";
+}
+.z-usage[open] > summary::before {
+  content: "▾";
 }
 .z-usage__body {
   display: flex;
