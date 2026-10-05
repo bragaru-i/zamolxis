@@ -13,11 +13,13 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@zamolxis/runtime-core": "workspace:*"
+    "@zamolxis/runtime-core": "workspace:*",
+    "@zamolxis/contracts": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.9.2",
     "vitest": "^3.2.4",
-    "@biomejs/biome": "^2.2.4"
+    "@biomejs/biome": "^2.2.4",
+    "@zamolxis/test-kit": "workspace:*"
   }
 }

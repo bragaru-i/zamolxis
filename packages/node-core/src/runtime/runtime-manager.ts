@@ -18,6 +18,17 @@ export class RuntimeManager {
     private readonly workstationId: WorkstationId,
     private readonly isAllowed: (runtime: string) => boolean,
   ) {}
+  async observe(runId: string): Promise<RuntimeSessionSnapshot> {
+    const stored = this.store.getRuntimeSession(runId);
+    if (!stored?.nativeSessionId) throw new Error("RECONCILIATION_REQUIRED");
+    const snapshot = await this.runtimes.get(stored.runtime).inspect(stored.nativeSessionId);
+    this.store.upsertRuntimeSession({ ...stored, status: snapshot.state });
+    if (["completed", "failed", "stopped"].includes(snapshot.state)) {
+      const lease = this.store.getWorkspaceLease(stored.workspaceId);
+      if (lease?.runId === runId) this.workspaces.release(stored.workspaceId, runId);
+    }
+    return snapshot;
+  }
 
   async start(input: StartAssignedRun): Promise<RuntimeSessionSnapshot> {
     const runtime = this.runtimes.resolve(

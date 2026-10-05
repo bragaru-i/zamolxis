@@ -120,7 +120,7 @@ export class ControlPlaneDriver {
         runId: command.payload.runId as AgentRunId,
         workspaceId: command.payload.workspaceId as WorkspaceId,
       };
-      const session = await this.manager.start(input);
+      let session = await this.manager.start(input);
       const runtime = this.runtimes.get(input.runtime);
       const events: NormalizedRunEventDto[] = [];
       for await (const event of runtime.subscribe({ nativeSessionId: session.nativeSessionId })) {
@@ -136,6 +136,7 @@ export class ControlPlaneDriver {
           break;
       }
       deliveries.push({ kind: "run.events", runId: input.runId, events });
+      session = await this.manager.observe(input.runId);
       if (["completed", "failed", "stopped"].includes(session.state)) {
         const workspace = this.workspaces.inspect(input.workspaceId);
         deliveries.push({
