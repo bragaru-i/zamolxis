@@ -17,7 +17,8 @@
     "typecheck:convex": "tsc -p convex/tsconfig.json",
     "test:convex": "vitest run convex tests",
     "codegen:convex": "convex codegen",
-    "zamolxis": "pnpm --filter @zamolxis/node cli"
+    "zamolxis": "pnpm --filter @zamolxis/node cli",
+    "deploy:prod": "node scripts/deploy.mjs"
   },
   "devDependencies": {
     "@auth/core": "0.41.1",

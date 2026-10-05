@@ -195,6 +195,24 @@ with local Node authority and must be trusted by the repository owner; Alpha is
 not a sandbox for hostile repository code. Node reconciliation preserves ambiguous
 leases instead of silently starting a second process.
 
+## Deploying production
+
+From the canonical checkout on `main`:
+
+```bash
+pnpm deploy:prod --directory /absolute/private/prod-directory --pull
+```
+
+The directory is the private prod directory created by
+`scripts/google-auth-setup.mjs prepare --environment prod` (its `config.json` and
+`credentials.json` hold the deployment target and deploy key; nothing secret is printed).
+The script refuses to run unless local `main` is clean and equal to `origin/main`, runs
+`pnpm check`, asks for confirmation, then deploys in dependency order: Convex backend,
+web app (`vercel deploy --prod`, stamped with the commit and verified through
+`/api/bootstrap`), and finally restarts the launchd Node service when it runs from this
+checkout. `--skip-check`, `--skip-convex`, `--skip-web`, `--skip-node` and `--yes` are
+available; `--help` lists them. The first web deploy needs `pnpm dlx vercel@62 login`.
+
 ## Repository layout and reference material
 
 `apps/web` is Next.js/Convex React; `apps/node` is the Mac executable. Pure rules
