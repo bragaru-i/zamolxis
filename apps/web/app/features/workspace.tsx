@@ -5,11 +5,13 @@ import { useMutation, useQuery } from "convex/react";
 import { useEffect, useState } from "react";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
+import { AgentsSettings } from "./agents";
 import { DevicesSection } from "./devices";
 import { explainError } from "./errors";
 import { PeopleSection } from "./people";
 import { SessionView } from "./session-view";
 import { SessionList } from "./sessions";
+import { UsageSettings } from "./usage";
 import { useSearchParam } from "./use-location";
 
 export interface Device {
@@ -109,6 +111,10 @@ export function Workspace() {
         onClose={() => setSettingsOpen(false)}
         devices={devices}
         now={now}
+        onOpenSession={(id) => {
+          setSettingsOpen(false);
+          setSessionId(id);
+        }}
       />
     </>
   );
@@ -166,11 +172,13 @@ function Settings({
   onClose,
   devices,
   now,
+  onOpenSession,
 }: {
   open: boolean;
   onClose: () => void;
   devices: Device[] | undefined;
   now: number;
+  onOpenSession: (id: Id<"workSessions">) => void;
 }) {
   const { signOut } = useAuthActions();
   const revoke = useMutation(api.workstations.revoke);
@@ -254,6 +262,8 @@ function Settings({
         )}
         {message && <Notice>{message}</Notice>}
       </section>
+      <AgentsSettings active={open} devices={devices} />
+      <UsageSettings active={open} onOpenSession={onOpenSession} />
       <PeopleSection active={open} now={now} />
       <DevicesSection active={open} now={now} />
       <Button

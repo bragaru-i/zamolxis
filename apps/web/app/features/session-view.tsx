@@ -24,6 +24,7 @@ import {
   usageLine,
 } from "./conversation";
 import { explainError, explainFailure } from "./errors";
+import { SessionUsage } from "./usage";
 
 interface Session {
   _id: Id<"workSessions">;
@@ -294,6 +295,7 @@ export function SessionView({
               merging stay with you.
             </Notice>
           )}
+          <SessionUsage sessionId={sessionId} ready={ready} />
         </div>
       )}
       {notice && <Notice tone={notice.tone}>{notice.text}</Notice>}
