@@ -368,6 +368,7 @@ code,
   color: var(--z-muted);
 }
 .z-message__body {
+  min-width: 0;
   padding: var(--z-space-3) var(--z-space-4);
   border-radius: var(--z-radius-lg);
   white-space: pre-wrap;
@@ -548,4 +549,136 @@ code,
 .z-list-item > .z-button,
 .z-list-item > .z-row {
   align-self: flex-start;
+}
+
+/* Conversation meta line (usage, model) */
+.z-message__meta {
+  font-size: var(--z-text-xs);
+  color: var(--z-muted);
+}
+.z-message__body > * + * {
+  margin-top: var(--z-space-2);
+}
+
+/* Thinking state */
+.z-thinking {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--z-space-3);
+}
+.z-thinking__dots {
+  display: inline-flex;
+  gap: var(--z-space-1);
+}
+.z-thinking__dots > span {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--z-radius-full);
+  background: var(--z-info);
+  animation: z-pulse 1.2s var(--z-ease) infinite;
+}
+.z-thinking__dots > span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.z-thinking__dots > span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+.z-thinking__text {
+  display: flex;
+  flex-direction: column;
+}
+.z-thinking__label {
+  font-weight: 600;
+}
+.z-thinking__detail {
+  font-size: var(--z-text-sm);
+  color: var(--z-muted);
+}
+@keyframes z-pulse {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .z-thinking__dots > span {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
+/* Markdown: one shared chat typeset for Supervisor replies and run summaries */
+.z-md {
+  display: flex;
+  flex-direction: column;
+  gap: var(--z-space-2);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.z-md p,
+.z-md ul,
+.z-md ol,
+.z-md pre {
+  margin: 0;
+}
+.z-md ul,
+.z-md ol {
+  display: flex;
+  flex-direction: column;
+  gap: var(--z-space-1);
+  padding-left: var(--z-space-5);
+}
+.z-md a {
+  color: var(--z-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.z-md__code > code {
+  font-size: inherit;
+}
+.z-md :not(pre) > code {
+  padding: 1px var(--z-space-1);
+  border-radius: var(--z-space-1);
+  background: var(--z-surface-muted);
+}
+.z-md__code {
+  max-width: 100%;
+  padding: var(--z-space-2) var(--z-space-3);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--z-border);
+  border-radius: var(--z-radius-sm);
+  background: var(--z-surface-muted);
+  font-size: var(--z-text-sm);
+  line-height: 1.5;
+  white-space: pre;
+  overflow-wrap: normal;
+}
+
+/* Collapsible (clamped to about four lines) */
+.z-collapsible {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--z-space-1);
+  min-width: 0;
+}
+.z-collapsible__body {
+  width: 100%;
+  min-width: 0;
+}
+.z-collapsible__body--clamped {
+  max-height: calc(var(--z-leading) * 4em);
+  overflow: hidden;
+}
+.z-collapsible__body[data-faded] {
+  -webkit-mask-image: linear-gradient(to bottom, #000 60%, transparent);
+  mask-image: linear-gradient(to bottom, #000 60%, transparent);
+}
+.z-collapsible__toggle {
+  margin-left: calc(-1 * var(--z-space-2));
 }
