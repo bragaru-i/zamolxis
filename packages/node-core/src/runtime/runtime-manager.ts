@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { AgentRunId, WorkspaceId, WorkstationId } from "@zamolxis/contracts";
-import type { RuntimeRegistry, RuntimeSessionSnapshot } from "@zamolxis/runtime-core";
+import type { AgentRole, RuntimeRegistry, RuntimeSessionSnapshot } from "@zamolxis/runtime-core";
 import type { LocalStateStore } from "../persistence/local-state";
 import type { WorkspaceManager } from "../workspace/workspace-manager";
 
@@ -11,7 +11,7 @@ export interface StartAssignedRun {
   readonly instruction: string;
   readonly model?: string;
   readonly reasoningEffort?: string;
-  readonly role?: "builder" | "verifier" | "repair";
+  readonly role?: AgentRole;
 }
 export class RuntimeManager {
   constructor(
