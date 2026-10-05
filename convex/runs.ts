@@ -228,6 +228,22 @@ export const sendMessage = mutation({
   handler: async (ctx, args) => {
     const run = await ownRun(ctx, args.runId);
     if (!["running", "waiting", "needs_approval"].includes(run.status)) fail("INVALID_STATE");
+    if (
+      !args.message.trim() ||
+      args.message.length > 16000 ||
+      !args.idempotencyKey ||
+      args.idempotencyKey.length > 128
+    )
+      fail("INVALID_ARGUMENT");
+    // Only a Node that advertises working steering for this runtime receives messages.
+    const installation = await ctx.db
+      .query("runtimeInstallations")
+      .withIndex("by_workstation_runtime", (q) =>
+        q.eq("workstationId", run.workstationId).eq("runtime", run.runtime),
+      )
+      .unique();
+    if (installation?.status !== "available" || !installation.capabilities.includes("message"))
+      fail("RUNTIME_MESSAGE_UNSUPPORTED");
     return enqueue(
       ctx,
       run.workstationId,

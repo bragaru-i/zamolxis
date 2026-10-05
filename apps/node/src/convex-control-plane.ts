@@ -162,6 +162,18 @@ export function parseExecutionCommand(value: unknown): ExecutionCommand {
           payload: { runId, message: field(payload, "message", 16000) },
         };
   }
+  if (command.type === "runtime.approval") {
+    const runId = field(payload, "runId");
+    if (command.targetType !== "run" || command.targetId !== runId)
+      throw new Error("INVALID_COMMAND_TARGET");
+    if (payload.decision !== "approve" && payload.decision !== "reject")
+      throw new Error("INVALID_COMMAND");
+    return {
+      ...common,
+      type: "runtime.approval",
+      payload: { runId, approvalId: field(payload, "approvalId", 256), decision: payload.decision },
+    };
+  }
   if (command.type === "workspace.cleanup") {
     const workspaceId = field(payload, "workspaceId");
     if (command.targetType !== "workspace" || command.targetId !== workspaceId)

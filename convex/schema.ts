@@ -448,10 +448,27 @@ export default defineSchema({
     requestedAt: v.number(),
     resolvedAt: v.optional(v.number()),
     resolvedBy: v.optional(v.id("users")),
+    // Runtime approvals: the stable id reported by the Node (run + native request id),
+    // and how the runtime settled it (user decision, timeout, stop or withdrawal).
+    runtimeApprovalId: v.optional(v.string()),
+    runtimeOutcome: v.optional(
+      v.object({
+        decision: v.union(v.literal("approved"), v.literal("rejected")),
+        reason: v.union(
+          v.literal("user"),
+          v.literal("timeout"),
+          v.literal("stopped"),
+          v.literal("withdrawn"),
+        ),
+        at: v.number(),
+      }),
+    ),
   })
     .index("by_owner_status", ["ownerId", "status"])
     .index("by_session", ["workSessionId"])
-    .index("by_run", ["runId"]),
+    .index("by_session_status", ["workSessionId", "status"])
+    .index("by_run", ["runId"])
+    .index("by_run_runtime_approval", ["runId", "runtimeApprovalId"]),
 
   artifacts: defineTable({
     workSessionId: v.id("workSessions"),
