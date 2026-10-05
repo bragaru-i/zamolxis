@@ -1,4 +1,5 @@
 "use client";
+import { useAuthActions } from "@convex-dev/auth/react";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { useEffect, useState } from "react";
 import { api } from "../../../convex/_generated/api";
@@ -14,10 +15,72 @@ export default function HomePage() {
         </p>
       </main>
     );
-  return <Dashboard />;
+  return <AccessGate />;
+}
+function AccessGate() {
+  const { isAuthenticated, isLoading } = useConvexAuth();
+  const { signIn, signOut } = useAuthActions();
+  const viewer = useQuery(api.profiles.viewer, isAuthenticated ? {} : "skip");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  if (isLoading || (isAuthenticated && viewer === undefined))
+    return (
+      <main>
+        <h1>Zamolxis</h1>
+        <p role="status">Checking access…</p>
+      </main>
+    );
+  if (isAuthenticated && viewer?.accessStatus === "allowed") return <Dashboard />;
+  return (
+    <main>
+      <h1>Zamolxis</h1>
+      {isAuthenticated ? (
+        <section>
+          <h2>{viewer?.accessStatus === "blocked" ? "Access revoked" : "Access pending"}</h2>
+          <p>
+            {viewer?.email ? `Signed in as ${viewer.email}. ` : ""}The owner must approve your
+            account before you can access projects or pair a Mac.
+          </p>
+          <button
+            type="button"
+            onClick={() => void signOut().catch(() => setError("Could not sign out"))}
+          >
+            Sign out
+          </button>
+        </section>
+      ) : (
+        <section>
+          <h2>Sign in to Zamolxis</h2>
+          <p>Use your Google account. Access requires approval from the owner.</p>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              setError("");
+              try {
+                const pair = new URL(location.href).searchParams.get("pair");
+                await signIn("google", {
+                  redirectTo: pair && /^[a-f0-9]{64}$/.test(pair) ? `/?pair=${pair}` : "/",
+                });
+              } catch {
+                setError("Could not start Google sign-in. Try again.");
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Continue with Google
+          </button>
+        </section>
+      )}
+      {error && <p role="alert">{error}</p>}
+    </main>
+  );
 }
 function Dashboard() {
   const { isAuthenticated, isLoading } = useConvexAuth();
+  const { signOut } = useAuthActions();
   const [pair, setPair] = useState("");
   const [message, setMessage] = useState("");
   const ensure = useMutation(api.profiles.ensure);
@@ -79,6 +142,13 @@ function Dashboard() {
         <div>
           <h1>Zamolxis</h1>
           <p>Your Mac. Your projects.</p>
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => void signOut().catch(() => setMessage("Could not sign out"))}
+          >
+            Sign out
+          </button>
         </div>
       </header>
       {isLoading ? (
@@ -87,12 +157,7 @@ function Dashboard() {
         <section>
           <h2>Connect your Mac</h2>
           <p>Sign in to approve pairing and run your first command.</p>
-          <a
-            className="button"
-            href={`/api/auth/login?returnTo=${encodeURIComponent(pair ? `/?pair=${pair}` : "/")}`}
-          >
-            Sign in
-          </a>
+          <p>Sign in with Google from the access screen.</p>
         </section>
       ) : (
         <>

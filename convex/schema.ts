@@ -1,4 +1,5 @@
 import { defineSchema, defineTable } from "convex/server";
+import { authTables } from "@convex-dev/auth/server";
 import { v } from "convex/values";
 
 export const workstationStatus = v.union(
@@ -65,6 +66,22 @@ const commandStatus = v.union(
 );
 
 export default defineSchema({
+  ...authTables,
+  // Re-infer optional fields locally: auth 0.0.96 declarations include explicit
+  // undefined values, incompatible with exactOptionalPropertyTypes. Runtime
+  // validators and indexes stay identical to the library schema.
+  authAccounts: defineTable({ ...authTables.authAccounts.validator.fields })
+    .index("userIdAndProvider", ["userId", "provider"])
+    .index("providerAndAccountId", ["provider", "providerAccountId"]),
+  authRefreshTokens: defineTable({ ...authTables.authRefreshTokens.validator.fields })
+    .index("sessionId", ["sessionId"])
+    .index("sessionIdAndParentRefreshTokenId", ["sessionId", "parentRefreshTokenId"]),
+  authVerificationCodes: defineTable({ ...authTables.authVerificationCodes.validator.fields })
+    .index("accountId", ["accountId"])
+    .index("code", ["code"]),
+  authVerifiers: defineTable({ ...authTables.authVerifiers.validator.fields }).index("signature", [
+    "signature",
+  ]),
   textCommands: defineTable({
     ownerId: v.id("users"),
     idempotencyKey: v.string(),
@@ -95,10 +112,17 @@ export default defineSchema({
     .index("by_secret_hash", ["secretHash"])
     .index("by_workstation", ["workstationId"]),
   users: defineTable({
-    authSubject: v.string(),
+    ...authTables.users.validator.fields,
+    authSubject: v.optional(v.string()),
     displayName: v.optional(v.string()),
-    createdAt: v.number(),
-  }).index("by_auth_subject", ["authSubject"]),
+    createdAt: v.optional(v.number()),
+    accessStatus: v.optional(
+      v.union(v.literal("pending"), v.literal("allowed"), v.literal("blocked")),
+    ),
+  })
+    .index("by_auth_subject", ["authSubject"])
+    .index("email", ["email"])
+    .index("phone", ["phone"]),
 
   workstations: defineTable({
     ownerId: v.id("users"),

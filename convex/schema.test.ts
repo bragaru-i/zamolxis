@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import schema from "./schema";
+import { authTables } from "@convex-dev/auth/server";
 
 describe("control-plane schema acceptance", () => {
   it("keeps filesystem locations separate from logical repositories and runs", () => {
@@ -26,4 +27,18 @@ describe("control-plane schema acceptance", () => {
       fields: ["workstationId", "status"],
     });
   });
+});
+
+it("preserves Convex Auth runtime schemas and indexes under strict optional typing", () => {
+  for (const name of [
+    "authAccounts",
+    "authSessions",
+    "authRefreshTokens",
+    "authVerificationCodes",
+    "authVerifiers",
+    "authRateLimits",
+  ] as const) {
+    expect(schema.tables[name].validator).toEqual(authTables[name].validator);
+    expect(schema.tables[name][" indexes"]()).toEqual(authTables[name][" indexes"]());
+  }
 });

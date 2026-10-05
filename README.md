@@ -93,12 +93,26 @@ including across Nodes and profile revisions. UI limits are not authority.
 
 ## Identity, pairing and setup
 
-One configured public HTTPS origin (`ZAMOLXIS_APP_URL`) binds OAuth redirects,
-bootstrap metadata and QR links. Incoming Host headers and preview URLs do not
-establish trusted origins. Human OIDC identity and Node-scoped identity are
-separate. QR approval enrolls a Mac; it is not human authentication. An authenticated
-owner approves a five-minute single-use QR request. Private local configuration,
-short-lived signed device tokens and revocation protect outbound Node access.
+Human login uses **Convex Auth with Google**. Convex stores accounts, sessions and
+refresh tokens. Google must report a verified email; no external Auth0/OIDC service
+is needed. Google OAuth still requires a Google Cloud OAuth client.
+
+Sign-in does not grant product access. New users enter `pending`. In the Convex
+dashboard's `users` table, set the intended user's `accessStatus` to `allowed`
+to grant access, or `blocked` to revoke it. Missing status denies access. These
+fields are controlled by the deployment operator; there is no public self-grant
+API and no automatic first-user administrator. The access screen updates from a
+reactive query. Product APIs enforce the same policy server-side; granting access
+does not grant ownership of another user's Products or repositories. Blocking an
+owner also denies their Nodes' cloud operations and credential refresh; it does
+not kill already-running local processes or erase history.
+
+One configured public HTTPS origin (`ZAMOLXIS_APP_URL` on the frontend, the same
+value as `SITE_URL` in Convex) binds Google return redirects, bootstrap and QR
+links. Host headers and preview URLs do not establish trusted origins. Human
+Convex Auth sessions and Node-scoped credentials remain separate. An approved,
+authenticated owner approves a five-minute single-use QR; device tokens and
+revocation protect outbound Node access. See [Google login and access setup](docs/google-auth-access.md).
 
 On a Mac with Node >=22, pnpm, Git, Codex CLI and an existing Codex login:
 
@@ -113,7 +127,7 @@ The wizard selects repositories, validates a managed root outside canonical
 checkouts, pairs the Node and installs its launchd service. Native execution uses
 a temporary auth-only Codex profile; user plugins/MCP/config are not copied.
 No inbound Mac server is required. See [Alpha setup](docs/alpha-onboarding.md) for
-public HTTPS/OIDC and device-signing deployment requirements.
+public HTTPS/Google login and device-signing deployment requirements.
 
 Canonical checkouts are never runtime workspaces. Planning, implementation,
 verification, repair and integration use separate managed worktrees. The mobile
@@ -157,9 +171,9 @@ Verifier through evidence/trust/integration, asserting canonical HEAD/status rem
 unchanged. The native Repair mode deliberately produces a failing first candidate,
 then proves a new Repair SHA and workspace, retained failed trust, two independent
 Verifier workspaces and final integration. It uses fixture control-plane identities,
-not deployed OIDC/device auth.
+not deployed Google/device authentication.
 
-Public phone -> OIDC -> pairing -> deployed Convex -> launchd E2E remains untested
+Public phone -> Google/Convex Auth -> pairing -> deployed Convex -> launchd E2E remains untested
 without an operator-configured deployment. Native process resumption after Node
 restart, a native approval bridge, richer verification modalities, semantic LLM
 planning and automatic publishing are not implemented. Repository scripts execute

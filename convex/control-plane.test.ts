@@ -3,6 +3,7 @@ import { expect, it } from "vitest";
 import type { Id } from "./_generated/dataModel";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
+import { seedHuman } from "../tests/fixtures/auth";
 
 function required<T>(value: T | undefined): T {
   if (value === undefined) throw new Error("Missing fixture value");
@@ -27,16 +28,8 @@ const modules = {
 };
 async function fixture() {
   const t = convexTest(schema, modules);
-  const user = t.withIdentity({
-    subject: "alice",
-    issuer: "https://identity.example",
-    tokenIdentifier: "alice",
-  });
-  const other = t.withIdentity({
-    subject: "bob",
-    issuer: "https://identity.example",
-    tokenIdentifier: "bob",
-  });
+  const { user } = await seedHuman(t, "alice");
+  const { user: other } = await seedHuman(t, "bob");
   await user.mutation(api.profiles.ensure, {});
   await other.mutation(api.profiles.ensure, {});
   const workstationId = await user.mutation(api.workstations.register, {

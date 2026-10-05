@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { bounded, fail, requireUser } from "./lib/access";
+import { bounded, fail, requireUser, ownerSubject } from "./lib/access";
 export const listMine = query({
   args: { limit: v.optional(v.number()) },
   returns: v.array(v.any()),
@@ -30,7 +30,7 @@ export const register = mutation({
   returns: v.id("workstations"),
   handler: async (ctx, args) => {
     const owner = await requireUser(ctx);
-    if (args.nodeAuthSubject === owner.authSubject)
+    if (args.nodeAuthSubject === ownerSubject(owner))
       fail("INVALID_ARGUMENT", "Device identity must differ from user identity");
     const existing = await ctx.db
       .query("workstations")
