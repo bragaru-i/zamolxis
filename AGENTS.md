@@ -8,3 +8,52 @@ Read `docs/README.md` inside that installed package first, then read the relevan
 
 This block is written and re-added by `turbo` before repository-scoped commands when an AI agent is detected. In the Turborepo source repository, its template is defined in `crates/turborepo-cli/src/cli/agent_guidance.rs`. Removing the managed block while updates are enabled means a later qualifying invocation will add it again. Set `"agentGuidance": false` in the root `turbo.json` or `turbo.jsonc` to opt out; this does not remove an existing block. Keep the block committed with your work to avoid an uncommitted change on the next agent invocation.
 <!-- END:turborepo-agent-rules -->
+
+# Zamolxis engineering workflow
+
+The executable repository is the behavioral source of truth. Inspect sibling
+`zamolxis-docs` before architectural changes; synchronize stale references and
+README with implemented behavior. Never describe a planned capability as shipped.
+
+## Git and integration
+
+Inspect status, current remote main, branch ancestry, existing worktrees, PRs,
+reviews and CI before editing. Preserve human changes. Work in an isolated
+worktree. Bring divergent feature stacks deliberately onto a clean branch from
+current main; inspect the entire resulting diff. Use small coherent commits with
+issue references; commit instruction changes separately. Never force push main,
+bypass CODEOWNERS/protections, or claim a merge without Git/PR evidence.
+
+## Control plane and trust
+
+Preserve Product -> Repository -> Work Session -> Task -> Workspace -> Agent Run
+-> Runtime. Derive human ownership from authentication; authorize Node identity
+separately. Enforce Product isolation, idempotency, capacity and state transitions
+server-side. Lost or uncertain owned Runs reserve capacity until reconciled.
+Obtain SHA-bound repository context before planning; validate structured plans
+and acyclic dependencies before dispatch. Supervisor proposes, backend authorizes.
+
+Builder completion produces a candidate, never trust or Session completion.
+An independent Verifier uses a separate Run and worktree at the exact candidate
+SHA. Transfer acceptance criteria and public failure evidence, never Builder
+private reasoning. Persist SHA-bound evidence and deterministic trust decisions.
+Only a trusted exact SHA reaches integration. Repair produces a new candidate,
+preserves history and is bounded (Alpha: at most two repairs). Integration keeps
+protected-main merge under human policy. Canonical checkouts are never agent
+workspaces. Parallel implementation lanes require separate worktrees and explicit
+file ownership; inspect sibling work before deliberate integration.
+
+## Runtime and evidence
+
+Runtime is distinct from model. Use runtime-core adapters and native identities,
+workspace-bound execution, normalized events and conservative uncertain ownership.
+Resolve effective enabled profiles Product -> owner/global -> Alpha fallback;
+snapshot configuration on each Run. Do not hardcode Supervisor runtime/model.
+Persist actual model, tokens and cost only when the provider reports them.
+
+Discover commands from package.json and CI. Run lint, boundaries, typechecks,
+unit/integration tests and production build. Test authorization, concurrency,
+provenance, replay, DAG, repair limits and trust-aware completion. Use disposable
+Git repositories/worktrees for acceptance and assert canonical HEAD/status are
+unchanged. Use authenticated native acceptance when available; mocks do not prove
+native/cloud/phone E2E. Report exact commands, results and untested boundaries.
