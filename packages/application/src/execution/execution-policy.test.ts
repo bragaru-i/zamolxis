@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { evaluateTrust } from "./execution-policy";
+import { applyRunEvent, evaluateTrust } from "./execution-policy";
 it("rejects builder claims, stale evidence and independent failures", () => {
   const proof = {
     subjectSha: "sha",
@@ -33,4 +33,13 @@ it("rejects builder claims, stale evidence and independent failures", () => {
       { ...proof, modality: "security", result: "failed" },
     ]).eligible,
   ).toBe(false);
+});
+
+it("keeps a stopping run stopping until a terminal event arrives", () => {
+  expect(applyRunEvent("stopping", "run.started")).toBe("stopping");
+  expect(applyRunEvent("stopping", "run.activity")).toBe("stopping");
+  expect(applyRunEvent("stopping", "run.waiting")).toBe("stopping");
+  expect(applyRunEvent("stopping", "run.stopped")).toBe("stopped");
+  expect(applyRunEvent("stopping", "run.completed")).toBe("completed");
+  expect(() => applyRunEvent("stopped", "run.started")).toThrow();
 });

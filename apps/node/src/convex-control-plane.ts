@@ -114,7 +114,45 @@ export function parseExecutionCommand(value: unknown): ExecutionCommand {
       },
     };
   }
+  if (command.type === "runtime.stop" || command.type === "runtime.send") {
+    const runId = field(payload, "runId");
+    if (command.targetType !== "run" || command.targetId !== runId)
+      throw new Error("INVALID_COMMAND_TARGET");
+    return command.type === "runtime.stop"
+      ? { ...common, type: "runtime.stop", payload: { runId } }
+      : {
+          ...common,
+          type: "runtime.send",
+          payload: { runId, message: field(payload, "message", 16000) },
+        };
+  }
+  if (command.type === "workspace.cleanup") {
+    const workspaceId = field(payload, "workspaceId");
+    if (command.targetType !== "workspace" || command.targetId !== workspaceId)
+      throw new Error("INVALID_COMMAND_TARGET");
+    return { ...common, type: "workspace.cleanup", payload: { workspaceId } };
+  }
   throw new Error("UNSUPPORTED_EXECUTION_COMMAND");
+}
+// One malformed or unknown command must not stop the Node from processing the rest.
+export function parsePendingCommand(value: unknown): ExecutionCommand | undefined {
+  try {
+    return parseExecutionCommand(value);
+  } catch (error) {
+    try {
+      const command = object(value);
+      const message = error instanceof Error ? error.message : "";
+      return {
+        commandId: field(command, "_id"),
+        workstationId: field(command, "workstationId"),
+        idempotencyKey: field(command, "idempotencyKey", 512),
+        type: "invalid",
+        payload: { code: /^[A-Z_]{1,64}$/.test(message) ? message : "INVALID_COMMAND" },
+      };
+    } catch {
+      return undefined;
+    }
+  }
 }
 export interface ControlPlaneClient {
   mutation(
@@ -144,7 +182,9 @@ export class ConvexControlPlaneTransport implements ControlPlaneTransport {
       { workstationId: this.workstationId },
     );
     if (!Array.isArray(result)) throw new Error("INVALID_COMMAND_RESPONSE");
-    return result.map(parseExecutionCommand);
+    return result
+      .map(parsePendingCommand)
+      .filter((command): command is ExecutionCommand => command !== undefined);
   }
   async claim(commandId: string): Promise<void> {
     await this.mutation("claim", { commandId, instanceId: this.instanceId });

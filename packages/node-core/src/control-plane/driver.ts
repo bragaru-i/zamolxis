@@ -50,7 +50,13 @@ export type ExecutionCommand = {
         instruction: string;
       };
     }
+  | { readonly type: "runtime.stop"; readonly payload: { runId: string } }
+  | { readonly type: "runtime.send"; readonly payload: { runId: string; message: string } }
+  | { readonly type: "workspace.cleanup"; readonly payload: { workspaceId: string } }
+  // A command this Node cannot parse fails on its own instead of blocking the queue.
+  | { readonly type: "invalid"; readonly payload: { code: string } }
 );
+const TERMINAL = ["completed", "failed", "stopped"];
 export type Delivery =
   | {
       readonly kind: "repository.plan";
@@ -102,6 +108,11 @@ export interface ControlPlaneTransport {
 }
 export class ControlPlaneDriver {
   #busy = false;
+  #controlBusy = false;
+  // In-flight runtime.start executions by run, and the last event sequence
+  // delivered per run so later commands resume the stream.
+  readonly #streaming = new Map<string, Promise<void>>();
+  readonly #cursors = new Map<string, number>();
   #flushing: Promise<void> | undefined;
   #discovery: RepositoryDiscovery | undefined;
   setRepositoryDiscovery(discovery: RepositoryDiscovery): void {
@@ -139,7 +150,33 @@ export class ControlPlaneDriver {
       this.#busy = false;
     }
   }
+  // Stop requests must reach runs while tick() is still streaming them.
+  async control(): Promise<void> {
+    if (this.#controlBusy) return;
+    this.#controlBusy = true;
+    try {
+      const pending = await this.transport.listPending();
+      for (const command of pending)
+        if (command.type === "runtime.stop" && this.#streaming.has(command.payload.runId))
+          await this.execute(command);
+    } finally {
+      this.#controlBusy = false;
+    }
+  }
   async execute(command: ExecutionCommand): Promise<void> {
+    if (command.type !== "runtime.start") return this.#execute(command);
+    const execution = this.#execute(command);
+    this.#streaming.set(
+      command.payload.runId,
+      execution.catch(() => undefined),
+    );
+    try {
+      await execution;
+    } finally {
+      this.#streaming.delete(command.payload.runId);
+    }
+  }
+  async #execute(command: ExecutionCommand): Promise<void> {
     if (command.workstationId !== this.workstationId)
       throw new Error("COMMAND_WORKSTATION_MISMATCH");
     const stored = this.store.recordCommand(command);
@@ -207,6 +244,54 @@ export class ControlPlaneDriver {
           dirty: false,
           branchName: workspace.branch,
         });
+      } else if (command.type === "runtime.stop") {
+        const { runId } = command.payload;
+        const session = this.store.getRuntimeSession(runId);
+        if (!session?.nativeSessionId) throw new Error("RUN_NOT_ACTIVE");
+        const runtime = this.runtimes.get(session.runtime);
+        const before = await runtime.inspect(session.nativeSessionId);
+        if (!TERMINAL.includes(before.state)) {
+          await runtime.stop({ nativeSessionId: session.nativeSessionId });
+          // A streaming runtime.start reports the outcome; a waiting run has no owner.
+          const owner = this.#streaming.get(runId);
+          if (owner) await owner;
+          else {
+            const events: NormalizedRunEventDto[] = [];
+            for await (const event of runtime.subscribe({
+              nativeSessionId: session.nativeSessionId,
+              afterSequence: this.#cursors.get(runId) ?? 0,
+            })) {
+              if (event.runId !== runId || event.workstationId !== this.workstationId)
+                throw new Error("RUNTIME_EVENT_PROVENANCE_MISMATCH");
+              events.push(event);
+              this.#cursors.set(runId, event.sequence);
+              if (TERMINAL.some((state) => event.type === `run.${state}`)) break;
+            }
+            if (events.length) deliveries.push({ kind: "run.events", runId, events });
+            const after = await this.manager.observe(runId);
+            if (!TERMINAL.includes(after.state)) throw new Error("RUNTIME_STOP_UNCONFIRMED");
+            const workspace = this.workspaces.inspect(session.workspaceId);
+            deliveries.push({
+              kind: "run.complete",
+              runId,
+              headSha: workspace.headSha ?? workspace.baseSha,
+              dirty: workspace.dirty,
+              changedFileCount: workspace.statusPorcelain?.split("\0").filter(Boolean).length ?? 0,
+            });
+          }
+        }
+      } else if (command.type === "runtime.send") {
+        // Follow-up messages need conversation-aware completion; fail visibly until then.
+        throw new Error("RUNTIME_SEND_UNSUPPORTED");
+      } else if (command.type === "workspace.cleanup") {
+        // The backend authorizes the cleanup policy; the Node still refuses dirty worktrees.
+        this.workspaces.cleanup(command.payload.workspaceId, {
+          artifactsCaptured: true,
+          integrationPending: false,
+          retentionAllows: true,
+        });
+      } else if (command.type === "invalid") {
+        throw new Error(command.payload.code);
       } else {
         const input = {
           ...command.payload,
@@ -229,6 +314,7 @@ export class ControlPlaneDriver {
           )
             throw new Error("RUNTIME_EVENT_PROVENANCE_MISMATCH");
           events.push(event);
+          this.#cursors.set(input.runId, event.sequence);
           if (events.length === 50) {
             this.store.appendEvent({
               eventId: `stream:${command.commandId}:${String(event.sequence).padStart(8, "0")}`,
