@@ -135,6 +135,19 @@ verification, repair and integration use separate managed worktrees. The mobile
 UI shows task phases, Runs, repair attempts and failure reasons. Its install
 manifest supports standalone use; authenticated offline operation is not provided.
 
+## Web app
+
+The web app is phone-first and follows `docs/ui-ux-design-system.md`; shared tokens and
+components live in `packages/ui`. It opens on a list of your Sessions; the open Session is
+kept in the URL (`?session=<id>`), so refresh and back navigation keep it. A Session shows
+your messages, the planning outcome for each, Task cards with their Runs (status, live
+activity label, reported token totals) and a Stop control per active Run and per Session.
+The composer stays pinned to the bottom; in an ended Session, sending starts a new Session.
+Mac status, removal of a Mac and sign-out are in Settings.
+
+Not yet: Supervisor or agent replies as conversation text (planning is deterministic, see
+above), steering a running agent, run activity detail, agent profile and usage screens.
+
 ## Structured text plan
 
 Paste a JSON object into the text composer. Dependencies refer only to earlier

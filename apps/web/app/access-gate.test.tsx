@@ -12,6 +12,7 @@ const state = vi.hoisted(() => ({
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: state.authenticated, isLoading: state.loading }),
   useMutation: () => vi.fn(),
+  usePaginatedQuery: () => ({ results: [], status: "Exhausted", loadMore: vi.fn() }),
   useQuery: (reference: Parameters<typeof getFunctionName>[0]) => {
     const name = getFunctionName(reference);
     state.queries.push(name);
@@ -45,14 +46,17 @@ it.each(["pending", "blocked"] as const)(
         ? "Contact an admin to restore access"
         : "Wait until an admin adds you to the system",
     );
-    expect(html).not.toContain("New command");
+    expect(html).not.toContain("What should we work on?");
     expect(html).not.toContain("Approve this Mac");
     expect(state.queries).toEqual(["profiles:viewer"]);
   },
 );
-it("renders the dashboard only after a database grant", () => {
+it("renders the sessions workspace only after a database grant", () => {
   state.accessStatus = "allowed";
-  expect(renderToStaticMarkup(createElement(HomePage))).toContain("New command");
+  const html = renderToStaticMarkup(createElement(HomePage));
+  expect(html).toContain("Sessions");
+  expect(html).toContain("What should we work on?");
+  expect(html).not.toContain("Access pending");
 });
 it("offers Google sign-in to signed-out users", () => {
   state.authenticated = false;

@@ -1,22 +1,35 @@
 "use client";
 import { useAuthActions } from "@convex-dev/auth/react";
-import { useConvexAuth, useMutation, useQuery } from "convex/react";
-import { useEffect, useState } from "react";
+import { AppShell, Button, Card, Notice, ProductMark } from "@zamolxis/ui";
+import { useConvexAuth, useQuery } from "convex/react";
+import { useState } from "react";
 import { api } from "../../../convex/_generated/api";
-import type { Id } from "../../../convex/_generated/dataModel";
-import "./style.css";
+import { Workspace } from "./features/workspace";
+
 export default function HomePage() {
   if (!process.env.NEXT_PUBLIC_CONVEX_URL)
     return (
-      <main>
-        <h1>Zamolxis</h1>
-        <p>
+      <Gate>
+        <p className="z-muted">
           Control plane is not configured. Configure the public deployment before pairing a Mac.
         </p>
-      </main>
+      </Gate>
     );
   return <AccessGate />;
 }
+
+function Gate({ children }: { children: React.ReactNode }) {
+  return (
+    <AppShell centered>
+      <div className="z-row">
+        <ProductMark size="lg" />
+        <h1 className="z-title">Zamolxis</h1>
+      </div>
+      {children}
+    </AppShell>
+  );
+}
+
 function AccessGate() {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const { signIn, signOut } = useAuthActions();
@@ -25,37 +38,44 @@ function AccessGate() {
   const [busy, setBusy] = useState(false);
   if (isLoading || (isAuthenticated && viewer === undefined))
     return (
-      <main>
-        <h1>Zamolxis</h1>
-        <p role="status">Checking access…</p>
-      </main>
+      <Gate>
+        <p className="z-muted" role="status">
+          Checking access…
+        </p>
+      </Gate>
     );
-  if (isAuthenticated && viewer?.accessStatus === "allowed") return <Dashboard />;
+  if (isAuthenticated && viewer?.accessStatus === "allowed") return <Workspace />;
   return (
-    <main>
-      <h1>Zamolxis</h1>
+    <Gate>
       {isAuthenticated ? (
-        <section aria-live="polite">
-          <h2>{viewer?.accessStatus === "blocked" ? "Access revoked" : "Access pending"}</h2>
-          <p>
-            {viewer?.email ? `Signed in as ${viewer.email}. ` : ""}
-            {viewer?.accessStatus === "blocked"
-              ? "Your access has been revoked. Contact an admin to restore access."
-              : "Wait until an admin adds you to the system. This page will update automatically when your access is approved."}
-          </p>
-          <button
-            type="button"
+        <Card label="Access">
+          <div aria-live="polite" className="z-stack">
+            <h2 className="z-title">
+              {viewer?.accessStatus === "blocked" ? "Access revoked" : "Access pending"}
+            </h2>
+            <p className="z-muted">
+              {viewer?.email ? `Signed in as ${viewer.email}. ` : ""}
+              {viewer?.accessStatus === "blocked"
+                ? "Your access has been revoked. Contact an admin to restore access."
+                : "Wait until an admin adds you to the system. This page will update automatically when your access is approved."}
+            </p>
+          </div>
+          <Button
+            variant="secondary"
+            block
             onClick={() => void signOut().catch(() => setError("Could not sign out"))}
           >
             Sign out
-          </button>
-        </section>
+          </Button>
+        </Card>
       ) : (
-        <section>
-          <h2>Sign in to Zamolxis</h2>
-          <p>Use your Google account. Access requires approval from the owner.</p>
-          <button
-            type="button"
+        <Card label="Sign in">
+          <h2 className="z-title">Sign in to Zamolxis</h2>
+          <p className="z-muted">
+            Use your Google account. Access requires approval from the owner.
+          </p>
+          <Button
+            block
             disabled={busy}
             onClick={async () => {
               setBusy(true);
@@ -72,285 +92,10 @@ function AccessGate() {
             }}
           >
             {busy ? "Connecting to Google…" : "Continue with Google"}
-          </button>
-        </section>
+          </Button>
+        </Card>
       )}
-      {error && <p role="alert">{error}</p>}
-    </main>
-  );
-}
-function Dashboard() {
-  const { isAuthenticated, isLoading } = useConvexAuth();
-  const { signOut } = useAuthActions();
-  const [pair, setPair] = useState("");
-  const [message, setMessage] = useState("");
-  const ensure = useMutation(api.profiles.ensure);
-  const approve = useMutation(api.pairing.approve);
-  const revoke = useMutation(api.workstations.revoke);
-  const [ready, setReady] = useState(false);
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 15000);
-    return () => clearInterval(timer);
-  }, []);
-  const pairing = useQuery(
-    api.pairing.preview,
-    ready && /^[a-f0-9]{64}$/.test(pair) ? { approvalCode: pair } : "skip",
-  );
-  useEffect(() => {
-    setPair(new URL(location.href).searchParams.get("pair") ?? "");
-  }, []);
-  useEffect(() => {
-    if (isAuthenticated)
-      void ensure({})
-        .then(() => setReady(true))
-        .catch(() => setMessage("Could not initialize profile"));
-  }, [isAuthenticated, ensure]);
-  const devices = useQuery(api.workstations.listMine, ready ? {} : "skip");
-  const products = useQuery(api.supervisor.products, ready ? {} : "skip");
-  const [productId, setProductId] = useState<Id<"products"> | "">("");
-  const repositories = useQuery(
-    api.repositories.listByProduct,
-    ready && productId ? { productId } : "skip",
-  );
-  const [repositoryId, setRepositoryId] = useState<Id<"repositories"> | "">("");
-  const [sessionId, setSessionId] = useState<Id<"workSessions"> | "">("");
-  const session = useQuery(
-    api.sessions.get,
-    ready && sessionId ? { workSessionId: sessionId } : "skip",
-  );
-  const runs = useQuery(
-    api.runs.listBySession,
-    ready && sessionId ? { workSessionId: sessionId } : "skip",
-  );
-  const tasks = useQuery(
-    api.tasks.listBySession,
-    ready && sessionId ? { workSessionId: sessionId } : "skip",
-  );
-  const submit = useMutation(api.supervisor.submit);
-  const [text, setText] = useState("");
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    if (!productId && products?.[0]) setProductId(products[0]._id);
-  }, [products, productId]);
-  useEffect(() => {
-    setRepositoryId(repositories?.[0]?._id ?? "");
-  }, [repositories]);
-  return (
-    <main>
-      <header>
-        <span className="mark">Z</span>
-        <div>
-          <h1>Zamolxis</h1>
-          <p>Your Mac. Your projects.</p>
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => void signOut().catch(() => setMessage("Could not sign out"))}
-          >
-            Sign out
-          </button>
-        </div>
-      </header>
-      {isLoading ? (
-        <p role="status">Connecting…</p>
-      ) : !isAuthenticated ? (
-        <section>
-          <h2>Connect your Mac</h2>
-          <p>Sign in to approve pairing and run your first command.</p>
-          <p>Sign in with Google from the access screen.</p>
-        </section>
-      ) : (
-        <>
-          {pair && (
-            <section>
-              <h2>Approve {pairing?.name ?? "Mac pairing"}</h2>
-              <p>
-                Only approve the QR code you just opened from setup on your own Mac. The code
-                expires after five minutes.
-              </p>
-              <button
-                type="button"
-                disabled={busy || !ready || !pairing?.pending}
-                onClick={async () => {
-                  setBusy(true);
-                  try {
-                    await approve({ approvalCode: pair });
-                    setPair("");
-                    history.replaceState(null, "", "/");
-                    setMessage("Mac approved. Setup is configuring products and starting Node.");
-                  } catch {
-                    setMessage(
-                      "Pairing expired, already used, or device issuer is not configured. Rerun setup.",
-                    );
-                  } finally {
-                    setBusy(false);
-                  }
-                }}
-              >
-                Approve this Mac
-              </button>
-            </section>
-          )}
-          <section>
-            <h2>Nodes</h2>
-            {devices?.length ? (
-              devices.map((device) => (
-                <div className="row" key={device._id}>
-                  <strong>{device.name}</strong>
-                  <span>
-                    Codex:{" "}
-                    {device.runtimes.find((runtime) => runtime.runtime === "codex")?.status ??
-                      "unavailable"}
-                  </span>
-                  {device.status !== "revoked" && (
-                    <button
-                      type="button"
-                      className="secondary"
-                      onClick={async () => {
-                        try {
-                          await revoke({ workstationId: device._id });
-                          setMessage("Node access revoked");
-                        } catch {
-                          setMessage("Could not revoke Node access");
-                        }
-                      }}
-                    >
-                      Revoke access
-                    </button>
-                  )}
-                  <span>
-                    {device.status === "online" && (device.lastHeartbeatAt ?? 0) > now - 45000
-                      ? "Online"
-                      : device.status === "revoked"
-                        ? "Revoked"
-                        : "Waiting for heartbeat"}
-                  </span>
-                </div>
-              ))
-            ) : (
-              <p>
-                Run <code>pnpm zamolxis setup</code> on your Mac and scan the QR code.
-              </p>
-            )}
-          </section>
-          <section>
-            <h2>New command</h2>
-            <form
-              onSubmit={async (event) => {
-                event.preventDefault();
-                if (!productId || !repositoryId) return;
-                setBusy(true);
-                try {
-                  const id = await submit({
-                    productId,
-                    repositoryId,
-                    text,
-                    idempotencyKey: crypto.randomUUID(),
-                    ...(sessionId ? { sessionId } : {}),
-                  });
-                  setSessionId(id);
-                  setText("");
-                  setMessage("Command queued for your Mac");
-                } catch {
-                  setMessage("Cannot submit: check Node, runtime and selected product/session");
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
-              <label>
-                Product
-                <select
-                  value={productId}
-                  onChange={(event) => {
-                    setProductId(event.target.value as Id<"products">);
-                    setSessionId("");
-                  }}
-                >
-                  <option value="">Select product</option>
-                  {products?.map((product) => (
-                    <option key={product._id} value={product._id}>
-                      {product.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Repository
-                <select
-                  value={repositoryId}
-                  onChange={(event) => {
-                    setRepositoryId(event.target.value as Id<"repositories">);
-                    setSessionId("");
-                  }}
-                >
-                  {repositories?.map((repository) => (
-                    <option key={repository._id} value={repository._id}>
-                      {repository.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                What should we work on?
-                <textarea
-                  value={text}
-                  onChange={(event) => setText(event.target.value)}
-                  maxLength={16000}
-                  rows={5}
-                  placeholder="Describe the outcome you need…"
-                />
-              </label>
-              <button type="submit" disabled={busy || !ready || !repositoryId || !text.trim()}>
-                Run command
-              </button>
-            </form>
-          </section>
-          {session && (
-            <section>
-              <h2>{session.title}</h2>
-              <p>
-                Session: {session.status} · {session.completedTaskCount}/{session.totalTaskCount}{" "}
-                tasks · {session.activeRunCount} active runs
-              </p>
-              {runs?.map((run) => (
-                <div className="row" key={run._id}>
-                  <span>
-                    {run.role ?? "builder"} · {run.runtime}
-                  </span>
-                  <strong>{run.status}</strong>
-                </div>
-              ))}
-              {tasks?.map((task) => (
-                <div className="row" key={task._id}>
-                  <strong>{task.title}</strong>
-                  <span>{(task.phase ?? task.status).replaceAll("_", " ")}</span>
-                  {task.candidateRunId && (
-                    <span>Candidate recorded · repairs {task.repairAttempts ?? 0}/2</span>
-                  )}
-                  {task.trustOutcome && <span>Latest trust: {task.trustOutcome}</span>}
-                  {task.failureReason && <p role="status">{task.failureReason}</p>}
-                </div>
-              ))}
-              {session.status === "completed" && (
-                <p>
-                  Trusted integration branches are prepared locally. Publishing and protected-main
-                  merge remain human actions.
-                </p>
-              )}
-              <button type="button" className="secondary" onClick={() => setSessionId("")}>
-                Start a new session
-              </button>
-            </section>
-          )}
-        </>
-      )}
-      {message && (
-        <p role="status" className="notice">
-          {message}
-        </p>
-      )}
-    </main>
+      {error && <Notice tone="danger">{error}</Notice>}
+    </Gate>
   );
 }
