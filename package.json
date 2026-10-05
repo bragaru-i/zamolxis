@@ -16,7 +16,8 @@
     "check": "pnpm lint && pnpm check:boundaries && pnpm typecheck && pnpm typecheck:convex && pnpm test && pnpm test:convex && pnpm build",
     "typecheck:convex": "tsc -p convex/tsconfig.json",
     "test:convex": "vitest run convex tests",
-    "codegen:convex": "convex codegen"
+    "codegen:convex": "convex codegen",
+    "zamolxis": "pnpm --filter @zamolxis/node cli"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.2.4",

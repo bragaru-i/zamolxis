@@ -2,12 +2,14 @@ import { convexTest } from "convex-test";
 import { expect, it } from "vitest";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
+
 function required<T>(value: T | undefined): T {
   if (value === undefined) throw new Error("Missing fixture value");
   return value;
 }
 const modules = {
   "./_generated/server.ts": () => import("./_generated/server"),
+  "./supervisor.ts": () => import("./supervisor"),
   "./profiles.ts": () => import("./profiles"),
   "./workstations.ts": () => import("./workstations"),
   "./repositories.ts": () => import("./repositories"),
@@ -372,4 +374,150 @@ it("derives trust from independent evidence on the current candidate SHA; approv
   expect(
     required((await f.user.query(api.trust.listByRun, { runId: candidateRunId }))[0]).eligible,
   ).toBe(false);
+});
+
+it("reserves three builder slots and an independent verifier slot; lost runs keep capacity until reconciled", async () => {
+  const f = await fixture();
+  const assignments = [];
+  for (let i = 0; i < 5; i++) {
+    const taskId = await f.user.mutation(api.tasks.create, {
+      workSessionId: f.workSessionId,
+      title: `Slot ${i}`,
+      description: "Fixture",
+      kind: i === 4 ? "verification" : "implementation",
+      priority: i,
+      runtimePolicy: { mode: "forced", runtime: "fake" },
+    });
+    const workspaceId = await f.t.run(async (ctx) => {
+      const original = await ctx.db.get("workspaces", f.workspaceId);
+      if (!original) throw new Error("Missing workspace");
+      const { _id, _creationTime, ...fields } = original;
+      return ctx.db.insert("workspaces", { ...fields, taskId, status: "ready" });
+    });
+    assignments.push({ taskId, workspaceId, runtime: "fake" });
+  }
+  for (const assignment of assignments.slice(0, 3))
+    await f.user.mutation(api.runs.request, assignment);
+  const fourth = assignments[3];
+  const verifier = assignments[4];
+  if (!fourth || !verifier) throw new Error("Missing assignment");
+  await expect(f.user.mutation(api.runs.request, fourth)).rejects.toThrow("NODE_CAPACITY_EXCEEDED");
+  await f.t.mutation(internal.runs.start, { ...verifier, role: "verifier" });
+  const reserved = (
+    await f.user.query(api.runs.listBySession, { workSessionId: f.workSessionId })
+  ).find((run) => run.role === "builder");
+  if (!reserved) throw new Error("Missing builder");
+  await f.t.run(async (ctx) => {
+    await ctx.db.patch("agentRuns", reserved._id, { status: "lost" });
+  });
+  await expect(f.user.mutation(api.runs.request, fourth)).rejects.toThrow("NODE_CAPACITY_EXCEEDED");
+});
+
+it("rejects cross-product repository sessions and preserves product identity on valid sessions", async () => {
+  const f = await fixture();
+  const { a, b } = await f.t.run(async (ctx) => {
+    const session = await ctx.db.get("workSessions", f.workSessionId);
+    if (!session) throw new Error("Missing session");
+    const fields = { ownerId: session.ownerId, name: "Product", createdAt: 0, updatedAt: 0 };
+    const a = await ctx.db.insert("products", { ...fields, slug: "a" });
+    const b = await ctx.db.insert("products", { ...fields, slug: "b" });
+    return { a, b };
+  });
+  const repositoryA = await f.user.mutation(api.repositories.create, { name: "A", productId: a });
+  const repositoryB = await f.user.mutation(api.repositories.create, { name: "B", productId: b });
+  await expect(
+    f.user.mutation(api.sessions.create, {
+      title: "Mixed",
+      goal: "Mixed",
+      repositoryIds: [repositoryA, repositoryB],
+    }),
+  ).rejects.toThrow("PRODUCT_MISMATCH");
+  await expect(
+    f.user.mutation(api.sessions.create, {
+      title: "Mixed",
+      goal: "Mixed",
+      repositoryIds: [f.repositoryId, repositoryA],
+    }),
+  ).rejects.toThrow("PRODUCT_MISMATCH");
+  const sessionId = await f.user.mutation(api.sessions.create, {
+    title: "A",
+    goal: "A",
+    repositoryIds: [repositoryA],
+  });
+  expect((await f.user.query(api.sessions.get, { workSessionId: sessionId })).productId).toBe(a);
+});
+
+it("submits an idempotent text command, provisions before dispatch and isolates explicit session reuse", async () => {
+  const f = await fixture();
+  const productId = await f.t.run(async (ctx) => {
+    const session = await ctx.db.get("workSessions", f.workSessionId);
+    if (!session) throw new Error("Missing session");
+    const productId = await ctx.db.insert("products", {
+      ownerId: session.ownerId,
+      name: "A",
+      slug: "a",
+      createdAt: 0,
+      updatedAt: 0,
+    });
+    await ctx.db.patch("repositories", f.repositoryId, { productId });
+    return productId;
+  });
+  await f.node.mutation(api.node.heartbeat, {
+    workstationId: f.workstationId,
+    instanceId: "instance",
+    runtimeCapabilities: [{ runtime: "codex", capabilities: ["start"] }],
+  });
+  const input = {
+    productId,
+    repositoryId: f.repositoryId,
+    text: "Implement an observable outcome",
+    idempotencyKey: "first-command",
+  };
+  const sessionId = await f.user.mutation(api.supervisor.submit, input);
+  expect(await f.user.mutation(api.supervisor.submit, input)).toBe(sessionId);
+  await expect(
+    f.user.mutation(api.supervisor.submit, { ...input, text: "Changed" }),
+  ).rejects.toThrow("COMMAND_CONFLICT");
+  await expect(
+    f.user.mutation(api.supervisor.submit, {
+      ...input,
+      idempotencyKey: "wrong-session",
+      sessionId: f.workSessionId,
+    }),
+  ).rejects.toThrow("PRODUCT_MISMATCH");
+  const workspaces = await f.user.query(api.workspaces.listBySession, { workSessionId: sessionId });
+  const workspace = workspaces[0];
+  if (!workspace) throw new Error("Missing workspace");
+  expect(workspace.status).toBe("requested");
+  await f.node.mutation(api.supervisor.dispatch, { workstationId: f.workstationId });
+  expect(await f.user.query(api.runs.listBySession, { workSessionId: sessionId })).toEqual([]);
+  const command = (
+    await f.node.query(api.node.listPending, { workstationId: f.workstationId })
+  ).find((item) => item.targetId === workspace._id);
+  if (!command) throw new Error("Missing provisioning command");
+  await f.node.mutation(api.node.claim, {
+    workstationId: f.workstationId,
+    commandId: command._id,
+    instanceId: "instance",
+  });
+  await f.node.mutation(api.node.markReady, {
+    workstationId: f.workstationId,
+    workspaceId: workspace._id,
+    commandId: command._id,
+    localPath: "/isolated-command",
+    baseSha: "base",
+    headSha: "base",
+    branchName: "command",
+  });
+  await f.node.mutation(api.supervisor.dispatch, { workstationId: f.workstationId });
+  const runs = await f.user.query(api.runs.listBySession, { workSessionId: sessionId });
+  expect(runs).toHaveLength(1);
+  expect(runs[0]?.role).toBe("builder");
+  expect(runs[0]?.status).toBe("queued");
+  await f.user.mutation(api.supervisor.submit, {
+    ...input,
+    idempotencyKey: "second-command",
+    sessionId,
+  });
+  expect(await f.user.query(api.tasks.listBySession, { workSessionId: sessionId })).toHaveLength(2);
 });

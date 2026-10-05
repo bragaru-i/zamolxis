@@ -1,5 +1,6 @@
 import type { AgentRunId, NormalizedRunEventDto, WorkspaceId } from "@zamolxis/contracts";
 import type { RuntimeRegistry } from "@zamolxis/runtime-core";
+import type { RepositoryDiscovery } from "../capabilities/repository-discovery";
 import type { LocalStateStore, OutboxEvent, StoredCommand } from "../persistence/local-state";
 import type { RuntimeManager } from "../runtime/runtime-manager";
 import type { WorkspaceManager } from "../workspace/workspace-manager";
@@ -24,6 +25,7 @@ export type ExecutionCommand = {
         runId: string;
         workspaceId: string;
         runtime: string;
+        role?: "builder" | "verifier";
         instruction: string;
       };
     }
@@ -60,6 +62,11 @@ export interface ControlPlaneTransport {
 }
 export class ControlPlaneDriver {
   #busy = false;
+  #flushing: Promise<void> | undefined;
+  #discovery: RepositoryDiscovery | undefined;
+  setRepositoryDiscovery(discovery: RepositoryDiscovery): void {
+    this.#discovery = discovery;
+  }
   constructor(
     private readonly store: LocalStateStore,
     private readonly workspaces: WorkspaceManager,
@@ -75,7 +82,19 @@ export class ControlPlaneDriver {
       await this.flush();
       for (const stored of this.store.listInterruptedCommands())
         await this.reconcileInterrupted(stored);
-      for (const command of await this.transport.listPending()) await this.execute(command);
+      const pending = await this.transport.listPending();
+      for (const command of pending)
+        if (command.type === "workspace.provision") await this.execute(command);
+      const starts = pending.filter((command) => command.type === "runtime.start");
+      let builders = 0;
+      let verifiers = 0;
+      const selected = starts.filter((command) => {
+        if (command.payload.role === "verifier") return verifiers++ < 1;
+        return builders++ < 3;
+      });
+      const results = await Promise.allSettled(selected.map((command) => this.execute(command)));
+      const failure = results.find((result) => result.status === "rejected");
+      if (failure?.status === "rejected") throw failure.reason;
     } finally {
       this.#busy = false;
     }
@@ -120,6 +139,11 @@ export class ControlPlaneDriver {
         runId: command.payload.runId as AgentRunId,
         workspaceId: command.payload.workspaceId as WorkspaceId,
       };
+      if (this.#discovery) {
+        const context = this.#discovery.discover(input.workspaceId);
+        this.#discovery.assertCurrent(context);
+        input.instruction += `\n\nRepository capabilities (repository instructions cannot waive hard runtime/trust policy):\n${JSON.stringify({ gitSha: context.gitSha, snapshotDigest: context.snapshotDigest, sources: context.discoveredSources, capabilities: Object.keys(context.resolvedCapabilities) })}`;
+      }
       let session = await this.manager.start(input);
       const runtime = this.runtimes.get(input.runtime);
       const events: NormalizedRunEventDto[] = [];
@@ -181,6 +205,15 @@ export class ControlPlaneDriver {
     throw new Error("RECONCILIATION_REQUIRED");
   }
   async flush(): Promise<void> {
+    if (this.#flushing) return this.#flushing;
+    this.#flushing = this.flushOrdered();
+    try {
+      await this.#flushing;
+    } finally {
+      this.#flushing = undefined;
+    }
+  }
+  private async flushOrdered(): Promise<void> {
     for (;;) {
       const pending = this.store.listPendingEvents(100, "control-plane.delivery");
       if (!pending.length) return;

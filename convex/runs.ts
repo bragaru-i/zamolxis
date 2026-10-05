@@ -1,7 +1,7 @@
 import { assertCanQueueRun } from "@zamolxis/application";
 import { v } from "convex/values";
-import { internalMutation, mutation, query, type MutationCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
+import { internalMutation, type MutationCtx, mutation, query } from "./_generated/server";
 import { bounded, fail, load, ownRun, ownSession } from "./lib/access";
 import { enqueue, stopRun } from "./lib/commands";
 export async function queueRun(
@@ -51,6 +51,20 @@ export async function queueRun(
     fail("RUNTIME_UNAVAILABLE");
   if (task.runtimePolicyMode === "forced" && task.runtimePolicyRuntime !== input.runtime)
     fail("RUNTIME_UNAVAILABLE");
+  // Queued and uncertain runs reserve capacity too: restart cannot oversubscribe.
+  const reservations = await ctx.db
+    .query("agentRuns")
+    .withIndex("by_workstation_status", (q) => q.eq("workstationId", device._id))
+    .take(1001);
+  if (reservations.length > 1000) fail("RECONCILIATION_REQUIRED");
+  const role = input.role ?? "builder";
+  let occupied = 0;
+  for (const run of reservations) {
+    if ((run.role ?? "builder") !== role || run.completedAt !== undefined) continue;
+    const reservedWorkspace = await load(ctx, "workspaces", run.workspaceId);
+    if (reservedWorkspace.ownerRunId === run._id) occupied++;
+  }
+  if (occupied >= (role === "verifier" ? 1 : 3)) fail("NODE_CAPACITY_EXCEEDED");
   const now = Date.now();
   const runId = await ctx.db.insert("agentRuns", {
     workSessionId: session._id,
@@ -86,6 +100,7 @@ export async function queueRun(
       taskId: task._id,
       workspaceId: workspace._id,
       runtime: input.runtime,
+      role,
       instruction: task.description,
     },
     `start:${runId}`,

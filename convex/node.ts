@@ -1,10 +1,11 @@
-import { valueKey } from "./lib/value";
 import { applyRunEvent } from "@zamolxis/application";
 import { assertRunTransition } from "@zamolxis/domain";
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { bounded, fail, load, nodeRun, requireNode } from "./lib/access";
 import { settleRun } from "./lib/settlement";
+import { valueKey } from "./lib/value";
+
 const deviceArgs = { workstationId: v.id("workstations") };
 export const heartbeat = mutation({
   args: {
@@ -476,5 +477,23 @@ export const recoverCompletedCommand = mutation({
     // Recovery acknowledges an already observed outcome. It does not re-claim or execute work.
     await ctx.db.patch("commands", command._id, { status: "completed", completedAt: Date.now() });
     return null;
+  },
+});
+
+export const health = query({
+  args: deviceArgs,
+  returns: v.object({ online: v.boolean(), runtimeAvailable: v.boolean() }),
+  handler: async (ctx, args) => {
+    const device = await requireNode(ctx, args.workstationId);
+    const runtime = await ctx.db
+      .query("runtimeInstallations")
+      .withIndex("by_workstation_runtime", (q) =>
+        q.eq("workstationId", device._id).eq("runtime", "codex"),
+      )
+      .unique();
+    return {
+      online: device.status === "online" && (device.lastHeartbeatAt ?? 0) > Date.now() - 45_000,
+      runtimeAvailable: runtime?.status === "available",
+    };
   },
 });
