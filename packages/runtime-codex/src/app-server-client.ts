@@ -28,6 +28,7 @@ interface PendingRequest {
 export class AppServerClient {
   readonly #process: AppServerProcess;
   readonly #pending = new Map<number, PendingRequest>();
+  readonly #closeListeners = new Set<() => void>();
   readonly #listeners = new Set<(event: AppServerNotification) => void>();
   #nextId = 0;
   #buffer = "";
@@ -76,6 +77,11 @@ export class AppServerClient {
   onNotification(listener: (event: AppServerNotification) => void): () => void {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);
+  }
+  onClose(listener: () => void): () => void {
+    if (this.#closed) listener();
+    else this.#closeListeners.add(listener);
+    return () => this.#closeListeners.delete(listener);
   }
   close(): void {
     this.#fail("CODEX_TRANSPORT_CLOSED");
@@ -157,5 +163,7 @@ export class AppServerClient {
     this.#pending.clear();
     this.#listeners.clear();
     this.#process.kill();
+    for (const listener of this.#closeListeners) listener();
+    this.#closeListeners.clear();
   }
 }

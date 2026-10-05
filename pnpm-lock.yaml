@@ -227,10 +227,16 @@ importers:
 
   packages/runtime-codex:
     dependencies:
+      '@zamolxis/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@zamolxis/runtime-core':
         specifier: workspace:*
         version: link:../runtime-core
     devDependencies:
+      '@zamolxis/test-kit':
+        specifier: workspace:*
+        version: link:../test-kit
       '@biomejs/biome':
         specifier: ^2.2.4
         version: 2.5.15
