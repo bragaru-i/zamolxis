@@ -9,11 +9,25 @@ export async function queueRun(
   input: {
     taskId: Id<"tasks">;
     workspaceId: Id<"workspaces">;
-    runtime: string;
+    runtime?: string;
     role?: "builder" | "verifier";
   },
 ) {
   const task = await load(ctx, "tasks", input.taskId);
+  const session = await load(ctx, "workSessions", task.workSessionId);
+  const role = input.role ?? "builder";
+  const productProfiles = session.productId
+    ? await ctx.db.query("agentProfiles").withIndex("by_product_role", (q) => q.eq("productId", session.productId).eq("role", role)).take(2)
+    : [];
+  if (productProfiles.length > 1) fail("AGENT_PROFILE_CONFLICT");
+  const globalProfiles = productProfiles.length
+    ? []
+    : await ctx.db.query("agentProfiles").withIndex("by_owner_role", (q) => q.eq("ownerId", session.ownerId).eq("role", role)).take(10);
+  const enabledGlobals = globalProfiles.filter((profile) => profile.productId === undefined && profile.enabled);
+  if (enabledGlobals.length > 1) fail("AGENT_PROFILE_CONFLICT");
+  const profile = productProfiles.find((candidate) => candidate.enabled) ?? enabledGlobals[0];
+  const runtime = profile?.runtime ?? input.runtime ?? "codex";
+  if (input.runtime && input.runtime !== runtime) fail("AGENT_PROFILE_RUNTIME_MISMATCH");
   const workspace = await load(ctx, "workspaces", input.workspaceId);
   if (workspace.taskId !== task._id || workspace.workSessionId !== task.workSessionId)
     fail("WORKSPACE_MISMATCH");
@@ -26,21 +40,20 @@ export async function queueRun(
     if (
       existing.length !== 1 ||
       run.taskId !== task._id ||
-      run.runtime !== input.runtime ||
+      run.runtime !== runtime ||
       run.role !== (input.role ?? "builder")
     )
       fail("COMMAND_CONFLICT");
     return run._id;
   }
   assertCanQueueRun(task.status, workspace.status, !!workspace.ownerRunId);
-  const session = await load(ctx, "workSessions", task.workSessionId);
   if (["completed", "failed", "cancelled"].includes(session.status)) fail("INVALID_STATE");
   const device = await load(ctx, "workstations", workspace.workstationId);
   if (device.status !== "online") fail("WORKSTATION_OFFLINE");
   const installation = await ctx.db
     .query("runtimeInstallations")
     .withIndex("by_workstation_runtime", (q) =>
-      q.eq("workstationId", device._id).eq("runtime", input.runtime),
+      q.eq("workstationId", device._id).eq("runtime", runtime),
     )
     .unique();
   if (
@@ -49,7 +62,7 @@ export async function queueRun(
     !installation.capabilities.includes("start")
   )
     fail("RUNTIME_UNAVAILABLE");
-  if (task.runtimePolicyMode === "forced" && task.runtimePolicyRuntime !== input.runtime)
+  if (task.runtimePolicyMode === "forced" && task.runtimePolicyRuntime !== runtime)
     fail("RUNTIME_UNAVAILABLE");
   // Queued and uncertain runs reserve capacity too: restart cannot oversubscribe.
   const reservations = await ctx.db
@@ -57,7 +70,6 @@ export async function queueRun(
     .withIndex("by_workstation_status", (q) => q.eq("workstationId", device._id))
     .take(1001);
   if (reservations.length > 1000) fail("RECONCILIATION_REQUIRED");
-  const role = input.role ?? "builder";
   let occupied = 0;
   for (const run of reservations) {
     if ((run.role ?? "builder") !== role || run.completedAt !== undefined) continue;
@@ -71,8 +83,10 @@ export async function queueRun(
     taskId: task._id,
     workspaceId: workspace._id,
     workstationId: device._id,
-    runtime: input.runtime,
-    role: input.role ?? "builder",
+    runtime,
+    role,
+    ...(profile ? { agentProfileId: profile._id, agentProfileRevision: profile.revision, modelRequested: profile.model, reasoningEffort: profile.reasoningEffort } : {}),
+    runtimeVersion: installation.version,
     status: "queued",
     attempt: 1,
     lastActivityAt: now,
@@ -99,8 +113,10 @@ export async function queueRun(
       runId,
       taskId: task._id,
       workspaceId: workspace._id,
-      runtime: input.runtime,
+      runtime,
       role,
+      ...(profile?.model ? { model: profile.model } : {}),
+      ...(profile?.reasoningEffort ? { reasoningEffort: profile.reasoningEffort } : {}),
       instruction: task.description,
     },
     `start:${runId}`,
@@ -111,7 +127,7 @@ export const start = internalMutation({
   args: {
     taskId: v.id("tasks"),
     workspaceId: v.id("workspaces"),
-    runtime: v.string(),
+    runtime: v.optional(v.string()),
     role: v.optional(v.union(v.literal("builder"), v.literal("verifier"))),
   },
   returns: v.id("agentRuns"),
