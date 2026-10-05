@@ -2,8 +2,9 @@
 import { useAuthActions } from "@convex-dev/auth/react";
 import { AppShell, Button, Card, Notice, ProductMark } from "@zamolxis/ui";
 import { useConvexAuth, useQuery } from "convex/react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../../../convex/_generated/api";
+import { resetDeviceSignIn } from "./features/device";
 import { Workspace } from "./features/workspace";
 
 export default function HomePage() {
@@ -36,12 +37,35 @@ function AccessGate() {
   const viewer = useQuery(api.profiles.viewer, isAuthenticated ? {} : "skip");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  if (isLoading || (isAuthenticated && viewer === undefined))
+  const waiting = isLoading || (isAuthenticated && viewer === undefined);
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    setSlow(false);
+    if (!waiting) return;
+    const timer = setTimeout(() => setSlow(true), 10000);
+    return () => clearTimeout(timer);
+  }, [waiting]);
+  if (waiting)
     return (
       <Gate>
         <p className="z-muted" role="status">
           Checking access…
         </p>
+        {slow && (
+          <Card label="Connection problem">
+            <h2 className="z-title">Can't connect</h2>
+            <p className="z-muted">
+              Zamolxis can't confirm your sign-in. Check your connection, or reset the sign-in saved
+              on this device and sign in again.
+            </p>
+            <Button block onClick={() => location.reload()}>
+              Try again
+            </Button>
+            <Button variant="secondary" block onClick={resetDeviceSignIn}>
+              Reset sign-in on this device
+            </Button>
+          </Card>
+        )}
       </Gate>
     );
   if (isAuthenticated && viewer?.accessStatus === "allowed") return <Workspace />;
