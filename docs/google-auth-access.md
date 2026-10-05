@@ -94,7 +94,8 @@ node scripts/google-auth-setup.mjs deploy --environment prod --directory /privat
 ```
 
 Configure production hosting from the production `frontend.env`. Approve your
-production user separately. Store both private bundles in operator secrets
+production user and bootstrap its administrator separately (see "First
+administrator" below). Store both private bundles in operator secrets
 storage; `/private/tmp` is temporary and is not a backup. After setup, pair each
 Mac with the intended public application origin using `./scripts/setup.sh`.
 
@@ -150,15 +151,57 @@ and [Google configuration](https://labs.convex.dev/auth/config/oauth/google).
 
 ## Grant or revoke access
 
-1. The user opens the web app and chooses **Continue with Google**.
-2. Their verified Google profile creates a `users` row. They see **Access pending**.
-3. In Convex Dashboard → Data → `users`, find the intended account by email.
-4. Add/edit `accessStatus` with the string value `allowed` to grant access.
-5. Set it to `blocked` to revoke access; `pending` or removing the field also denies access.
+New users choose **Continue with Google**; their verified Google profile creates
+a `users` row and they see **Access pending** until someone approves them.
 
-There is no first-user auto-approval. Approve your own account this same way.
-Operators with Convex dashboard/data-write privileges control grants; ordinary
-web users cannot change them. Returning Google sign-in never resets a grant.
+### First administrator (once per deployment)
+
+1. Sign in once with Google; you see **Access pending**.
+2. In Convex Dashboard → Data → `users`, set your row's `accessStatus` to the
+   string `allowed`.
+3. Promote that approved account with the internal mutation
+   `admin:bootstrapAdmin`: Dashboard → Functions → `admin` → `bootstrapAdmin` →
+   Run with `{"email": "you@example.com"}`, or with that deployment's credentials:
+
+   ```sh
+   npx convex run admin:bootstrapAdmin '{"email":"you@example.com"}'        # dev
+   npx convex run admin:bootstrapAdmin '{"email":"you@example.com"}' --prod # prod
+   ```
+
+`bootstrapAdmin` is internal, so browsers cannot call it. It is idempotent: if an
+approved administrator already exists it changes nothing and returns
+`status: "exists"`. Otherwise it promotes exactly one **approved** user: the one
+whose email matches `email`, or, with `{}`, the only approved user. It refuses
+(`BOOTSTRAP_AMBIGUOUS`) when no approved user or more than one matches. Pending
+and blocked accounts are never eligible. Deploys do not run it, and nobody
+becomes administrator by signing in first.
+
+### Day to day, in the app
+
+Administrators see **Settings → People**. People waiting for approval are listed
+first, with email, name, when they joined and when they last signed in.
+
+- **Approve** sets `accessStatus` to `allowed`.
+- **Block** sets `blocked` and signs the person out everywhere: all their Convex
+  Auth sessions and refresh tokens are deleted, so existing browser tokens fail on
+  the next backend call. Their Products, sessions and history are kept.
+- **Restore access** approves a blocked person again.
+- **Make admin / Remove admin** changes another approved person's role.
+
+Each action asks for confirmation and is idempotent. You cannot change your own
+access or role, so the last administrator cannot be removed. Anyone blocked or set
+back to pending loses the administrator role (`users.role`). Every admin function
+authorizes the signed-in session server-side; the role never comes from client
+input. Operators can still edit `users.accessStatus` in the Dashboard.
+
+Everyone with access sees **Settings → Signed-in devices**: their own Convex Auth
+sessions (signed in, last active, expiry; the current device is marked). **Sign
+out…** ends one other browser; **Sign out all other devices** ends all but the
+current one. Convex Auth does not record browser or device names, so entries are
+described by time. Use **Sign out** for the current device.
+
+There is no first-user auto-approval; the first approval is a Dashboard edit.
+Ordinary web users cannot change grants. Returning Google sign-in never resets a grant.
 The allow decision is attached to the authenticated user's immutable ID, not a
 client-submitted email. Access is reactive; existing sessions are checked on
 backend calls. A deleted or expired auth session is also denied.

@@ -1,5 +1,5 @@
-import { defineSchema, defineTable } from "convex/server";
 import { authTables } from "@convex-dev/auth/server";
+import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 export const workstationStatus = v.union(
@@ -129,8 +129,11 @@ export default defineSchema({
     accessStatus: v.optional(
       v.union(v.literal("pending"), v.literal("allowed"), v.literal("blocked")),
     ),
+    // In-app access administration (#47). Set only by convex/admin.ts.
+    role: v.optional(v.literal("admin")),
   })
     .index("by_auth_subject", ["authSubject"])
+    .index("by_role", ["role"])
     .index("email", ["email"])
     .index("phone", ["phone"]),
 
