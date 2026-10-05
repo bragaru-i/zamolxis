@@ -7,8 +7,8 @@ import { LocalStateStore } from "../persistence/local-state";
 import { RepositoryRegistry } from "../repository/repository-registry";
 import { repositoryFixture } from "../testing/git-fixture";
 import { WorkspaceManager } from "../workspace/workspace-manager";
-import { RepositoryDiscovery } from "./repository-discovery";
 import { capabilityTraceRecorder } from "./capability-trace";
+import { RepositoryDiscovery } from "./repository-discovery";
 
 const cleanup: Array<() => void> = [];
 afterEach(() => {

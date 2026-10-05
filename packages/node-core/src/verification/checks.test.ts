@@ -1,10 +1,11 @@
 import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { git } from "@zamolxis/git";
 import { evaluateTrust } from "@zamolxis/application";
+import { git } from "@zamolxis/git";
 import { expect, it } from "vitest";
 import { repositoryFixture } from "../testing/git-fixture";
 import { runVerificationChecks } from "./checks";
+
 it("does not hide a failed explicit check behind a static-only policy", async () => {
   const f = repositoryFixture();
   try {
