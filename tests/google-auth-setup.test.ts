@@ -53,6 +53,19 @@ describe("environment-specific Google auth setup", () => {
 
   it("requires explicit environments and canonical HTTPS origins", () => {
     expect(validateConfig(config).appUrl).toBe(config.appUrl);
+    const regional = validateConfig({
+      ...config,
+      convexUrl: "https://zamolxis-test-123.eu-west-1.convex.cloud",
+    });
+    expect(regional.convexUrl).toBe("https://zamolxis-test-123.eu-west-1.convex.cloud");
+    expect(regional.httpActionsUrl).toBe("https://zamolxis-test-123.eu-west-1.convex.site");
+    for (const convexUrl of [
+      "https://other.eu-west-1.convex.cloud",
+      "https://zamolxis-test-123.attacker.example",
+      "http://zamolxis-test-123.convex.cloud",
+      "https://zamolxis-test-123.convex.cloud/path",
+    ])
+      expect(() => validateConfig({ ...config, convexUrl })).toThrow();
     for (const appUrl of [
       "http://localhost:3000",
       "https://example.com/path",
@@ -75,6 +88,8 @@ describe("environment-specific Google auth setup", () => {
           environment,
           "--deployment",
           deployment,
+          "--convex-url",
+          `https://${deployment}.eu-west-1.convex.cloud`,
           "--app-url",
           `https://${environment}.example.com`,
           "--directory",
@@ -82,7 +97,7 @@ describe("environment-specific Google auth setup", () => {
         );
         expect(result.status, result.stderr).toBe(0);
         expect(result.stdout).toContain(
-          `https://${deployment}.convex.site/api/auth/callback/google`,
+          `https://${deployment}.eu-west-1.convex.site/api/auth/callback/google`,
         );
         expect(statSync(directory).mode & 0o777).toBe(0o700);
         for (const file of [
@@ -96,7 +111,7 @@ describe("environment-specific Google auth setup", () => {
         ])
           expect(statSync(resolve(directory, file)).mode & 0o777).toBe(0o600);
         expect(readFileSync(resolve(directory, "frontend.env"), "utf8")).toContain(
-          `NEXT_PUBLIC_CONVEX_URL=https://${deployment}.convex.cloud`,
+          `NEXT_PUBLIC_CONVEX_URL=https://${deployment}.eu-west-1.convex.cloud`,
         );
         expect(result.stdout).not.toContain("PRIVATE KEY");
         expect(run("inspect", "--environment", environment, "--directory", directory).status).toBe(

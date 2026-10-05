@@ -20,12 +20,17 @@ Prepare development, replacing the deployment name and frontend origin:
 node scripts/google-auth-setup.mjs prepare \
   --environment dev \
   --deployment YOUR-DEV-DEPLOYMENT \
+  --convex-url https://YOUR-DEV-DEPLOYMENT.REGION.convex.cloud \
   --app-url https://YOUR-DEV-APP-ORIGIN \
   --directory /private/tmp/zamolxis-google-dev
 ```
 
 Use the actual lowercase deployment name from its `.convex.cloud` URL, not the
-project name. Choose a new absolute private directory outside the repository.
+project name. Copy the full Deployment URL from Convex into `--convex-url`;
+retain the region if present (for example `.eu-west-1.convex.cloud`). The helper
+preserves that region in both the frontend URL and Google callback. Older
+non-regional deployments can omit `--convex-url`. Choose a new absolute private
+directory outside the repository.
 Preparation is offline: it generates separate human/Node keys and prints the
 exact Google JavaScript origin and `.convex.site` callback URL. It refuses an
 existing directory, so rerunning preparation cannot rotate existing keys.
@@ -79,6 +84,7 @@ client. Do not copy the dev credential file or signing keys:
 node scripts/google-auth-setup.mjs prepare \
   --environment prod \
   --deployment YOUR-PROD-DEPLOYMENT \
+  --convex-url https://YOUR-PROD-DEPLOYMENT.REGION.convex.cloud \
   --app-url https://YOUR-PROD-APP-ORIGIN \
   --directory /private/tmp/zamolxis-google-prod
 # Create the production Google client and fill this directory's credentials.json.
