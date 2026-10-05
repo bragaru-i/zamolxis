@@ -16,7 +16,7 @@ import { expect, it } from "vitest";
 import {
   discoverRepositories,
   type NodeConfig,
-  normalizeAppUrl,
+  parseAppAddress,
   readConfig,
   saveConfig,
   validateConfig,
@@ -58,13 +58,19 @@ it("persists versioned private config atomically and rejects overlapping grants,
   }
 });
 
-it("normalizes the public app URL to an https origin", () => {
-  expect(normalizeAppUrl(" zamolxis.example.com ")).toBe("https://zamolxis.example.com");
-  expect(normalizeAppUrl("https://zamolxis.example.com/path?q=1")).toBe(
-    "https://zamolxis.example.com",
-  );
-  expect(() => normalizeAppUrl("http://zamolxis.example.com")).toThrow("HTTPS");
-  expect(() => normalizeAppUrl("")).toThrow();
+it("asks for a protocol instead of assuming one and only accepts https", () => {
+  expect(parseAppAddress(" zamolxis.example.com/ ")).toEqual({
+    candidates: [
+      { origin: "https://zamolxis.example.com" },
+      { origin: "http://zamolxis.example.com", problem: "Zamolxis requires HTTPS" },
+    ],
+  });
+  expect(parseAppAddress("https://zamolxis.example.com/path?q=1")).toEqual({
+    origin: "https://zamolxis.example.com",
+  });
+  expect(() => parseAppAddress("http://zamolxis.example.com")).toThrow("HTTPS");
+  expect(() => parseAppAddress("")).toThrow();
+  expect(() => parseAppAddress("zamolxis.example.com/path")).toThrow("INVALID_APP_ADDRESS");
 });
 
 it("discovers canonical repository roots and explains unusable candidates", () => {

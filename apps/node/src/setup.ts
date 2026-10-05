@@ -14,7 +14,7 @@ import {
 import { homedir, hostname } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkbox, input } from "@inquirer/prompts";
+import { checkbox, input, select } from "@inquirer/prompts";
 import { inspectRepository } from "@zamolxis/git";
 import { ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
@@ -140,11 +140,59 @@ export function installService(path = configPath()) {
   writeFileSync(servicePath, plist, { mode: 0o600 });
   execFileSync("launchctl", ["bootstrap", domain, servicePath], { stdio: "pipe" });
 }
-export function normalizeAppUrl(value: string) {
+export type AppAddress =
+  | { origin: string }
+  | { candidates: Array<{ origin: string; problem?: string }> };
+export function parseAppAddress(value: string): AppAddress {
   const trimmed = value.trim();
-  const url = new URL(/^[a-z][a-z\d+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
-  if (url.protocol !== "https:") throw new Error("PUBLIC_HTTPS_CONTROL_PLANE_REQUIRED");
-  return url.origin;
+  if (/^[a-z][a-z\d+.-]*:\/\//i.test(trimmed)) {
+    const url = new URL(trimmed);
+    if (url.protocol !== "https:") throw new Error("PUBLIC_HTTPS_CONTROL_PLANE_REQUIRED");
+    return { origin: url.origin };
+  }
+  // Without a protocol the user chooses one; nothing is assumed silently.
+  const host = new URL(`https://${trimmed}`).host;
+  if (!trimmed || /[/?#\s]/.test(trimmed.replace(/\/+$/, "")))
+    throw new Error("INVALID_APP_ADDRESS");
+  return {
+    candidates: [
+      { origin: `https://${host}` },
+      { origin: `http://${host}`, problem: "Zamolxis requires HTTPS" },
+    ],
+  };
+}
+const EDIT_ADDRESS = "\0edit";
+async function promptAppUrl() {
+  for (;;) {
+    const parsed = parseAppAddress(
+      await input({
+        message: "Zamolxis app address",
+        validate: (value) => {
+          try {
+            parseAppAddress(value);
+            return true;
+          } catch (error) {
+            return error instanceof Error && error.message.includes("HTTPS")
+              ? "Zamolxis requires HTTPS"
+              : "Enter a host such as zamolxis.example.com";
+          }
+        },
+      }),
+    );
+    if ("origin" in parsed) return parsed.origin;
+    const choice = await select<string>({
+      message: "Which protocol?",
+      choices: [
+        ...parsed.candidates.map(({ origin, problem }) => ({
+          name: origin,
+          value: origin,
+          ...(problem ? { disabled: problem } : {}),
+        })),
+        { name: "Edit address", value: EDIT_ADDRESS },
+      ],
+    });
+    if (choice !== EDIT_ADDRESS) return choice;
+  }
 }
 export interface RepositoryChoice {
   path: string;
@@ -191,19 +239,7 @@ export async function setup() {
     let config: NodeConfig;
     if (existsSync(configPath())) config = readConfig();
     else {
-      const appUrl = normalizeAppUrl(
-        await input({
-          message: "Zamolxis public app URL",
-          validate: (value) => {
-            try {
-              normalizeAppUrl(value);
-              return true;
-            } catch {
-              return "Enter an https:// URL, e.g. https://zamolxis.example.com";
-            }
-          },
-        }),
-      );
+      const appUrl = await promptAppUrl();
       const response = await fetch(`${appUrl}/api/bootstrap`, {
         signal: AbortSignal.timeout(10_000),
         redirect: "error",
