@@ -66,8 +66,13 @@ export async function settleRun(
     ownerRunId: undefined,
     updatedAt: now,
   });
-  await ctx.db.patch("tasks", task._id, { status, completedAt: now, updatedAt: now });
-  await refreshDependents(ctx, task._id);
+  const isBuilderCandidate = (run.role ?? "builder") === "builder" && status === "completed";
+  await ctx.db.patch("tasks", task._id, {
+    status: isBuilderCandidate ? "waiting" : status,
+    ...(isBuilderCandidate ? { candidateRunId: run._id } : { completedAt: now }),
+    updatedAt: now,
+  });
+  if (!isBuilderCandidate) await refreshDependents(ctx, task._id);
   const tasks = await ctx.db
     .query("tasks")
     .withIndex("by_session", (q) => q.eq("workSessionId", session._id))
@@ -80,7 +85,7 @@ export async function settleRun(
   // A completed implementation is a candidate, never proof of completion.
   // Keep successful Sessions open until independent verification/integration
   // has explicitly settled; task counters alone cannot authorize auto-close.
-  const successfulCandidate = tasks.some((item) => item.status === "completed");
+  const successfulCandidate = isBuilderCandidate || tasks.some((item) => item.status === "waiting" && item.candidateRunId);
   const canClose = allTerminal && activeRunCount === 0 && !successfulCandidate;
   const sessionStatus =
     session.status === "cancelled"
