@@ -46,6 +46,16 @@ export const messages = query({
           planTaskCount: row.planDigest ? (JSON.parse(row.planDigest) as unknown[]).length : 0,
           planStatus: plan?.status ?? "pending",
           ...(plan?.error ? { planError: plan.error } : {}),
+          ...(row.decision ? { decision: row.decision } : {}),
+          ...(row.reply !== undefined ? { reply: row.reply } : {}),
+          ...(row.modelActual !== undefined || row.totalTokens !== undefined
+            ? {
+                supervisor: {
+                  ...(row.modelActual !== undefined ? { modelActual: row.modelActual } : {}),
+                  ...(row.totalTokens !== undefined ? { totalTokens: row.totalTokens } : {}),
+                },
+              }
+            : {}),
         };
       }),
     );
@@ -94,6 +104,9 @@ export const submit = mutation({
       return previous.workSessionId;
     }
     const effective = await resolveAgentProfile(ctx, owner._id, product._id, "builder");
+    // The Supervisor runtime is a snapshot for the Node; it is not required to be
+    // installed here because older Nodes plan deterministically without it.
+    const supervisor = await resolveAgentProfile(ctx, owner._id, product._id, "supervisor");
     const locations = await ctx.db
       .query("repositoryLocations")
       .withIndex("by_repository", (q) => q.eq("repositoryId", repository._id))
@@ -124,10 +137,7 @@ export const submit = mutation({
     let sessionId = args.sessionId;
     if (sessionId) {
       const session = await ownSession(ctx, sessionId);
-      if (
-        session.productId !== product._id ||
-        ["completed", "failed", "cancelled"].includes(session.status)
-      )
+      if (session.productId !== product._id || session.status === "cancelled")
         fail("PRODUCT_MISMATCH");
       const relationship = await ctx.db
         .query("sessionRepositories")
@@ -136,6 +146,13 @@ export const submit = mutation({
         )
         .unique();
       if (!relationship) fail("PRODUCT_MISMATCH");
+      // A follow-up reopens a finished Session; the Supervisor decides what it needs.
+      const reopen = session.status === "completed" || session.status === "failed";
+      await ctx.db.patch("workSessions", session._id, {
+        ...(reopen ? { status: "planning" as const, completedAt: undefined } : {}),
+        updatedAt: now,
+        lastActivityAt: now,
+      });
     } else {
       sessionId = await ctx.db.insert("workSessions", {
         ownerId: owner._id,
@@ -162,6 +179,24 @@ export const submit = mutation({
       .withIndex("by_session", (q) => q.eq("workSessionId", sessionId!))
       .take(100);
     if (tasks.length >= 100) fail("LIMIT_EXCEEDED");
+    if (args.sessionId)
+      // A new message answers any earlier clarifying question.
+      await ctx.db.patch("workSessions", sessionId, {
+        needsInputCount: tasks.filter((task) => task.phase === "needs_input").length,
+      });
+    const history = await ctx.db
+      .query("textCommands")
+      .withIndex("by_session", (q) => q.eq("workSessionId", sessionId!))
+      .order("desc")
+      .take(CONVERSATION_LIMIT);
+    const conversation = history
+      .reverse()
+      .flatMap((row) => [
+        { role: "user" as const, text: row.text },
+        ...(row.reply !== undefined ? [{ role: "supervisor" as const, text: row.reply }] : []),
+      ])
+      .slice(-CONVERSATION_LIMIT)
+      .map((entry) => ({ ...entry, text: entry.text.slice(0, CONVERSATION_TEXT_LIMIT) }));
     const planningWorkspaceId = await allocateWorkspace(ctx, {
       workSessionId: sessionId,
       repositoryLocationId: location._id,
@@ -184,12 +219,27 @@ export const submit = mutation({
       "repository.plan",
       "textCommand",
       commandId,
-      { textCommandId: commandId, workspaceId: planningWorkspaceId, text: args.text },
+      {
+        textCommandId: commandId,
+        workspaceId: planningWorkspaceId,
+        text: args.text,
+        supervisor: {
+          runtime: supervisor.runtime,
+          ...(supervisor.profile?.model ? { model: supervisor.profile.model } : {}),
+          ...(supervisor.profile?.reasoningEffort
+            ? { reasoningEffort: supervisor.profile.reasoningEffort }
+            : {}),
+        },
+        conversation,
+      },
       `plan:${commandId}`,
     );
     return sessionId;
   },
 });
+const CONVERSATION_LIMIT = 20;
+const CONVERSATION_TEXT_LIMIT = 4000;
+const REPLY_LIMIT = 8000;
 const planTask = v.object({
   key: v.string(),
   title: v.string(),
@@ -205,10 +255,38 @@ export const acceptPlan = mutation({
     contextSha: v.string(),
     contextDigest: v.string(),
     tasks: v.array(planTask),
+    // Optional for compatibility: older Nodes send only a plan.
+    decision: v.optional(v.union(v.literal("answer"), v.literal("plan"), v.literal("ask"))),
+    reply: v.optional(v.string()),
+    usage: v.optional(
+      v.object({
+        modelActual: v.optional(v.string()),
+        inputTokens: v.optional(v.number()),
+        cachedInputTokens: v.optional(v.number()),
+        outputTokens: v.optional(v.number()),
+        totalTokens: v.optional(v.number()),
+      }),
+    ),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
     await requireNode(ctx, args.workstationId);
+    const decision = args.decision ?? "plan";
+    if (args.reply !== undefined && (!args.reply.trim() || args.reply.length > REPLY_LIMIT))
+      fail("INVALID_ARGUMENT");
+    if (decision !== "plan" && (args.tasks.length > 0 || args.reply === undefined))
+      fail("INVALID_ARGUMENT");
+    const usage = args.usage ?? {};
+    if (usage.modelActual !== undefined && (!usage.modelActual || usage.modelActual.length > 256))
+      fail("INVALID_ARGUMENT");
+    for (const value of [
+      usage.inputTokens,
+      usage.cachedInputTokens,
+      usage.outputTokens,
+      usage.totalTokens,
+    ])
+      if (value !== undefined && (!Number.isSafeInteger(value) || value < 0))
+        fail("INVALID_ARGUMENT");
     const command = await load(ctx, "textCommands", args.textCommandId);
     const workspace = await load(ctx, "workspaces", command.planningWorkspaceId!);
     if (
@@ -219,11 +297,13 @@ export const acceptPlan = mutation({
       !/^[a-f0-9]{64}$/.test(args.contextDigest)
     )
       fail("STALE_REPOSITORY_CONTEXT");
-    validatePlan(args.tasks);
+    if (decision === "plan") validatePlan(args.tasks);
     const planDigest = JSON.stringify(args.tasks);
     if (command.planDigest) {
       if (
         command.planDigest !== planDigest ||
+        (command.decision ?? "plan") !== decision ||
+        command.reply !== args.reply ||
         command.contextSha !== args.contextSha ||
         command.contextDigest !== args.contextDigest
       )
@@ -274,13 +354,41 @@ export const acceptPlan = mutation({
       planDigest,
       contextSha: args.contextSha,
       contextDigest: args.contextDigest,
+      decision,
+      ...(args.reply !== undefined ? { reply: args.reply } : {}),
+      ...usage,
     });
+    const now = Date.now();
+    if (decision === "plan") {
+      await ctx.db.patch("workSessions", session._id, {
+        status: "running",
+        totalTaskCount: session.totalTaskCount + args.tasks.length,
+        contextSummary: `Repository context ${args.contextSha} (${args.contextDigest})`,
+        currentPlanSummary: args.tasks.map((task) => task.title).join("; "),
+        updatedAt: now,
+        lastActivityAt: now,
+      });
+      return null;
+    }
+    // Answer or question: no new work. Idle the Session unless earlier work is active.
+    const tasks = await ctx.db
+      .query("tasks")
+      .withIndex("by_session", (q) => q.eq("workSessionId", session._id))
+      .take(101);
+    if (tasks.length > 100) fail("LIMIT_EXCEEDED");
+    const active =
+      session.activeRunCount > 0 ||
+      tasks.some((task) => ["planned", "ready", "running", "waiting"].includes(task.status));
     await ctx.db.patch("workSessions", session._id, {
-      status: "running",
-      totalTaskCount: session.totalTaskCount + args.tasks.length,
+      ...(active
+        ? session.status === "planning"
+          ? { status: "running" as const }
+          : {}
+        : { status: "waiting" as const }),
+      ...(decision === "ask" ? { needsInputCount: Math.max(1, session.needsInputCount) } : {}),
       contextSummary: `Repository context ${args.contextSha} (${args.contextDigest})`,
-      currentPlanSummary: args.tasks.map((task) => task.title).join("; "),
-      updatedAt: Date.now(),
+      updatedAt: now,
+      lastActivityAt: now,
     });
     return null;
   },

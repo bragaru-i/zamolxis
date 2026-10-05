@@ -94,6 +94,14 @@ export default defineSchema({
     planDigest: v.optional(v.string()),
     contextSha: v.optional(v.string()),
     contextDigest: v.optional(v.string()),
+    // Supervisor outcome for this message (#49). Absent for legacy Nodes.
+    decision: v.optional(v.union(v.literal("answer"), v.literal("plan"), v.literal("ask"))),
+    reply: v.optional(v.string()),
+    modelActual: v.optional(v.string()),
+    inputTokens: v.optional(v.number()),
+    cachedInputTokens: v.optional(v.number()),
+    outputTokens: v.optional(v.number()),
+    totalTokens: v.optional(v.number()),
   })
     .index("by_owner_key", ["ownerId", "idempotencyKey"])
     .index("by_session", ["workSessionId"]),
