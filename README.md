@@ -197,7 +197,26 @@ leases instead of silently starting a second process.
 
 ## Deploying production
 
-From the canonical checkout on `main`:
+**Automatic:** every push to `main` that passes CI triggers the "Deploy production"
+workflow (`.github/workflows/deploy.yml`). It skips commits that are no longer the tip
+of main, deploys Convex with a production deploy key, builds and deploys the web app
+to Vercel production, and waits until `/api/bootstrap` reports the deployed commit.
+It can also be started by hand from the Actions tab. It needs, in the repository's
+`production` environment:
+
+| Name | Kind | Value |
+|---|---|---|
+| `CONVEX_DEPLOY_KEY` | secret | production deploy key (`prod:<deployment>\|…`) |
+| `VERCEL_TOKEN` | secret | Vercel access token with access to the project's team |
+| `VERCEL_ORG_ID` | secret | `orgId` from `.vercel/project.json` |
+| `VERCEL_PROJECT_ID` | secret | `projectId` from `.vercel/project.json` |
+| `ZAMOLXIS_APP_URL` | variable | public app origin, e.g. `https://zamolxis.example.com` |
+
+The workflow does not touch the Node on your Mac: after a merge that changes
+`apps/node` or `packages/*`, run `git pull` in the canonical checkout and restart it
+(`pnpm deploy:prod --pull --skip-convex --skip-web`).
+
+**Manual:** from the canonical checkout on `main`:
 
 ```bash
 pnpm deploy:prod --directory /absolute/private/prod-directory --pull

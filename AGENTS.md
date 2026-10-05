@@ -43,10 +43,11 @@ merges, verify the combined main with `pnpm check` in a disposable worktree.
 
 ## Releases and status
 
-Production is released with `pnpm deploy:prod` from the canonical checkout on a
-clean `main` (see README "Deploying production"). Pushing to main does not deploy:
-Convex and Vercel are deployed by that script, and the launchd Node restarts from
-the canonical checkout. Current Alpha status, known gaps, operational facts and the
+Every push to main that passes CI deploys production automatically: the "Deploy
+production" workflow deploys Convex, then the web app on Vercel, and verifies the
+live commit (see README "Deploying production"). It does not update the launchd
+Node on the owner's Mac; Node changes need `git pull` and a restart there.
+`pnpm deploy:prod` remains the manual path. Current Alpha status, known gaps, operational facts and the
 next steps live in `docs/alpha-status.md`; read it before planning work and update
 it when a gap closes or a new one is found.
 
