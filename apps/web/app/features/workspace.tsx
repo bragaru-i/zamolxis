@@ -5,7 +5,9 @@ import { useMutation, useQuery } from "convex/react";
 import { useEffect, useState } from "react";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
+import { DevicesSection } from "./devices";
 import { explainError } from "./errors";
+import { PeopleSection } from "./people";
 import { SessionView } from "./session-view";
 import { SessionList } from "./sessions";
 import { useSearchParam } from "./use-location";
@@ -252,6 +254,8 @@ function Settings({
         )}
         {message && <Notice>{message}</Notice>}
       </section>
+      <PeopleSection active={open} now={now} />
+      <DevicesSection active={open} now={now} />
       <Button
         variant="secondary"
         block
