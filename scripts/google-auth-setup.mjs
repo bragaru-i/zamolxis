@@ -9,7 +9,7 @@ import { validateConfig, validateCredentials, convexInvocation } from "./lib/goo
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const usage = `Google auth setup (run separately for dev and prod):
-  node scripts/google-auth-setup.mjs prepare --environment dev --deployment NAME --app-url https://YOUR-DEV-APP --directory /absolute/private/dev-directory
+  node scripts/google-auth-setup.mjs prepare --environment dev --deployment NAME --convex-url https://NAME.REGION.convex.cloud --app-url https://YOUR-DEV-APP --directory /absolute/private/dev-directory
   node scripts/google-auth-setup.mjs inspect --environment dev --directory /absolute/private/dev-directory
   node scripts/google-auth-setup.mjs apply --environment dev --directory /absolute/private/dev-directory
   node scripts/google-auth-setup.mjs deploy --environment dev --directory /absolute/private/dev-directory
@@ -26,7 +26,7 @@ function save(directory, file, value) {
 }
 function display(config, directory) {
   console.log(
-    `Environment: ${config.environment}\nDeployment: ${config.deployment}\nWeb origin: ${config.appUrl}\nGoogle authorized JavaScript origin: ${config.appUrl}\nGoogle authorized redirect URI: https://${config.deployment}.convex.site/api/auth/callback/google\nPrivate setup directory: ${directory}\nFrontend configuration: ${resolve(directory, "frontend.env")}\nApprove users in THIS deployment's Data → users table: accessStatus = "allowed".`,
+    `Environment: ${config.environment}\nDeployment: ${config.deployment}\nWeb origin: ${config.appUrl}\nGoogle authorized JavaScript origin: ${config.appUrl}\nGoogle authorized redirect URI: ${config.httpActionsUrl}/api/auth/callback/google\nPrivate setup directory: ${directory}\nFrontend configuration: ${resolve(directory, "frontend.env")}\nApprove users in THIS deployment's Data → users table: accessStatus = "allowed".`,
   );
 }
 function runConvex(command, directory, config, credentials, input) {
@@ -74,6 +74,7 @@ try {
       environment: { type: "string" },
       deployment: { type: "string" },
       "app-url": { type: "string" },
+      "convex-url": { type: "string" },
       directory: { type: "string" },
       help: { type: "boolean" },
     },
@@ -98,6 +99,7 @@ try {
       environment: values.environment,
       deployment: values.deployment,
       appUrl: values["app-url"],
+      convexUrl: values["convex-url"],
     });
     // Reuse the key utility; it rejects repository paths and existing directories.
     const result = spawnSync(
@@ -118,7 +120,7 @@ try {
     save(
       directory,
       "frontend.env",
-      `NEXT_PUBLIC_CONVEX_URL=https://${config.deployment}.convex.cloud\nZAMOLXIS_APP_URL=${config.appUrl}\n`,
+      `NEXT_PUBLIC_CONVEX_URL=${config.convexUrl}\nZAMOLXIS_APP_URL=${config.appUrl}\n`,
     );
     display(config, directory);
     console.log(
@@ -133,9 +135,9 @@ try {
     const config = validateConfig(JSON.parse(privateFile(resolve(directory, "config.json"))));
     if (config.environment !== values.environment)
       throw new Error("Requested environment does not match the prepared directory");
-    if (values.deployment || values["app-url"])
+    if (values.deployment || values["app-url"] || values["convex-url"])
       throw new Error(
-        "Only prepare accepts deployment and app-url; inspect the saved target before applying",
+        "Only prepare accepts deployment, convex-url and app-url; inspect the saved target before applying",
       );
     display(config, directory);
     if (command !== "inspect") {

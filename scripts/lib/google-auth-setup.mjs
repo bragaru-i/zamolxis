@@ -3,6 +3,20 @@ export function validateConfig(config) {
     throw new Error("Environment must be explicitly dev or prod");
   if (typeof config.deployment !== "string" || !/^[a-z][a-z0-9-]+$/.test(config.deployment))
     throw new Error("Use the deployment name from the selected Convex deployment URL");
+  const convex = new URL(config.convexUrl ?? `https://${config.deployment}.convex.cloud`);
+  if (
+    convex.protocol !== "https:" ||
+    convex.pathname !== "/" ||
+    convex.search ||
+    convex.hash ||
+    convex.username ||
+    convex.password ||
+    convex.port ||
+    !new RegExp(`^${config.deployment}(\\.[a-z0-9-]+)?\\.convex\\.cloud$`).test(convex.hostname)
+  )
+    throw new Error(
+      "Convex URL must be the selected deployment's HTTPS .convex.cloud URL, including its region when present",
+    );
   const url = new URL(config.appUrl);
   if (
     url.protocol !== "https:" ||
@@ -13,7 +27,12 @@ export function validateConfig(config) {
     url.password
   )
     throw new Error("App URL must be a canonical HTTPS origin (development also needs HTTPS)");
-  return { ...config, appUrl: url.origin };
+  return {
+    ...config,
+    appUrl: url.origin,
+    convexUrl: convex.origin,
+    httpActionsUrl: convex.origin.replace(/\.cloud$/, ".site"),
+  };
 }
 export function validateCredentials(config, credentials) {
   const prefix = `${config.environment}:${config.deployment}|`;

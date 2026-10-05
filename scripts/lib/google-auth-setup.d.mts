@@ -3,6 +3,8 @@ export interface SetupConfig {
   environment: "dev" | "prod";
   deployment: string;
   appUrl: string;
+  convexUrl?: string;
+  httpActionsUrl?: string;
 }
 export interface SetupCredentials {
   deployKey: string;
