@@ -389,10 +389,15 @@ export class ControlPlaneDriver {
           if (owner) await owner;
           else {
             const events: NormalizedRunEventDto[] = [];
-            for await (const event of this.#follow(runtime, session.nativeSessionId, runId)) {
+            const ends = TERMINAL.map((state) => `run.${state}`);
+            for await (const event of this.#follow(
+              runtime,
+              session.nativeSessionId,
+              runId,
+              undefined,
+              ends,
+            ))
               events.push(event);
-              if (TERMINAL.some((state) => event.type === `run.${state}`)) break;
-            }
             if (events.length) deliveries.push({ kind: "run.events", runId, events });
             const after = await this.manager.observe(runId);
             if (!TERMINAL.includes(after.state)) throw new Error("RUNTIME_STOP_UNCONFIRMED");
@@ -411,9 +416,11 @@ export class ControlPlaneDriver {
         const session = this.store.getRuntimeSession(runId);
         if (!session?.nativeSessionId) throw new Error("RUN_NOT_ACTIVE");
         const runtime = this.runtimes.get(session.runtime);
-        if (TERMINAL.includes((await runtime.inspect(session.nativeSessionId)).state))
-          throw new Error("RUN_NOT_ACTIVE");
+        const before = await runtime.inspect(session.nativeSessionId);
+        if (TERMINAL.includes(before.state)) throw new Error("RUN_NOT_ACTIVE");
         const context = streams ? this.#context(runId) : undefined;
+        // Earlier events were reported by the command that streamed them.
+        if (context && !this.#cursors.has(runId)) this.#cursors.set(runId, before.lastSequence);
         if (command.type === "runtime.approval") {
           if (!runtime.resolveApproval) throw new Error("RUNTIME_APPROVAL_UNSUPPORTED");
           await runtime.resolveApproval({
@@ -521,6 +528,7 @@ export class ControlPlaneDriver {
     nativeSessionId: string,
     runId: string,
     workspaceId?: string,
+    pauses: readonly string[] = PAUSE,
   ): AsyncGenerator<NormalizedRunEventDto> {
     let cursor = this.#cursors.get(runId) ?? 0;
     for (;;) {
@@ -536,7 +544,7 @@ export class ControlPlaneDriver {
         this.#cursors.set(runId, cursor);
         progressed = true;
         yield event;
-        if (PAUSE.includes(event.type)) return;
+        if (pauses.includes(event.type)) return;
       }
       if (!progressed) return;
     }
