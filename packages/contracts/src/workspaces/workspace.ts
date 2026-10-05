@@ -1,7 +1,23 @@
-import type { AgentRunId, RepositoryId, RepositoryLocationId, WorkspaceId, WorkstationId } from "../shared/ids";
+import type {
+  AgentRunId,
+  RepositoryId,
+  RepositoryLocationId,
+  WorkspaceId,
+  WorkstationId,
+} from "../shared/ids";
 
 export type WorkspaceKind = "canonical" | "worktree" | "integration";
-export type WorkspaceStatus = "requested" | "provisioning" | "ready" | "in_use" | "dirty" | "integrating" | "completed" | "cleanup_pending" | "removed" | "error";
+export type WorkspaceStatus =
+  | "requested"
+  | "provisioning"
+  | "ready"
+  | "in_use"
+  | "dirty"
+  | "integrating"
+  | "completed"
+  | "cleanup_pending"
+  | "removed"
+  | "error";
 
 export interface WorkspaceSnapshotDto {
   readonly workspaceId: WorkspaceId;

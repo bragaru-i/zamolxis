@@ -1,6 +1,8 @@
 import type { CommandId, WorkstationId, ZamolxisCommandDto } from "@zamolxis/contracts";
 
-export function fakeStartCommand(overrides: Partial<Extract<ZamolxisCommandDto, { type: "runtime.start" }>> = {}): Extract<ZamolxisCommandDto, { type: "runtime.start" }> {
+export function fakeStartCommand(
+  overrides: Partial<Extract<ZamolxisCommandDto, { type: "runtime.start" }>> = {},
+): Extract<ZamolxisCommandDto, { type: "runtime.start" }> {
   return {
     commandId: "command-test" as CommandId,
     idempotencyKey: "test:start",

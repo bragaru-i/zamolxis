@@ -1,5 +1,6 @@
 import type {
   AgentRunId,
+  ApprovalDecision,
   NormalizedRunEventDto,
   RuntimeCapabilitiesDto,
   WorkspaceId,
@@ -42,6 +43,16 @@ export interface AgentRuntime {
   resume(input: ResumeRunInput): Promise<RuntimeSessionSnapshot>;
   send(input: { readonly nativeSessionId: string; readonly message: string }): Promise<void>;
   stop(input: { readonly nativeSessionId: string }): Promise<void>;
+  /**
+   * Settles a pending `approval.requested`. Adapters that never hold operations omit it.
+   * Throws APPROVAL_NOT_PENDING for unknown or already settled approvals. Stop and
+   * terminal states reject every pending approval; nothing is ever auto-approved.
+   */
+  resolveApproval?(input: {
+    readonly nativeSessionId: string;
+    readonly approvalId: string;
+    readonly decision: ApprovalDecision;
+  }): Promise<void>;
   inspect(nativeSessionId: string): Promise<RuntimeSessionSnapshot>;
   subscribe(input: {
     readonly nativeSessionId: string;
