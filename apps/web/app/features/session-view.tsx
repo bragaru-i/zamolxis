@@ -24,6 +24,8 @@ import {
   usageLine,
 } from "./conversation";
 import { explainError, explainFailure } from "./errors";
+import { RunDetail } from "./run-detail";
+import { SessionUsage } from "./usage";
 
 interface Session {
   _id: Id<"workSessions">;
@@ -89,6 +91,7 @@ export function SessionView({
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirmStop, setConfirmStop] = useState(false);
+  const [openRun, setOpenRun] = useState<Id<"agentRuns">>();
   const [notice, setNotice] = useState<{ tone: "danger" | "info"; text: string }>();
   const end = useRef<HTMLDivElement>(null);
   const count = (messages?.length ?? 0) + (tasks?.length ?? 0) + (runs?.length ?? 0);
@@ -236,13 +239,23 @@ export function SessionView({
                       {runsFor(task._id).map((run) => (
                         <div className="z-stack" key={run._id}>
                           <div className="z-row z-small">
-                            <strong>{ROLE[run.role ?? "builder"] ?? "Agent"}</strong>
-                            <StatusBadge status={run.status} />
-                            {run.totalTokens !== undefined && (
-                              <span className="z-xsmall z-muted">
-                                {run.totalTokens.toLocaleString()} tokens
+                            <button
+                              type="button"
+                              className="z-pressable"
+                              aria-haspopup="dialog"
+                              onClick={() => setOpenRun(run._id)}
+                            >
+                              <strong>{ROLE[run.role ?? "builder"] ?? "Agent"}</strong>
+                              <StatusBadge status={run.status} />
+                              {run.totalTokens !== undefined && (
+                                <span className="z-xsmall z-muted">
+                                  {run.totalTokens.toLocaleString()} tokens
+                                </span>
+                              )}
+                              <span className="z-pressable__chevron" aria-hidden="true">
+                                ›
                               </span>
-                            )}
+                            </button>
                             <span className="z-spacer" />
                             {ACTIVE_RUN.includes(run.status) && (
                               <Button
@@ -294,10 +307,12 @@ export function SessionView({
               merging stay with you.
             </Notice>
           )}
+          <SessionUsage sessionId={sessionId} ready={ready} />
         </div>
       )}
       {notice && <Notice tone={notice.tone}>{notice.text}</Notice>}
       <div ref={end} />
+      {openRun && <RunDetail runId={openRun} onClose={() => setOpenRun(undefined)} />}
     </AppShell>
   );
 }
