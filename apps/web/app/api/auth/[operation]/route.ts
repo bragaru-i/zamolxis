@@ -7,6 +7,11 @@ const settings = { httpOnly: true, secure: true, sameSite: "lax" as const, path:
 export async function GET(request: Request, context: { params: Promise<{ operation: string }> }) {
   const { operation } = await context.params;
   const url = new URL(request.url);
+  const configuredAppUrl = process.env.ZAMOLXIS_APP_URL;
+  if (!configuredAppUrl) return Response.json({ error: "Canonical application URL is not configured" }, { status: 503 });
+  const appUrl = new URL(configuredAppUrl);
+  if (appUrl.protocol !== "https:" || appUrl.pathname !== "/" || appUrl.search || appUrl.hash)
+    return Response.json({ error: "Canonical application URL must be an HTTPS origin" }, { status: 503 });
   const jar = await cookies();
   if (operation === "token") {
     const token = jar.get(tokenCookie)?.value ?? null;
@@ -14,11 +19,11 @@ export async function GET(request: Request, context: { params: Promise<{ operati
   }
   if (operation === "logout") {
     jar.delete(tokenCookie);
-    return Response.redirect(new URL("/", url.origin));
+    return Response.redirect(new URL("/", appUrl));
   }
   const issuer = process.env.ZAMOLXIS_OIDC_ISSUER;
   const clientId = process.env.ZAMOLXIS_OIDC_CLIENT_ID;
-  if (!issuer || !clientId || url.protocol !== "https:")
+  if (!issuer || !clientId)
     return Response.json(
       { error: "Public HTTPS application and OIDC sign-in are not configured" },
       { status: 503 },
@@ -41,7 +46,7 @@ export async function GET(request: Request, context: { params: Promise<{ operati
     )
   )
     return Response.json({ error: "Invalid sign-in provider configuration" }, { status: 503 });
-  const redirectUri = `${url.origin}/api/auth/callback`;
+  const redirectUri = new URL("/api/auth/callback", appUrl).toString();
   if (operation === "login") {
     const state = randomBytes(32).toString("hex");
     const verifier = randomBytes(32).toString("base64url");
@@ -119,6 +124,6 @@ export async function GET(request: Request, context: { params: Promise<{ operati
     maxAge: Math.min(3600, claims.exp - Math.floor(Date.now() / 1000)),
   });
   return Response.redirect(
-    new URL(flow.returnTo.startsWith("/?") ? flow.returnTo : "/", url.origin),
+    new URL(flow.returnTo.startsWith("/?") ? flow.returnTo : "/", appUrl),
   );
 }
