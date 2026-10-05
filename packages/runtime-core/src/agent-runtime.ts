@@ -17,6 +17,7 @@ export interface StartRunInput {
   readonly workstationId: WorkstationId;
   readonly workspace: RuntimeWorkspace;
   readonly instruction: string;
+  readonly role?: "builder" | "verifier" | "repair";
   readonly model?: string;
   readonly reasoningEffort?: string;
 }

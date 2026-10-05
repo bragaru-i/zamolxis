@@ -59,6 +59,10 @@ function Dashboard() {
     api.runs.listBySession,
     ready && sessionId ? { workSessionId: sessionId } : "skip",
   );
+  const tasks = useQuery(
+    api.tasks.listBySession,
+    ready && sessionId ? { workSessionId: sessionId } : "skip",
+  );
   const submit = useMutation(api.supervisor.submit);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -252,10 +256,21 @@ function Dashboard() {
                   <strong>{run.status}</strong>
                 </div>
               ))}
-              {session.status === "waiting" && (
+              {tasks?.map((task) => (
+                <div className="row" key={task._id}>
+                  <strong>{task.title}</strong>
+                  <span>{(task.phase ?? task.status).replaceAll("_", " ")}</span>
+                  {task.candidateRunId && (
+                    <span>Candidate recorded · repairs {task.repairAttempts ?? 0}/2</span>
+                  )}
+                  {task.trustOutcome && <span>Latest trust: {task.trustOutcome}</span>}
+                  {task.failureReason && <p role="status">{task.failureReason}</p>}
+                </div>
+              ))}
+              {session.status === "completed" && (
                 <p>
-                  Implementation is a candidate. Independent verification and integration have not
-                  been established.
+                  Trusted integration branches are prepared locally. Publishing and protected-main
+                  merge remain human actions.
                 </p>
               )}
               <button type="button" className="secondary" onClick={() => setSessionId("")}>

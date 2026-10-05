@@ -3,6 +3,8 @@ import { assertRunTransition } from "@zamolxis/domain";
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { bounded, fail, load, nodeRun, requireNode } from "./lib/access";
+import { decideVerification, refreshSession } from "./lib/lifecycle";
+import { refreshDependents } from "./lib/settlement";
 import { settleRun } from "./lib/settlement";
 import { valueKey } from "./lib/value";
 
@@ -12,7 +14,11 @@ export const heartbeat = mutation({
     ...deviceArgs,
     instanceId: v.string(),
     runtimeCapabilities: v.array(
-      v.object({ runtime: v.string(), capabilities: v.array(v.string()) }),
+      v.object({
+        runtime: v.string(),
+        capabilities: v.array(v.string()),
+        version: v.optional(v.string()),
+      }),
     ),
   },
   returns: v.null(),
@@ -46,6 +52,7 @@ export const heartbeat = mutation({
         .unique();
       const patch = {
         capabilities: advertised.capabilities,
+        ...(advertised.version ? { version: advertised.version } : {}),
         status: "available" as const,
         detectedAt: Date.now(),
       };
@@ -246,6 +253,46 @@ export const failCommand = mutation({
       error: args.code,
       completedAt: Date.now(),
     });
+    let taskId: import("./_generated/dataModel").Id<"tasks"> | undefined;
+    let sessionId: import("./_generated/dataModel").Id<"workSessions"> | undefined;
+    if (command.type === "workspace.provision") {
+      const workspaceId = ctx.db.normalizeId("workspaces", command.targetId);
+      if (workspaceId) {
+        const workspace = await load(ctx, "workspaces", workspaceId);
+        await ctx.db.patch("workspaces", workspaceId, {
+          status: "error",
+          errorCode: args.code,
+          updatedAt: Date.now(),
+        });
+        taskId = workspace.taskId;
+        sessionId = workspace.workSessionId;
+      }
+    } else if (command.type === "repository.plan") {
+      const id = ctx.db.normalizeId("textCommands", command.targetId);
+      if (id) sessionId = (await load(ctx, "textCommands", id)).workSessionId;
+    } else if (command.type === "integration.prepare")
+      taskId = ctx.db.normalizeId("tasks", command.targetId) ?? undefined;
+    if (taskId) {
+      const task = await load(ctx, "tasks", taskId);
+      sessionId = task.workSessionId;
+      if (task.status !== "cancelled")
+        await ctx.db.patch("tasks", taskId, {
+          status: "waiting",
+          phase: "needs_input",
+          failureReason: `${command.type}: ${args.code}`,
+          updatedAt: Date.now(),
+        });
+    }
+    if (sessionId) {
+      const session = await load(ctx, "workSessions", sessionId);
+      if (session.status !== "cancelled")
+        await ctx.db.patch("workSessions", sessionId, {
+          status: "needs_input",
+          needsInputCount: Math.max(1, session.needsInputCount),
+          updatedAt: Date.now(),
+          contextSummary: `${command.type} failed: ${args.code}; local state preserved`,
+        });
+    }
     return null;
   },
 });
@@ -295,6 +342,7 @@ export const markReady = mutation({
 });
 const runEventType = v.union(
   v.literal("run.started"),
+  v.literal("run.usage"),
   v.literal("run.activity"),
   v.literal("run.waiting"),
   v.literal("run.completed"),
@@ -359,7 +407,38 @@ export const ingestBatch = mutation({
         runId: run._id,
         workstationId: args.workstationId,
       });
+      const usage: {
+        modelActual?: string;
+        inputTokens?: number;
+        cachedInputTokens?: number;
+        outputTokens?: number;
+        totalTokens?: number;
+      } = {};
+      if (event.type === "run.usage") {
+        for (const field of [
+          "inputTokens",
+          "cachedInputTokens",
+          "outputTokens",
+          "totalTokens",
+        ] as const) {
+          const value = event.payload?.[field];
+          if (value !== undefined) {
+            if (!Number.isSafeInteger(value) || value < 0 || value < (run[field] ?? 0))
+              fail("INVALID_USAGE");
+            usage[field] = value;
+          }
+        }
+        if (event.payload?.modelActual !== undefined) {
+          if (
+            typeof event.payload.modelActual !== "string" ||
+            event.payload.modelActual.length > 256
+          )
+            fail("INVALID_USAGE");
+          usage.modelActual = event.payload.modelActual;
+        }
+      }
       await ctx.db.patch("agentRuns", run._id, {
+        ...usage,
         status,
         lastActivityAt: event.occurredAt,
         ...(event.type === "run.started" && typeof event.payload?.nativeSessionId === "string"
@@ -369,7 +448,7 @@ export const ingestBatch = mutation({
           ? { activityLabel: event.payload.label }
           : {}),
       });
-      run = { ...run, status };
+      run = { ...run, ...usage, status };
       sequence = event.sequence;
       ack.push(event.eventId);
     }
@@ -384,6 +463,15 @@ export const completeRun = mutation({
     dirty: v.boolean(),
     changedFileCount: v.number(),
     summary: v.optional(v.string()),
+    evidence: v.optional(
+      v.array(
+        v.object({
+          modality: v.string(),
+          result: v.union(v.literal("passed"), v.literal("failed")),
+          summary: v.string(),
+        }),
+      ),
+    ),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -391,6 +479,46 @@ export const completeRun = mutation({
     if (!Number.isSafeInteger(args.changedFileCount) || args.changedFileCount < 0)
       fail("INVALID_ARGUMENT");
     await settleRun(ctx, run._id, args);
+    if (run.role === "verifier") {
+      const verification = await ctx.db
+        .query("verificationRuns")
+        .withIndex("by_verifier", (q) => q.eq("verifierRunId", run._id))
+        .unique();
+      if (!verification || (args.evidence?.length ?? 0) > 16)
+        fail("INVALID_VERIFICATION_PROVENANCE");
+      const modalities = [
+        "static",
+        "test",
+        "behavioral",
+        "visual",
+        "interaction",
+        "mutation",
+        "security",
+      ] as const;
+      for (const record of args.evidence ?? []) {
+        const modality = modalities.find((value) => value === record.modality);
+        if (!modality || record.summary.length > 8192) fail("INVALID_ARGUMENT");
+        const previous = await ctx.db
+          .query("evidence")
+          .withIndex("by_verification", (q) => q.eq("verificationRunId", verification._id))
+          .take(33);
+        const duplicate = previous.find((item) => item.modality === modality);
+        if (duplicate) {
+          if (duplicate.result !== record.result || duplicate.summary !== record.summary)
+            fail("COMMAND_CONFLICT");
+        } else
+          await ctx.db.insert("evidence", {
+            verificationRunId: verification._id,
+            verifierRunId: run._id,
+            subjectSha: verification.subjectSha,
+            modality,
+            result: record.result,
+            summary: record.summary,
+            createdAt: Date.now(),
+          });
+      }
+      await decideVerification(ctx, run._id);
+    }
     return null;
   },
 });
@@ -473,6 +601,13 @@ export const recoverCompletedCommand = mutation({
         (["completed", "failed", "stopped"].includes(run.status) && run.completedAt === undefined)
       )
         fail("RECONCILIATION_REQUIRED");
+    } else if (command.type === "repository.plan") {
+      const id = ctx.db.normalizeId("textCommands", command.targetId);
+      if (!id || !(await load(ctx, "textCommands", id)).planDigest) fail("RECONCILIATION_REQUIRED");
+    } else if (command.type === "integration.prepare") {
+      const id = ctx.db.normalizeId("tasks", command.targetId);
+      if (!id || (await load(ctx, "tasks", id)).phase !== "completed")
+        fail("RECONCILIATION_REQUIRED");
     } else fail("RECONCILIATION_REQUIRED");
     // Recovery acknowledges an already observed outcome. It does not re-claim or execute work.
     await ctx.db.patch("commands", command._id, { status: "completed", completedAt: Date.now() });
@@ -495,5 +630,64 @@ export const health = query({
       online: device.status === "online" && (device.lastHeartbeatAt ?? 0) > Date.now() - 45_000,
       runtimeAvailable: runtime?.status === "available",
     };
+  },
+});
+
+export const completeIntegration = mutation({
+  args: {
+    workstationId: v.id("workstations"),
+    taskId: v.id("tasks"),
+    workspaceId: v.id("workspaces"),
+    trustDecisionId: v.id("trustDecisions"),
+    subjectSha: v.string(),
+    headSha: v.string(),
+    dirty: v.boolean(),
+    branchName: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await requireNode(ctx, args.workstationId);
+    const task = await load(ctx, "tasks", args.taskId);
+    const session = await load(ctx, "workSessions", task.workSessionId);
+    const workspace = await load(ctx, "workspaces", args.workspaceId);
+    const decision = await load(ctx, "trustDecisions", args.trustDecisionId);
+    if (
+      task.status === "cancelled" ||
+      session.status === "cancelled" ||
+      workspace.workstationId !== args.workstationId ||
+      task.integrationWorkspaceId !== workspace._id ||
+      task.trustDecisionId !== decision._id ||
+      decision.candidateRunId !== task.candidateRunId ||
+      !decision.eligible ||
+      decision.subjectSha !== args.subjectSha ||
+      args.headSha !== args.subjectSha ||
+      workspace.baseSha !== args.subjectSha ||
+      workspace.currentHeadSha !== args.subjectSha ||
+      workspace.kind !== "integration" ||
+      args.dirty ||
+      workspace.dirty ||
+      workspace.branchName !== args.branchName
+    )
+      fail("INVALID_INTEGRATION_PROVENANCE");
+    if (task.phase === "completed") return null;
+    await ctx.db.insert("artifacts", {
+      workSessionId: task.workSessionId,
+      taskId: task._id,
+      kind: "integration_branch",
+      name: args.branchName,
+      storage: "git",
+      locator: args.subjectSha,
+      metadata: { branchName: args.branchName, mergePolicy: "human", workspaceId: workspace._id },
+      createdAt: Date.now(),
+    });
+    await ctx.db.patch("tasks", task._id, {
+      status: "completed",
+      phase: "completed",
+      completedAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    await refreshDependents(ctx, task._id);
+    await refreshSession(ctx, task.workSessionId);
+    return null;
   },
 });

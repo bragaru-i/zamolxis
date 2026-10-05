@@ -1,5 +1,6 @@
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
+import { refreshSession } from "./lifecycle";
 import { fail, load } from "./access";
 
 export async function refreshDependents(ctx: MutationCtx, taskId: Id<"tasks">) {
@@ -36,7 +37,13 @@ export async function settleRun(
 ) {
   const run = await load(ctx, "agentRuns", runId);
   if (run.completedAt !== undefined) {
-    if (run.finalHeadSha !== snapshot.headSha) fail("COMMAND_CONFLICT");
+    if (
+      run.finalHeadSha !== snapshot.headSha ||
+      (run.finalDirty !== undefined && run.finalDirty !== snapshot.dirty) ||
+      (run.finalChangedFileCount !== undefined &&
+        run.finalChangedFileCount !== snapshot.changedFileCount)
+    )
+      fail("COMMAND_CONFLICT");
     return;
   }
   const workspace = await load(ctx, "workspaces", run.workspaceId);
@@ -45,17 +52,29 @@ export async function settleRun(
   const task = await load(ctx, "tasks", run.taskId);
   const session = await load(ctx, "workSessions", run.workSessionId);
   const now = Date.now();
+  let unchangedRepair = false;
+  if (run.role === "repair" && run.status === "completed" && task.candidateRunId) {
+    const previous = await load(ctx, "agentRuns", task.candidateRunId);
+    if (previous.finalHeadSha === snapshot.headSha) {
+      unchangedRepair = true;
+    }
+  }
+  const builder = (run.role ?? "builder") !== "verifier";
   const status =
     task.status === "cancelled"
       ? "cancelled"
       : run.status === "completed"
-        ? "completed"
-        : run.status === "stopped"
-          ? "cancelled"
-          : "failed";
+        ? "waiting"
+        : run.role === "verifier"
+          ? "waiting"
+          : run.status === "stopped"
+            ? "cancelled"
+            : "failed";
   await ctx.db.patch("agentRuns", run._id, {
     completedAt: now,
     finalHeadSha: snapshot.headSha,
+    finalDirty: snapshot.dirty,
+    finalChangedFileCount: snapshot.changedFileCount,
     ...(snapshot.summary ? { resultSummary: snapshot.summary } : {}),
   });
   await ctx.db.patch("workspaces", workspace._id, {
@@ -66,43 +85,32 @@ export async function settleRun(
     ownerRunId: undefined,
     updatedAt: now,
   });
-  const isBuilderCandidate = (run.role ?? "builder") === "builder" && status === "completed";
   await ctx.db.patch("tasks", task._id, {
-    status: isBuilderCandidate ? "waiting" : status,
-    ...(isBuilderCandidate ? { candidateRunId: run._id } : { completedAt: now }),
+    status,
     updatedAt: now,
+    ...(builder && run.status === "completed" && task.status !== "cancelled"
+      ? {
+          candidateRunId: run._id,
+          phase: snapshot.dirty || unchangedRepair ? "needs_input" : "waiting_for_verification",
+          ...(unchangedRepair ? { failureReason: "Repair produced no new candidate SHA" } : {}),
+          ...(snapshot.dirty
+            ? {
+                failureReason:
+                  "Builder left uncommitted changes; commit a candidate before verification",
+              }
+            : {}),
+          verifierWorkspaceId: undefined,
+          verificationRunId: undefined,
+          trustDecisionId: undefined,
+        }
+      : {}),
+    ...(status === "failed"
+      ? { phase: "failed", failureReason: "Implementation runtime failed" }
+      : {}),
   });
-  if (!isBuilderCandidate) await refreshDependents(ctx, task._id);
-  const tasks = await ctx.db
-    .query("tasks")
-    .withIndex("by_session", (q) => q.eq("workSessionId", session._id))
-    .take(101);
-  if (tasks.length > 100) fail("LIMIT_EXCEEDED");
-  const allTerminal = tasks.every((item) =>
-    ["completed", "failed", "cancelled"].includes(item.status),
-  );
-  const activeRunCount = Math.max(0, session.activeRunCount - 1);
-  // A completed implementation is a candidate, never proof of completion.
-  // Keep successful Sessions open until independent verification/integration
-  // has explicitly settled; task counters alone cannot authorize auto-close.
-  const successfulCandidate = isBuilderCandidate || tasks.some((item) => item.status === "waiting" && item.candidateRunId);
-  const canClose = allTerminal && activeRunCount === 0 && !successfulCandidate;
-  const sessionStatus =
-    session.status === "cancelled"
-      ? "cancelled"
-      : canClose
-        ? tasks.some((item) => item.status === "failed")
-          ? "failed"
-          : "completed"
-        : allTerminal && activeRunCount === 0
-          ? "waiting"
-          : session.status;
   await ctx.db.patch("workSessions", session._id, {
-    status: sessionStatus,
-    activeRunCount,
-    completedTaskCount: session.completedTaskCount + (status === "completed" ? 1 : 0),
-    lastActivityAt: now,
-    updatedAt: now,
-    ...(canClose ? { completedAt: now } : {}),
+    activeRunCount: Math.max(0, session.activeRunCount - 1),
   });
+  await refreshDependents(ctx, task._id);
+  await refreshSession(ctx, session._id);
 }

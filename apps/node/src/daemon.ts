@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { chmodSync, copyFileSync, lstatSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
@@ -64,7 +64,16 @@ try {
       await client.mutation(makeFunctionReference<"mutation">("node:heartbeat"), {
         workstationId: config.workstationId,
         instanceId: identity.instanceId,
-        runtimeCapabilities: [{ runtime: "codex", capabilities: ["start", "message", "stop"] }],
+        runtimeCapabilities: [
+          {
+            runtime: "codex",
+            version: execFileSync("codex", ["--version"], {
+              encoding: "utf8",
+              timeout: 5000,
+            }).trim(),
+            capabilities: ["start", "message", "stop"],
+          },
+        ],
       });
     } finally {
       heartbeatBusy = false;

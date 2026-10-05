@@ -18,7 +18,8 @@ export const list = query({
     const rows = await ctx.db
       .query("agentProfiles")
       .withIndex("by_owner", (q) => q.eq("ownerId", owner._id))
-      .take(100);
+      .take(101);
+    if (rows.length > 100) fail("LIMIT_EXCEEDED");
     return rows.filter((row) => row.productId === args.productId);
   },
 });
@@ -39,7 +40,12 @@ export const upsert = mutation({
   handler: async (ctx, args) => {
     const owner = await requireUser(ctx);
     if (!args.name.trim() || !args.runtime.trim()) fail("INVALID_ARGUMENT");
-    if (args.maxConcurrency !== undefined && (!Number.isInteger(args.maxConcurrency) || args.maxConcurrency < 1 || args.maxConcurrency > 32))
+    if (
+      args.maxConcurrency !== undefined &&
+      (!Number.isInteger(args.maxConcurrency) ||
+        args.maxConcurrency < 1 ||
+        args.maxConcurrency > 32)
+    )
       fail("INVALID_ARGUMENT");
     if (args.productId) {
       const product = await ctx.db.get(args.productId);
@@ -48,8 +54,14 @@ export const upsert = mutation({
     const peers = await ctx.db
       .query("agentProfiles")
       .withIndex("by_owner_role", (q) => q.eq("ownerId", owner._id).eq("role", args.role))
-      .take(100);
-    if (args.enabled && peers.some((peer) => peer._id !== args.profileId && peer.enabled && peer.productId === args.productId))
+      .take(101);
+    if (peers.length > 100) fail("LIMIT_EXCEEDED");
+    if (
+      args.enabled &&
+      peers.some(
+        (peer) => peer._id !== args.profileId && peer.enabled && peer.productId === args.productId,
+      )
+    )
       fail("AGENT_PROFILE_CONFLICT");
     const now = Date.now();
     if (args.profileId) {
@@ -71,14 +83,14 @@ export const upsert = mutation({
     }
     return ctx.db.insert("agentProfiles", {
       ownerId: owner._id,
-      productId: args.productId,
+      ...(args.productId ? { productId: args.productId } : {}),
       name: args.name.trim(),
       role: args.role,
       runtime: args.runtime.trim(),
-      model: args.model?.trim() || undefined,
-      reasoningEffort: args.reasoningEffort?.trim() || undefined,
+      ...(args.model?.trim() ? { model: args.model.trim() } : {}),
+      ...(args.reasoningEffort?.trim() ? { reasoningEffort: args.reasoningEffort.trim() } : {}),
       enabled: args.enabled,
-      maxConcurrency: args.maxConcurrency,
+      ...(args.maxConcurrency !== undefined ? { maxConcurrency: args.maxConcurrency } : {}),
       revision: 1,
       createdAt: now,
       updatedAt: now,

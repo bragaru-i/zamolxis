@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { internalMutation, type MutationCtx, mutation, query } from "./_generated/server";
 import { bounded, fail, load, ownRun, ownSession } from "./lib/access";
+import { resolveAgentProfile } from "./lib/agentProfiles";
 import { enqueue, stopRun } from "./lib/commands";
 export async function queueRun(
   ctx: MutationCtx,
@@ -10,25 +11,14 @@ export async function queueRun(
     taskId: Id<"tasks">;
     workspaceId: Id<"workspaces">;
     runtime?: string;
-    role?: "builder" | "verifier";
+    role?: "builder" | "verifier" | "repair";
   },
 ) {
   const task = await load(ctx, "tasks", input.taskId);
   const session = await load(ctx, "workSessions", task.workSessionId);
   const role = input.role ?? "builder";
-  const productProfiles = session.productId
-    ? await ctx.db.query("agentProfiles").withIndex("by_product_role", (q) => q.eq("productId", session.productId).eq("role", role)).take(2)
-    : [];
-  if (productProfiles.length > 1) fail("AGENT_PROFILE_CONFLICT");
-  const globalProfiles = productProfiles.length
-    ? []
-    : await ctx.db.query("agentProfiles").withIndex("by_owner_role", (q) => q.eq("ownerId", session.ownerId).eq("role", role)).take(10);
-  const enabledGlobals = globalProfiles.filter((profile) => profile.productId === undefined && profile.enabled);
-  if (enabledGlobals.length > 1) fail("AGENT_PROFILE_CONFLICT");
-  const profile = productProfiles.find((candidate) => candidate.enabled) ?? enabledGlobals[0];
-  const runtime = profile?.runtime ?? input.runtime ?? "codex";
-  if (input.runtime && input.runtime !== runtime) fail("AGENT_PROFILE_RUNTIME_MISMATCH");
   const workspace = await load(ctx, "workspaces", input.workspaceId);
+  if (workspace.kind === "canonical") fail("CANONICAL_WORKSPACE_FORBIDDEN");
   if (workspace.taskId !== task._id || workspace.workSessionId !== task.workSessionId)
     fail("WORKSPACE_MISMATCH");
   const existing = await ctx.db
@@ -40,13 +30,27 @@ export async function queueRun(
     if (
       existing.length !== 1 ||
       run.taskId !== task._id ||
-      run.runtime !== runtime ||
+      (input.runtime !== undefined && run.runtime !== input.runtime) ||
       run.role !== (input.role ?? "builder")
     )
       fail("COMMAND_CONFLICT");
     return run._id;
   }
-  assertCanQueueRun(task.status, workspace.status, !!workspace.ownerRunId);
+  const { profile, runtime } = await resolveAgentProfile(
+    ctx,
+    session.ownerId,
+    session.productId,
+    role,
+    input.runtime,
+  );
+  if (input.runtime && input.runtime !== runtime) fail("AGENT_PROFILE_RUNTIME_MISMATCH");
+  assertCanQueueRun(
+    role === "verifier" && task.status === "waiting" ? "ready" : task.status,
+    workspace.status,
+    !!workspace.ownerRunId,
+  );
+  if (role === "verifier" && (!task.candidateRunId || task.verifierWorkspaceId !== workspace._id))
+    fail("INVALID_VERIFICATION_PROVENANCE");
   if (["completed", "failed", "cancelled"].includes(session.status)) fail("INVALID_STATE");
   const device = await load(ctx, "workstations", workspace.workstationId);
   if (device.status !== "online") fail("WORKSTATION_OFFLINE");
@@ -62,7 +66,12 @@ export async function queueRun(
     !installation.capabilities.includes("start")
   )
     fail("RUNTIME_UNAVAILABLE");
-  if (task.runtimePolicyMode === "forced" && task.runtimePolicyRuntime !== runtime)
+  if (
+    role !== "verifier" &&
+    !profile &&
+    task.runtimePolicyMode === "forced" &&
+    task.runtimePolicyRuntime !== runtime
+  )
     fail("RUNTIME_UNAVAILABLE");
   // Queued and uncertain runs reserve capacity too: restart cannot oversubscribe.
   const reservations = await ctx.db
@@ -72,11 +81,21 @@ export async function queueRun(
   if (reservations.length > 1000) fail("RECONCILIATION_REQUIRED");
   let occupied = 0;
   for (const run of reservations) {
-    if ((run.role ?? "builder") !== role || run.completedAt !== undefined) continue;
+    if ((run.role === "verifier") !== (role === "verifier") || run.completedAt !== undefined)
+      continue;
     const reservedWorkspace = await load(ctx, "workspaces", run.workspaceId);
     if (reservedWorkspace.ownerRunId === run._id) occupied++;
   }
   if (occupied >= (role === "verifier" ? 1 : 3)) fail("NODE_CAPACITY_EXCEEDED");
+  if (profile?.maxConcurrency !== undefined) {
+    const profileRuns = await ctx.db
+      .query("agentRuns")
+      .withIndex("by_profile", (q) => q.eq("agentProfileId", profile._id))
+      .take(1001);
+    if (profileRuns.length > 1000) fail("RECONCILIATION_REQUIRED");
+    if (profileRuns.filter((run) => run.completedAt === undefined).length >= profile.maxConcurrency)
+      fail("AGENT_PROFILE_CAPACITY_EXCEEDED");
+  }
   const now = Date.now();
   const runId = await ctx.db.insert("agentRuns", {
     workSessionId: session._id,
@@ -85,10 +104,19 @@ export async function queueRun(
     workstationId: device._id,
     runtime,
     role,
-    ...(profile ? { agentProfileId: profile._id, agentProfileRevision: profile.revision, modelRequested: profile.model, reasoningEffort: profile.reasoningEffort } : {}),
-    runtimeVersion: installation.version,
+    ...(task.candidateRunId && role !== "builder" ? { parentRunId: task.candidateRunId } : {}),
+    ...(workspace.currentHeadSha ? { initialHeadSha: workspace.currentHeadSha } : {}),
+    ...(profile
+      ? {
+          agentProfileId: profile._id,
+          agentProfileRevision: profile.revision,
+          ...(profile.model ? { modelRequested: profile.model } : {}),
+          ...(profile.reasoningEffort ? { reasoningEffort: profile.reasoningEffort } : {}),
+        }
+      : {}),
+    ...(installation.version ? { runtimeVersion: installation.version } : {}),
     status: "queued",
-    attempt: 1,
+    attempt: (task.repairAttempts ?? 0) + 1,
     lastActivityAt: now,
   });
   await ctx.db.patch("workspaces", workspace._id, {
@@ -96,7 +124,12 @@ export async function queueRun(
     status: "in_use",
     updatedAt: now,
   });
-  await ctx.db.patch("tasks", task._id, { status: "running", startedAt: now, updatedAt: now });
+  await ctx.db.patch("tasks", task._id, {
+    status: role === "verifier" ? "waiting" : "running",
+    phase: role === "verifier" ? "verifying" : role === "repair" ? "repairing" : "building",
+    startedAt: now,
+    updatedAt: now,
+  });
   await ctx.db.patch("workSessions", session._id, {
     status: "running",
     activeRunCount: session.activeRunCount + 1,
@@ -117,10 +150,40 @@ export async function queueRun(
       role,
       ...(profile?.model ? { model: profile.model } : {}),
       ...(profile?.reasoningEffort ? { reasoningEffort: profile.reasoningEffort } : {}),
-      instruction: task.description,
+      instruction:
+        role === "verifier"
+          ? `Independently review exact SHA ${workspace.baseSha}. Do not modify files or Git state. Acceptance: ${task.description}. Provide a concise review; deterministic Node checks establish trust.`
+          : `${task.description}
+Leave all intended implementation edits in your assigned worktree. Zamolxis captures the candidate commit. Do not publish, merge, or modify other checkouts.`,
+      ...(role === "verifier"
+        ? {
+            verificationScripts: task.verificationScripts ?? [],
+            requiredModalities: task.requiredModalities ?? ["static", "behavioral"],
+          }
+        : {}),
     },
     `start:${runId}`,
   );
+  if (role === "verifier") {
+    const candidate = await load(ctx, "agentRuns", task.candidateRunId!);
+    if (
+      !["builder", "repair"].includes(candidate.role ?? "builder") ||
+      candidate.status !== "completed" ||
+      candidate.completedAt === undefined ||
+      candidate.workSessionId !== session._id ||
+      !candidate.finalHeadSha ||
+      candidate.finalHeadSha !== workspace.baseSha ||
+      candidate.workspaceId === workspace._id
+    )
+      fail("INVALID_VERIFICATION_PROVENANCE");
+    const verificationId = await ctx.db.insert("verificationRuns", {
+      candidateRunId: candidate._id,
+      verifierRunId: runId,
+      subjectSha: candidate.finalHeadSha,
+      createdAt: now,
+    });
+    await ctx.db.patch("tasks", task._id, { verificationRunId: verificationId });
+  }
   return runId;
 }
 export const start = internalMutation({
@@ -128,7 +191,7 @@ export const start = internalMutation({
     taskId: v.id("tasks"),
     workspaceId: v.id("workspaces"),
     runtime: v.optional(v.string()),
-    role: v.optional(v.union(v.literal("builder"), v.literal("verifier"))),
+    role: v.optional(v.union(v.literal("builder"), v.literal("verifier"), v.literal("repair"))),
   },
   returns: v.id("agentRuns"),
   handler: queueRun,

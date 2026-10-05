@@ -11,6 +11,8 @@ export async function allocateWorkspace(
     repositoryLocationId: Id<"repositoryLocations">;
     baseRef: string;
     kind: "worktree" | "integration";
+    fresh?: boolean;
+    mergeShas?: string[];
   },
 ) {
   const session = await load(ctx, "workSessions", input.workSessionId);
@@ -35,7 +37,7 @@ export async function allocateWorkspace(
       .query("workspaces")
       .withIndex("by_task", (q) => q.eq("taskId", task._id))
       .take(2);
-    if (existing.length) {
+    if (existing.length && !input.fresh) {
       const workspace = existing[0]!;
       if (
         existing.length !== 1 ||
@@ -46,7 +48,7 @@ export async function allocateWorkspace(
         fail("COMMAND_CONFLICT");
       return workspace._id;
     }
-    if (task.status !== "ready") fail("INVALID_STATE");
+    if (!input.fresh && task.status !== "ready") fail("INVALID_STATE");
   }
   const now = Date.now();
   const workspaceId = await ctx.db.insert("workspaces", {
@@ -74,6 +76,8 @@ export async function allocateWorkspace(
       repositoryLocationId: location._id,
       repositoryId: repository._id,
       baseRef: input.baseRef,
+      kind: input.kind,
+      ...(input.mergeShas?.length ? { mergeShas: input.mergeShas } : {}),
     },
     `provision:${workspaceId}`,
   );

@@ -10,7 +10,7 @@ export const linkVerification = internalMutation({
     const verifier = await load(ctx, "agentRuns", args.verifierRunId);
     const workspace = await load(ctx, "workspaces", verifier.workspaceId);
     if (
-      candidate.role !== "builder" ||
+      !["builder", "repair"].includes(candidate.role ?? "builder") ||
       candidate.status !== "completed" ||
       !candidate.finalHeadSha ||
       verifier.role !== "verifier" ||
@@ -122,9 +122,15 @@ export const evaluate = internalMutation({
       if (records.length > 32) fail("LIMIT_EXCEEDED");
       for (const record of records) evidence.push({ ...record, origin: "independent-verifier" });
     }
-    const decision = evaluateTrust(candidate._id, candidate.finalHeadSha ?? "", evidence);
+    const task = await load(ctx, "tasks", candidate.taskId);
+    const decision = evaluateTrust(
+      candidate._id,
+      candidate.finalHeadSha ?? "",
+      evidence,
+      task.requiredModalities ?? ["static", "behavioral"],
+    );
     if (
-      candidate.role !== "builder" ||
+      !["builder", "repair"].includes(candidate.role ?? "builder") ||
       candidate.status !== "completed" ||
       !candidate.finalHeadSha ||
       workspace.currentHeadSha !== candidate.finalHeadSha ||

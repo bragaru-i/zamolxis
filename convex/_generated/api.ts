@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as agentProfiles from "../agentProfiles.js";
 import type * as pairing from "../pairing.js";
 import type * as deviceTokens from "../deviceTokens.js";
 import type * as onboarding from "../onboarding.js";
@@ -37,6 +38,7 @@ import type {
 import { anyApi, componentsGeneric } from "convex/server";
 
 const fullApi: ApiFromModules<{
+  agentProfiles: typeof agentProfiles;
   pairing: typeof pairing;
   deviceTokens: typeof deviceTokens;
   onboarding: typeof onboarding;
