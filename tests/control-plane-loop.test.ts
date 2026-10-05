@@ -470,6 +470,7 @@ it("runs text intent through discovery, native Builder, independent Verifier, de
   cleanup.push(() => rmSync(profile, { recursive: true, force: true }));
   chmodSync(profile, 0o700);
   const authenticated = process.env.ZAMOLXIS_CODEX_ACCEPTANCE === "1";
+  const nativeRepair = authenticated && process.env.ZAMOLXIS_CODEX_REPAIR_ACCEPTANCE === "1";
   const children: ReturnType<typeof spawn>[] = [];
   cleanup.push(() => {
     for (const child of children) child.kill();
@@ -554,7 +555,9 @@ it("runs text intent through discovery, native Builder, independent Verifier, de
   const sessionId = await f.user.mutation(api.supervisor.submit, {
     productId,
     repositoryId: f.repositoryId,
-    text: "Create outcome.txt containing exactly ALPHA_OK and a newline. Use the file editing tool. Do not run Git commands, tests or network tools. Zamolxis will commit your edits and run checks independently.",
+    text: nativeRepair
+      ? "Acceptance requires outcome.txt containing exactly ALPHA_OK and a newline. This is a repair-loop acceptance exercise: the initial Builder must deliberately write FAIL and a newline; the Repair agent must replace it with ALPHA_OK and a newline after independent verification fails. Use the file editing tool. Do not run Git commands, tests or network tools. Zamolxis commits edits and executes checks independently."
+      : "Create outcome.txt containing exactly ALPHA_OK and a newline. Use the file editing tool. Do not run Git commands, tests or network tools. Zamolxis will commit your edits and run checks independently.",
     idempotencyKey: "native-alpha",
   });
   for (let tick = 0; tick < 20; tick++) {
@@ -566,7 +569,20 @@ it("runs text intent through discovery, native Builder, independent Verifier, de
   const session = await f.user.query(api.sessions.get, { workSessionId: sessionId });
   expect(session.status).toBe("completed");
   const runs = await f.user.query(api.runs.listBySession, { workSessionId: sessionId });
-  const candidate = runs.find((run) => run.role === (authenticated ? "builder" : "repair"))!;
+  const repaired = !authenticated || nativeRepair;
+  const candidate = runs.find((run) => run.role === (repaired ? "repair" : "builder"));
+  if (!candidate) throw new Error("Missing accepted candidate run");
+  if (repaired) {
+    const initial = runs.find((run) => run.role === "builder");
+    if (!initial) throw new Error("Missing initial Builder run");
+    expect(initial.finalHeadSha).not.toBe(candidate.finalHeadSha);
+    expect(initial.workspaceId).not.toBe(candidate.workspaceId);
+    const failedDecision = (await f.user.query(api.trust.listByRun, { runId: initial._id }))[0];
+    expect(failedDecision?.eligible).toBe(false);
+    const verifiers = runs.filter((run) => run.role === "verifier");
+    expect(verifiers).toHaveLength(2);
+    expect(new Set(verifiers.map((run) => run.workspaceId)).size).toBe(2);
+  }
   const verifier = runs.find(
     (run) => run.role === "verifier" && run.finalHeadSha === candidate.finalHeadSha,
   )!;
@@ -584,7 +600,7 @@ it("runs text intent through discovery, native Builder, independent Verifier, de
   expect(git(f.path, ["status", "--porcelain"])).toBe("");
   expect(n.store.listPendingEvents()).toEqual([]);
   console.log(
-    `PASS Alpha ${authenticated ? "native Codex" : "fixture runtime with repair"}: intent → context → plan → candidate → verifier → evidence → trust → integration; canonical unchanged`,
+    `PASS Alpha ${authenticated ? (nativeRepair ? "native Codex with repair" : "native Codex") : "fixture runtime with repair"}: intent → context → plan → candidate → verifier → evidence → trust → integration; canonical unchanged`,
   );
 }, 240_000);
 

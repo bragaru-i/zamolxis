@@ -143,6 +143,8 @@ pnpm install --frozen-lockfile
 pnpm check
 # Explicit native acceptance using existing local login in a disposable fixture:
 ZAMOLXIS_CODEX_ACCEPTANCE=1 pnpm exec vitest run tests/control-plane-loop.test.ts -t 'runs text intent'
+# Exercise native failure, Repair and a second independent verification:
+ZAMOLXIS_CODEX_ACCEPTANCE=1 ZAMOLXIS_CODEX_REPAIR_ACCEPTANCE=1 pnpm exec vitest run tests/control-plane-loop.test.ts -t 'runs text intent'
 ```
 
 `pnpm check` runs lint, package boundaries, workspace/Convex typechecks, unit and
@@ -152,7 +154,10 @@ in `convex-test`. The fixture runtime test exercises failed trust, Repair and
 re-verification; another test proves concurrent Builders and merged dependency
 state. The opt-in native test exercises authenticated Codex Builder and independent
 Verifier through evidence/trust/integration, asserting canonical HEAD/status remain
-unchanged. It uses fixture control-plane identities, not deployed OIDC/device auth.
+unchanged. The native Repair mode deliberately produces a failing first candidate,
+then proves a new Repair SHA and workspace, retained failed trust, two independent
+Verifier workspaces and final integration. It uses fixture control-plane identities,
+not deployed OIDC/device auth.
 
 Public phone -> OIDC -> pairing -> deployed Convex -> launchd E2E remains untested
 without an operator-configured deployment. Native process resumption after Node

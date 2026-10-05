@@ -24,7 +24,17 @@ trust PASS and integration. Backend tests additionally prove exhaustion at two
 repairs, verifier capacity, dirty/stale provenance, ownership/Product isolation,
 replay, profile resolution/limits and reported telemetry. Temporary auth-only
 profiles are removed in cleanup; no credential contents are logged or committed.
-Native Repair was not invoked in the authenticated success test.
+The authenticated Repair mode also passed:
+
+```sh
+ZAMOLXIS_CODEX_ACCEPTANCE=1 ZAMOLXIS_CODEX_REPAIR_ACCEPTANCE=1 pnpm exec vitest run tests/control-plane-loop.test.ts -t 'runs text intent'
+```
+
+Codex deliberately wrote the first failing candidate, then a separate native
+Repair produced a new SHA. Both candidates received distinct native Verifier
+workspaces; the original failed trust remained observable. The repaired candidate
+passed checks/trust and reached integration/Session completion in 102 seconds,
+with canonical HEAD/status unchanged.
 
 The native test uses actual Convex function implementations in `convex-test`
 with fixture identities. It does not establish deployed OIDC/device auth,
