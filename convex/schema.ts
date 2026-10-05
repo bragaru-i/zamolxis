@@ -217,6 +217,9 @@ export default defineSchema({
     updatedAt: v.number(),
     startedAt: v.optional(v.number()),
     completedAt: v.optional(v.number()),
+    candidateRunId: v.optional(v.id("agentRuns")),
+    verificationRunId: v.optional(v.id("verificationRuns")),
+    trustDecisionId: v.optional(v.id("trustDecisions")),
   })
     .index("by_session", ["workSessionId"])
     .index("by_session_status", ["workSessionId", "status"])
