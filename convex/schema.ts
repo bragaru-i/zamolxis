@@ -94,7 +94,9 @@ export default defineSchema({
     planDigest: v.optional(v.string()),
     contextSha: v.optional(v.string()),
     contextDigest: v.optional(v.string()),
-  }).index("by_owner_key", ["ownerId", "idempotencyKey"]),
+  })
+    .index("by_owner_key", ["ownerId", "idempotencyKey"])
+    .index("by_session", ["workSessionId"]),
   pairingRequests: defineTable({
     approvalHash: v.string(),
     pollHash: v.string(),
