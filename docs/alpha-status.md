@@ -31,21 +31,22 @@ planned capability as shipped.
 
 ## Gaps blocking Alpha
 
-1. **No real Supervisor (#49).** Planning is deterministic
-   (`packages/node-core/src/capabilities/alpha-plan.ts`): prose becomes exactly one
-   task; several tasks only when the user types JSON `{ "tasks": [...] }`.
-   `packages/supervisor` (`planWithRepositoryContext`) is not imported anywhere
-   outside its own tests. No Supervisor agent run exists, so there are no
-   "orchestrator jobs" to show. Supervisor and Integration agent profiles are stored
-   but never resolved.
-2. **No conversation text.** No message table for agent replies. Codex
-   `agentMessage` content is reduced to the label "Agent responding" and completion
-   to the fixed summary "Codex turn completed"
-   (`packages/runtime-codex/src/codex-runtime.ts`); verifier review text is
-   discarded. The UI shows user messages and planning outcomes only.
-3. **No steering.** `runtime.send` fails with `RUNTIME_SEND_UNSUPPORTED`; the Node does
-   not advertise the `message` capability. Follow-up messages create a new plan in the
-   same session (refused once the session has ended; the UI then starts a new one).
+1. **Supervisor (#49), shipped as answer/plan/ask.** Every message runs a read-only
+   Supervisor agent on the Node (`packages/node-core/src/capabilities/supervisor.ts`,
+   run id `supervisor:<textCommandId>`, runtime/model from the Supervisor profile with a
+   fallback to a registered runtime). It answers questions in chat, plans
+   self-contained parallel tasks, or asks a clarifying question; unparseable output is
+   treated as an answer and never starts builders. Still missing: the Supervisor is not
+   an agent run in the backend, so it cannot be stopped from the UI and its events are
+   not shown; `packages/supervisor` is still unused; a real Codex Supervisor run (prompt
+   quality, JSON compliance) is only covered by the authenticated acceptance.
+2. **Conversation, partially shipped.** Supervisor replies (Markdown, bounded to 8000)
+   and builder/verifier final replies (`agentRuns.resultSummary`) are shown. Not yet:
+   intermediate agent messages, verifier review text beyond its final message.
+3. **No steering.** `runtime.send` fails with `RUNTIME_SEND_UNSUPPORTED`. A follow-up
+   message is a new Supervisor turn in the same session (with the earlier
+   conversation), and reopens a completed session. A reopened *failed* session can
+   return to failed on the next lifecycle refresh (`convex/lib/lifecycle.ts`).
 4. **Profiles and usage (#48):** backend only. No Agents settings or usage screens, no
    cost data, no instruction/policy references on profiles.
 5. **Identity (#47):** user approval is a manual edit of `users.accessStatus` in the
@@ -61,11 +62,9 @@ planned capability as shipped.
 
 ## Next steps, in order
 
-1. Real Supervisor (#49): a Supervisor agent run using the resolved Supervisor
-   profile, wired to `packages/supervisor`, producing a validated multi-task plan;
-   visible as its own run in the session.
-2. Conversation layer: persist agent and Supervisor reply text (bounded), render it in
-   the session view; implement `runtime.send` with conversation-aware completion.
+1. Steering: implement `runtime.send` with conversation-aware completion; make the
+   Supervisor a stoppable, visible run.
+2. Validate a real Codex Supervisor end to end and tune the prompt from evidence.
 3. Agents settings and usage screens (#48); access approval UI (#47).
 
 ## Operations on the owner's Mac
