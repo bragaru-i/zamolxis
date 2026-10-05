@@ -715,6 +715,19 @@ it("runs text intent through discovery, native Builder, independent Verifier, de
   }
   const session = await f.user.query(api.sessions.get, { workSessionId: sessionId });
   expect(session.status).toBe("completed");
+  const messages = await f.user.query(api.supervisor.messages, { workSessionId: sessionId });
+  expect(messages).toHaveLength(1);
+  expect(messages[0]).toMatchObject({
+    text: expect.stringContaining("ALPHA_OK"),
+    planned: true,
+    planTaskCount: 1,
+    planStatus: "completed",
+    repositoryId: f.repositoryId,
+  });
+  const { user: other } = await seedHuman(f.t, "mallory");
+  await expect(
+    other.query(api.supervisor.messages, { workSessionId: sessionId }),
+  ).rejects.toThrow();
   const runs = await f.user.query(api.runs.listBySession, { workSessionId: sessionId });
   const repaired = !authenticated || nativeRepair;
   const candidate = runs.find((run) => run.role === (repaired ? "repair" : "builder"));

@@ -20,6 +20,37 @@ export const products = query({
     return rows.filter((row) => !row.archivedAt);
   },
 });
+// The user's messages in a Session, with the planning outcome for each.
+export const messages = query({
+  args: { workSessionId: v.id("workSessions") },
+  returns: v.array(v.any()),
+  handler: async (ctx, args) => {
+    await ownSession(ctx, args.workSessionId);
+    const rows = await ctx.db
+      .query("textCommands")
+      .withIndex("by_session", (q) => q.eq("workSessionId", args.workSessionId))
+      .take(100);
+    return Promise.all(
+      rows.map(async (row) => {
+        const plan = await ctx.db
+          .query("commands")
+          .withIndex("by_idempotency_key", (q) => q.eq("idempotencyKey", `plan:${row._id}`))
+          .unique();
+        return {
+          _id: row._id,
+          text: row.text,
+          createdAt: row._creationTime,
+          productId: row.productId,
+          repositoryId: row.repositoryId,
+          planned: row.planDigest !== undefined,
+          planTaskCount: row.planDigest ? (JSON.parse(row.planDigest) as unknown[]).length : 0,
+          planStatus: plan?.status ?? "pending",
+          ...(plan?.error ? { planError: plan.error } : {}),
+        };
+      }),
+    );
+  },
+});
 export const submit = mutation({
   args: {
     productId: v.id("products"),
