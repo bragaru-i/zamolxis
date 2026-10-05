@@ -5,7 +5,12 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 
-import { validateConfig, validateCredentials, convexInvocation } from "./lib/google-auth-setup.mjs";
+import {
+  validateConfig,
+  validateCredentials,
+  convexInvocation,
+  serializeAuthVariables,
+} from "./lib/google-auth-setup.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const usage = `Google auth setup (run separately for dev and prod):
@@ -156,11 +161,9 @@ try {
           ZAMOLXIS_DEVICE_JWKS: "ZAMOLXIS_DEVICE_JWKS.json",
         }))
           variables[name] = privateFile(resolve(directory, file)).trim();
-        // dotenv quoted values preserve escaped newlines in PEM files. One batch,
+        // Preserve JSON quotes and PEM newlines literally. One batch,
         // no --force: Convex refuses all writes if an existing value differs.
-        const content = Object.entries(variables)
-          .map(([name, value]) => `${name}=${JSON.stringify(value)}`)
-          .join("\n");
+        const content = serializeAuthVariables(variables);
         runConvex(["env", "set"], directory, config, credentials, content);
       } else runConvex(["deploy"], directory, config, credentials);
     }

@@ -67,3 +67,15 @@ export function convexInvocation(command, directory, config, credentials, inheri
     envFileContent: `CONVEX_DEPLOY_KEY=${credentials.deployKey}\n`,
   };
 }
+
+// Convex parses batch input with dotenv, which does not unescape JSON quotes.
+// Literal single-quoted values preserve JSON and real PEM newlines exactly.
+export function serializeAuthVariables(variables) {
+  return Object.entries(variables)
+    .map(([name, value]) => {
+      if (!/^[A-Z][A-Z0-9_]*$/.test(name) || typeof value !== "string" || value.includes("'"))
+        throw new Error("Invalid authentication environment variable format");
+      return `${name}='${value}'`;
+    })
+    .join("\n");
+}
