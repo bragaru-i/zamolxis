@@ -66,6 +66,14 @@ See [PROJECT.md](PROJECT.md) and GitHub Issues.
 
 Detailed architecture/build specifications currently live in the companion `zamolxis-docs` repository.
 
+## Agent profiles and usage
+
+Agent roles are configuration, not hard-coded model choices. Zamolxis resolves an enabled Product-specific profile first, then an owner-wide default profile. Alpha falls back to Codex only when no profile has been configured, preserving existing onboarding while profiles are introduced.
+
+A profile selects a logical role, runtime, optional model and reasoning effort. Builder and Verifier are separate profiles even when budget constraints make them use the same underlying model. Every Agent Run snapshots the profile revision, requested model, reasoning policy and detected runtime version at launch so historical execution remains auditable after settings change.
+
+Run telemetry has dedicated fields for actual model, input/cached/output/total tokens and estimated cost. Provider/runtime-reported usage is authoritative; Zamolxis should not fabricate token counts from prompt length.
+
 ## Status
 
-Pre-alpha / architecture and foundation.
+Pre-alpha / architecture and foundation. Agent Profiles are being integrated into the Alpha execution path; Supervisor planning and automatic verification remain incomplete.
