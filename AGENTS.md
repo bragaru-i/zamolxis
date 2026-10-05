@@ -24,6 +24,11 @@ current main; inspect the entire resulting diff. Use small coherent commits with
 issue references; commit instruction changes separately. Never force push main,
 bypass CODEOWNERS/protections, or claim a merge without Git/PR evidence.
 
+For Zamolxis and zamolxis-docs, use GitHub account `bragaru-i` for publishing
+branches and PRs, and commit email `50721739+bragaru-i@users.noreply.github.com`.
+Verify attribution before publishing. Configure identity only in these repositories;
+never switch global Git/CLI credentials used by unrelated products.
+
 ## Control plane and trust
 
 Preserve Product -> Repository -> Work Session -> Task -> Workspace -> Agent Run
