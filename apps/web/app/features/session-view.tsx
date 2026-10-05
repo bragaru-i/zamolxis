@@ -29,6 +29,7 @@ interface Session {
   _id: Id<"workSessions">;
   title: string;
   status: string;
+  activeRunCount?: number;
   contextSummary?: string;
 }
 interface UserMessage extends ConversationMessage {
@@ -122,7 +123,9 @@ export function SessionView({
           }
           trailing={
             session &&
-            !ended && (
+            // An idle session waiting for the user has nothing to stop.
+            !ended &&
+            (session.status !== "waiting" || (session.activeRunCount ?? 0) > 0) && (
               <Button variant="danger" size="small" onClick={() => setConfirmStop(true)}>
                 Stop
               </Button>
