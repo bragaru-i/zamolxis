@@ -16,13 +16,45 @@ for a fresh heartbeat and runtime registration. No Convex URL, token or ID is
 copied by the user. The public app's bootstrap endpoint provides the backend URL.
 
 The versioned local config is an atomic 0600 file in a 0700 directory under
-`~/Library/Application Support/Zamolxis`. It contains the local device credential
-and filesystem grants. QR contains only the separate single-use approval code;
-polling and device credentials are never placed in that URL. Device tokens expire
-after fifteen minutes and are refreshed through the outbound connection. Server
-revocation blocks refresh and every authenticated device operation. Re-running
-setup reuses registration/config and checks the existing service and heartbeat.
-`pnpm zamolxis doctor` checks local prerequisites without installing a service.
+`~/Library/Application Support/Zamolxis`. It contains filesystem grants and the
+workstation id, not the device credential. The credential is a generic password in
+the macOS login Keychain (service `app.zamolxis.node`, account = workstation id;
+`pairing-<id>` while a pairing is in progress so an interrupted setup resumes with
+the same credential). Setup writes it by piping `add-generic-password … -w <secret>`
+to `security -i` on stdin, so the secret never appears in process arguments; it is
+read with `security find-generic-password … -w`. Tradeoff: the item trusts
+`/usr/bin/security`, so any process running as the same user can read it without a
+dialog, as with every `security`-created item; it is still encrypted at rest, locked
+with the login Keychain and no longer copied along with config.json. The launchd
+agent runs in the user's GUI session and reads the login Keychain while it is
+unlocked; if it cannot, it exits with `KEYCHAIN_UNAVAILABLE` (see `node-error.log`).
+
+QR contains only the separate single-use approval code; polling and device
+credentials are never placed in that URL. Device tokens expire after fifteen
+minutes and are refreshed through the outbound connection. Server revocation blocks
+refresh and every authenticated device operation.
+
+Re-running `pnpm zamolxis setup` on a configured Mac shows a menu:
+
+- **Check and repair** (default): prerequisites, config validity, moves a plaintext
+  credential from an older config.json into the Keychain (then removes it from the
+  file), refreshes the credential; if it is missing or rejected (the Mac was removed
+  or revoked in Settings) explains why and offers to pair again with a new QR;
+  re-registers repositories; checks that the launchd service exists, is loaded and
+  runs this checkout's `daemon.ts` (reinstalls it otherwise, restarts it after a
+  credential or repository change and checks it stays up); waits for the heartbeat.
+- **Add or remove repositories:** the checklist with current grants checked and
+  discovered repositories unchecked; additions are registered, then the service
+  restarts. Removal only drops the local grant: no backend function removes a
+  repository, so it and its Product stay in Zamolxis.
+- **Rename this Mac:** shown as unavailable; the backend cannot rename a Mac yet.
+- **Pair again:** new QR, new device credential (the old Keychain item is removed).
+  Approval creates a new Mac entry; remove the old one in Settings.
+- **Exit.**
+
+`pnpm zamolxis setup --repair` runs Check and repair without prompts (for scripts);
+when the Mac must be paired again it stops and says so. `pnpm zamolxis doctor`
+checks local prerequisites without installing a service.
 
 The Node service uses a temporary Codex profile containing only the existing
 login, with no copied native plugin/MCP/config grants. It uses the real runtime,

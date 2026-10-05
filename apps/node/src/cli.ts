@@ -1,9 +1,11 @@
 import { prerequisites, setup } from "./setup";
 
+const [command, ...flags] = process.argv.slice(2);
 try {
-  if (process.argv[2] === "setup") await setup();
-  else if (process.argv[2] === "doctor") prerequisites();
-  else throw new Error("Usage: pnpm zamolxis setup | doctor");
+  if (command === "setup" && flags.every((flag) => flag === "--repair"))
+    await setup({ repair: flags.includes("--repair") });
+  else if (command === "doctor" && !flags.length) prerequisites();
+  else throw new Error("Usage: pnpm zamolxis setup [--repair] | doctor");
 } catch (error) {
   // Do not print remote payloads, native errors or credentials.
   console.error(
