@@ -101,11 +101,15 @@ Human login uses **Convex Auth with Google**. Convex stores accounts, sessions a
 refresh tokens. Google must report a verified email; no external Auth0/OIDC service
 is needed. Google OAuth still requires a Google Cloud OAuth client.
 
-Sign-in does not grant product access. New users enter `pending`. In the Convex
-dashboard's `users` table, set the intended user's `accessStatus` to `allowed`
-to grant access, or `blocked` to revoke it. Missing status denies access. These
-fields are controlled by the deployment operator; there is no public self-grant
-API and no automatic first-user administrator. The access screen updates from a
+Sign-in does not grant product access. New users enter `pending`. An administrator
+approves, blocks or restores people in **Settings → People**; blocking also signs
+the person out of every session. The first administrator is created once per
+deployment by the operator: approve your own `users` row in the Convex dashboard
+(`accessStatus` = `allowed`), then run the internal mutation
+`admin:bootstrapAdmin` (`npx convex run admin:bootstrapAdmin '{"email":"you@example.com"}' --prod`
+or Dashboard → Functions). There is no public self-grant API and no automatic
+first-user administrator. Everyone can list their own signed-in devices and sign
+out the others in **Settings → Signed-in devices**. The access screen updates from a
 reactive query. Product APIs enforce the same policy server-side; granting access
 does not grant ownership of another user's Products or repositories. Blocking an
 owner also denies their Nodes' cloud operations and credential refresh; it does
