@@ -267,7 +267,12 @@ export function launchdService(path = configPath()): ServiceManager {
       readPlist();
       if (print() !== undefined) execFileSync("launchctl", ["bootout", target], { stdio: "pipe" });
       writeFileSync(plistPath, servicePlist(path), { mode: 0o600 });
-      execFileSync("launchctl", ["bootstrap", domain, plistPath], { stdio: "pipe" });
+      reloadService({
+        loaded: () => print() !== undefined,
+        bootstrap: () =>
+          execFileSync("launchctl", ["bootstrap", domain, plistPath], { stdio: "pipe" }),
+        sleep: sleepSync,
+      });
     },
     restart() {
       requireMac();
@@ -278,6 +283,28 @@ export function launchdService(path = configPath()): ServiceManager {
       return match ? Number(match[1]) : undefined;
     },
   };
+}
+
+const sleepSync = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+// launchd unloads asynchronously after `bootout`; bootstrapping before it finishes fails
+// with "Input/output error" (5) and leaves the Node unloaded. Wait for the unload, then
+// retry the bootstrap briefly.
+export function reloadService(launchd: {
+  loaded(): boolean;
+  bootstrap(): void;
+  sleep(ms: number): void;
+}) {
+  for (let waited = 0; launchd.loaded() && waited < 10_000; waited += 250) launchd.sleep(250);
+  for (let attempt = 1; ; attempt++) {
+    try {
+      launchd.bootstrap();
+      return;
+    } catch (error) {
+      if (attempt >= 5) throw error;
+      launchd.sleep(1000);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 # Alpha status and handoff
 
-Status as of 2026-10-06, main at `a644ae2` (after #57–#62). Alpha is **not finished**:
+Status as of 2026-10-06, main at `719a7bd` (after #57–#69). Alpha is **not finished**:
 issues #45, #47, #48 and #49 are open. This file is the handoff for any agent picking
 up the work; update it when a gap closes or a new one is found. Never describe a
 planned capability as shipped.
@@ -27,7 +27,21 @@ planned capability as shipped.
   label, token totals), Stop per run and per session, pinned composer, Settings sheet
   (Macs, removal, sign-out), iOS safe areas. Shared tokens and components live in
   `packages/ui`.
-- **Release (#62):** `pnpm deploy:prod` (see README "Deploying production").
+- **Release (#62, #64):** every push to main that passes CI deploys Convex and the
+  web app automatically; `pnpm deploy:prod` is the manual path.
+- **Supervisor and conversation (#66):** see gap 1 and 2 below.
+- **Access administration (#67):** Settings → People (admins approve, block,
+  restore, promote; blocking revokes all sign-ins) and Settings → Signed-in devices.
+  First admin via the internal `admin:bootstrapAdmin` (done on prod for the owner).
+- **Agents and usage (#68):** Settings → Agents (effective profile per role, edit
+  runtime/model/effort, turn off), Settings → Usage (24h/7d/30d tokens by role and
+  model, top sessions) and a Usage row per session. Cost appears only if a provider
+  reports it (nothing does today).
+- **Run detail (#68):** tapping a run opens result, grouped live activity, changes
+  (files, base → head, branch) and verification (evidence, trust decision, repairs).
+- **Setup repair (#69):** rerunning setup offers Check and repair, repositories,
+  pairing again; `--repair` is non-interactive; the device credential lives in the
+  login Keychain (migrated on the owner's Mac on 2026-10-06).
 
 ## Gaps blocking Alpha
 
@@ -47,14 +61,16 @@ planned capability as shipped.
    message is a new Supervisor turn in the same session (with the earlier
    conversation), and reopens a completed session. A reopened *failed* session can
    return to failed on the next lifecycle refresh (`convex/lib/lifecycle.ts`).
-4. **Profiles and usage (#48):** backend only. No Agents settings or usage screens, no
-   cost data, no instruction/policy references on profiles.
-5. **Identity (#47):** user approval is a manual edit of `users.accessStatus` in the
-   Convex dashboard; no listing or revocation of browser sessions; no service worker.
-6. **Onboarding (#45):** the Node credential is stored in the 0600 config file, not the
-   Keychain; rerunning setup with an existing config skips the wizard (no repository
-   reselection, no repair of a revoked/expired credential); no web onboarding
-   progress.
+4. **Profiles and usage (#48), mostly shipped.** Missing: editing profile name and
+   max concurrency in the UI, instruction/policy references on profiles, any cost data
+   source.
+5. **Identity (#47), mostly shipped.** Missing: device names for signed-in sessions
+   (Convex Auth stores no user agent), service worker, a live second-account test.
+6. **Onboarding (#45), mostly shipped.** Missing: web onboarding progress, workstation
+   rename and backend repository removal (no backend functions), automatic revoke of
+   the old Mac entry after pairing again, an exact heartbeat check (`node:health` is
+   only a boolean). Fixed after the first real run: repair could leave the service
+   unloaded when launchd was still unloading (wait and retry added).
 7. **Integration** stops at a local branch; nothing pushes or opens a PR.
 8. **Not validated end to end:** real iPhone (keyboard with the pinned composer,
    home-screen mode), deployed OIDC/device auth, launchd service across restarts,
@@ -62,10 +78,11 @@ planned capability as shipped.
 
 ## Next steps, in order
 
-1. Steering: implement `runtime.send` with conversation-aware completion; make the
-   Supervisor a stoppable, visible run.
-2. Validate a real Codex Supervisor end to end and tune the prompt from evidence.
-3. Agents settings and usage screens (#48); access approval UI (#47).
+1. Approvals bridge and steering (wave 2, lane D, in progress): Codex approval
+   requests reach the phone; `runtime.send` to running and waiting agents.
+2. Make the Supervisor a stoppable, visible run; real-Codex validation of answers.
+3. Codex tool summaries (show the actual command) and trace recording on the Node.
+4. Real-device validation: iPhone, launchd across reboot, stop against Codex.
 
 ## Operations on the owner's Mac
 

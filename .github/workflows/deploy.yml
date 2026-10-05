@@ -1,4 +1,6 @@
 name: Deploy production
+# workflow_run runs are listed under the branch tip; name them after the commit they deploy.
+run-name: Deploy ${{ github.event.workflow_run.head_sha || github.sha }}
 # Runs after CI succeeds on main: Convex backend first, then the web app on Vercel.
 # The Node service on the owner's Mac is not updated here (see docs/alpha-status.md).
 on:

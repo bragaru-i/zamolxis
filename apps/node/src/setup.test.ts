@@ -27,6 +27,7 @@ import {
   type NodeConfig,
   parseAppAddress,
   readConfig,
+  reloadService,
   runSetup,
   type ServicePlistState,
   type SetupEnvironment,
@@ -514,4 +515,36 @@ describe("rerunning setup", () => {
     expect(String(error)).toContain("not valid JSON");
     expect(String(error)).not.toContain(OLD_SECRET);
   });
+});
+
+it("waits for launchd to unload the old service and retries a failed bootstrap", () => {
+  const calls: string[] = [];
+  let loadedChecks = 2;
+  let failures = 2;
+  reloadService({
+    loaded: () => loadedChecks-- > 0,
+    bootstrap: () => {
+      calls.push("bootstrap");
+      if (failures-- > 0) throw new Error("Bootstrap failed: 5: Input/output error");
+    },
+    sleep: (ms) => calls.push(`sleep ${ms}`),
+  });
+  expect(calls).toEqual([
+    "sleep 250",
+    "sleep 250",
+    "bootstrap",
+    "sleep 1000",
+    "bootstrap",
+    "sleep 1000",
+    "bootstrap",
+  ]);
+  expect(() =>
+    reloadService({
+      loaded: () => false,
+      bootstrap: () => {
+        throw new Error("still failing");
+      },
+      sleep: () => {},
+    }),
+  ).toThrow("still failing");
 });
