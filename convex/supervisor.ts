@@ -163,6 +163,35 @@ export const submit = mutation({
     return sessionId;
   },
 });
+export const scheduleVerification = mutation({
+  args: { workstationId: v.id("workstations") },
+  returns: v.number(),
+  handler: async (ctx, args) => {
+    const { requireNode } = await import("./lib/access");
+    await requireNode(ctx, args.workstationId);
+    const waiting = await ctx.db.query("tasks").filter((q) => q.eq(q.field("status"), "waiting")).take(100);
+    let scheduled = 0;
+    for (const task of waiting) {
+      if (!task.candidateRunId || task.verificationRunId) continue;
+      const candidate = await load(ctx, "agentRuns", task.candidateRunId);
+      if (candidate.status !== "completed" || !candidate.finalHeadSha || (candidate.role ?? "builder") !== "builder") continue;
+      const candidateWorkspace = await load(ctx, "workspaces", candidate.workspaceId);
+      if (candidateWorkspace.workstationId !== args.workstationId || candidateWorkspace.dirty) continue;
+      const workspaceId = await allocateWorkspace(ctx, {
+        workSessionId: candidate.workSessionId,
+        taskId: task._id,
+        repositoryLocationId: candidateWorkspace.repositoryLocationId,
+        baseRef: candidate.finalHeadSha,
+        kind: "worktree",
+      });
+      await ctx.db.patch("tasks", task._id, { verificationRunId: undefined, updatedAt: Date.now() });
+      scheduled += 1;
+      if (scheduled >= 1) break;
+    }
+    return scheduled;
+  },
+});
+
 // Called by Node after workspace provisioning; capacity is reserved transactionally.
 export const dispatch = mutation({
   args: { workstationId: v.id("workstations") },
