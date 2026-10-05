@@ -29,6 +29,27 @@ branches and PRs, and commit email `50721739+bragaru-i@users.noreply.github.com`
 Verify attribution before publishing. Configure identity only in these repositories;
 never switch global Git/CLI credentials used by unrelated products.
 
+Commits and PRs carry no AI attribution: no `Co-Authored-By` trailers for agents and
+no "Generated with …" lines. The global `gh` login on the owner's Mac may be a
+different account (`ion-wellcopy`); never publish as it. Use the `bragaru-i` token
+per command instead of switching accounts, e.g.
+`GH_TOKEN=$(gh auth token --user bragaru-i) gh pr create …` and
+`git -c credential.helper= -c 'credential.helper=!f(){ echo username=bragaru-i; echo "password=$GH_TOKEN"; }; f' push …`.
+If no `bragaru-i` credential is available, stop and ask; do not fall back.
+
+The owner merges PRs (squash) after CI passes; agents open PRs and report CI. When
+a stack of PRs shares files or depends on each other, state the merge order. After
+merges, verify the combined main with `pnpm check` in a disposable worktree.
+
+## Releases and status
+
+Production is released with `pnpm deploy:prod` from the canonical checkout on a
+clean `main` (see README "Deploying production"). Pushing to main does not deploy:
+Convex and Vercel are deployed by that script, and the launchd Node restarts from
+the canonical checkout. Current Alpha status, known gaps, operational facts and the
+next steps live in `docs/alpha-status.md`; read it before planning work and update
+it when a gap closes or a new one is found.
+
 ## Control plane and trust
 
 Preserve Product -> Repository -> Work Session -> Task -> Workspace -> Agent Run
