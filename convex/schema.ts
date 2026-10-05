@@ -65,6 +65,35 @@ const commandStatus = v.union(
 );
 
 export default defineSchema({
+  textCommands: defineTable({
+    ownerId: v.id("users"),
+    idempotencyKey: v.string(),
+    text: v.string(),
+    productId: v.id("products"),
+    repositoryId: v.id("repositories"),
+    workSessionId: v.id("workSessions"),
+    requestedSessionId: v.optional(v.id("workSessions")),
+    planningWorkspaceId: v.optional(v.id("workspaces")),
+    planDigest: v.optional(v.string()),
+    contextSha: v.optional(v.string()),
+    contextDigest: v.optional(v.string()),
+  }).index("by_owner_key", ["ownerId", "idempotencyKey"]),
+  pairingRequests: defineTable({
+    approvalHash: v.string(),
+    pollHash: v.string(),
+    name: v.string(),
+    expiresAt: v.number(),
+    status: v.union(v.literal("pending"), v.literal("approved"), v.literal("consumed")),
+    workstationId: v.optional(v.id("workstations")),
+    ownerSubject: v.optional(v.string()),
+  }).index("by_approval_hash", ["approvalHash"]),
+  deviceCredentials: defineTable({
+    workstationId: v.id("workstations"),
+    secretHash: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_secret_hash", ["secretHash"])
+    .index("by_workstation", ["workstationId"]),
   users: defineTable({
     authSubject: v.string(),
     displayName: v.optional(v.string()),
@@ -192,6 +221,32 @@ export default defineSchema({
     updatedAt: v.number(),
     startedAt: v.optional(v.number()),
     completedAt: v.optional(v.number()),
+    candidateRunId: v.optional(v.id("agentRuns")),
+    phase: v.optional(
+      v.union(
+        v.literal("blocked"),
+        v.literal("building"),
+        v.literal("waiting_for_verification"),
+        v.literal("verifying"),
+        v.literal("trust_failed"),
+        v.literal("repairing"),
+        v.literal("ready_for_integration"),
+        v.literal("integrating"),
+        v.literal("completed"),
+        v.literal("needs_input"),
+        v.literal("failed"),
+      ),
+    ),
+    repairAttempts: v.optional(v.number()),
+    failureReason: v.optional(v.string()),
+    verifierWorkspaceId: v.optional(v.id("workspaces")),
+    nextWorkspaceId: v.optional(v.id("workspaces")),
+    integrationWorkspaceId: v.optional(v.id("workspaces")),
+    requiredModalities: v.optional(v.array(v.string())),
+    verificationScripts: v.optional(v.array(v.string())),
+    verificationRunId: v.optional(v.id("verificationRuns")),
+    trustDecisionId: v.optional(v.id("trustDecisions")),
+    lastTrustDecisionId: v.optional(v.id("trustDecisions")),
   })
     .index("by_session", ["workSessionId"])
     .index("by_session_status", ["workSessionId", "status"])
@@ -238,13 +293,48 @@ export default defineSchema({
     .index("by_repository_status", ["repositoryId", "status"])
     .index("by_owner_run", ["ownerRunId"]),
 
+  agentProfiles: defineTable({
+    ownerId: v.id("users"),
+    productId: v.optional(v.id("products")),
+    name: v.string(),
+    role: v.union(
+      v.literal("supervisor"),
+      v.literal("builder"),
+      v.literal("verifier"),
+      v.literal("repair"),
+      v.literal("integration"),
+    ),
+    runtime: v.string(),
+    model: v.optional(v.string()),
+    reasoningEffort: v.optional(v.string()),
+    enabled: v.boolean(),
+    maxConcurrency: v.optional(v.number()),
+    revision: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_owner", ["ownerId"])
+    .index("by_owner_role", ["ownerId", "role"])
+    .index("by_product_role", ["productId", "role"]),
+
   agentRuns: defineTable({
     workSessionId: v.id("workSessions"),
     taskId: v.id("tasks"),
     workspaceId: v.id("workspaces"),
     workstationId: v.id("workstations"),
-    role: v.optional(v.union(v.literal("builder"), v.literal("verifier"))),
+    role: v.optional(v.union(v.literal("builder"), v.literal("verifier"), v.literal("repair"))),
     runtime: v.string(),
+    agentProfileId: v.optional(v.id("agentProfiles")),
+    agentProfileRevision: v.optional(v.number()),
+    modelRequested: v.optional(v.string()),
+    modelActual: v.optional(v.string()),
+    reasoningEffort: v.optional(v.string()),
+    runtimeVersion: v.optional(v.string()),
+    inputTokens: v.optional(v.number()),
+    cachedInputTokens: v.optional(v.number()),
+    outputTokens: v.optional(v.number()),
+    totalTokens: v.optional(v.number()),
+    estimatedCostUsd: v.optional(v.number()),
     nativeSessionId: v.optional(v.string()),
     parentRunId: v.optional(v.id("agentRuns")),
     status: runStatus,
@@ -258,6 +348,8 @@ export default defineSchema({
     completedAt: v.optional(v.number()),
     initialHeadSha: v.optional(v.string()),
     finalHeadSha: v.optional(v.string()),
+    finalDirty: v.optional(v.boolean()),
+    finalChangedFileCount: v.optional(v.number()),
   })
     .index("by_session_activity", ["workSessionId", "lastActivityAt"])
     .index("by_session_status", ["workSessionId", "status"])
@@ -265,6 +357,7 @@ export default defineSchema({
     .index("by_workspace", ["workspaceId"])
     .index("by_workstation_status", ["workstationId", "status"])
     .index("by_parent", ["parentRunId"])
+    .index("by_profile", ["agentProfileId"])
     .index("by_native_session", ["workstationId", "runtime", "nativeSessionId"]),
 
   runEvents: defineTable({
@@ -363,7 +456,7 @@ export default defineSchema({
   traces: defineTable({
     runId: v.id("agentRuns"),
     workspaceId: v.id("workspaces"),
-    role: v.union(v.literal("builder"), v.literal("verifier")),
+    role: v.union(v.literal("builder"), v.literal("verifier"), v.literal("repair")),
     subjectSha: v.string(),
     startedAt: v.number(),
     finishedAt: v.optional(v.number()),
@@ -382,6 +475,7 @@ export default defineSchema({
     candidateRunId: v.id("agentRuns"),
     verifierRunId: v.id("agentRuns"),
     subjectSha: v.string(),
+    trustDecisionId: v.optional(v.id("trustDecisions")),
     createdAt: v.number(),
   })
     .index("by_candidate", ["candidateRunId"])

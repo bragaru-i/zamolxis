@@ -32,10 +32,21 @@ export function parseExecutionCommand(value: unknown): ExecutionCommand {
         repositoryLocationId: field(payload, "repositoryLocationId"),
         repositoryId: field(payload, "repositoryId"),
         baseRef: field(payload, "baseRef", 1024),
+        ...(payload.kind === "integration" ? { kind: "integration" as const } : {}),
+        ...(Array.isArray(payload.mergeShas)
+          ? { mergeShas: payload.mergeShas.map((sha) => field({ sha }, "sha", 64)) }
+          : {}),
       },
     };
   }
   if (command.type === "runtime.start") {
+    if (
+      payload.role !== undefined &&
+      payload.role !== "builder" &&
+      payload.role !== "verifier" &&
+      payload.role !== "repair"
+    )
+      throw new Error("INVALID_COMMAND_ROLE");
     const runId = field(payload, "runId");
     if (command.targetType !== "run" || command.targetId !== runId)
       throw new Error("INVALID_COMMAND_TARGET");
@@ -46,7 +57,60 @@ export function parseExecutionCommand(value: unknown): ExecutionCommand {
         runId,
         workspaceId: field(payload, "workspaceId"),
         runtime: field(payload, "runtime"),
+        role:
+          payload.role === "verifier"
+            ? "verifier"
+            : payload.role === "repair"
+              ? "repair"
+              : "builder",
+        ...(Array.isArray(payload.verificationScripts)
+          ? {
+              verificationScripts: payload.verificationScripts.map((script) =>
+                field({ script }, "script", 64),
+              ),
+            }
+          : {}),
+        ...(Array.isArray(payload.requiredModalities)
+          ? {
+              requiredModalities: payload.requiredModalities.map((modality) =>
+                field({ modality }, "modality", 64),
+              ),
+            }
+          : {}),
         instruction: field(payload, "instruction", 32768),
+        ...(payload.model !== undefined ? { model: field(payload, "model", 256) } : {}),
+        ...(payload.reasoningEffort !== undefined
+          ? { reasoningEffort: field(payload, "reasoningEffort", 64) }
+          : {}),
+      },
+    };
+  }
+  if (command.type === "repository.plan") {
+    const textCommandId = field(payload, "textCommandId");
+    if (command.targetType !== "textCommand" || command.targetId !== textCommandId)
+      throw new Error("INVALID_COMMAND_TARGET");
+    return {
+      ...common,
+      type: "repository.plan",
+      payload: {
+        textCommandId,
+        workspaceId: field(payload, "workspaceId"),
+        text: field(payload, "text", 16000),
+      },
+    };
+  }
+  if (command.type === "integration.prepare") {
+    const taskId = field(payload, "taskId");
+    if (command.targetType !== "task" || command.targetId !== taskId)
+      throw new Error("INVALID_COMMAND_TARGET");
+    return {
+      ...common,
+      type: "integration.prepare",
+      payload: {
+        taskId,
+        workspaceId: field(payload, "workspaceId"),
+        subjectSha: field(payload, "subjectSha"),
+        trustDecisionId: field(payload, "trustDecisionId"),
       },
     };
   }
@@ -92,7 +156,26 @@ export class ConvexControlPlaneTransport implements ControlPlaneTransport {
     await this.mutation("reconcile", { runId, observation });
   }
   async deliver(delivery: Delivery): Promise<void> {
-    if (delivery.kind === "workspace.ready") {
+    if (delivery.kind === "command.failed") {
+      await this.mutation("failCommand", {
+        commandId: delivery.commandId,
+        code: delivery.code,
+        instanceId: this.instanceId,
+      });
+    } else if (delivery.kind === "repository.plan") {
+      const { kind: _, ...args } = delivery;
+      await this.client.mutation(
+        makeFunctionReference<"mutation", Record<string, Value>, unknown>("supervisor:acceptPlan"),
+        {
+          workstationId: this.workstationId,
+          ...args,
+          tasks: delivery.tasks.map((task) => ({ ...task })),
+        },
+      );
+    } else if (delivery.kind === "integration.ready") {
+      const { kind: _, ...args } = delivery;
+      await this.mutation("completeIntegration", args);
+    } else if (delivery.kind === "workspace.ready") {
       const { kind: _, ...args } = delivery;
       await this.mutation("markReady", args);
     } else if (delivery.kind === "run.events") {
@@ -114,8 +197,11 @@ export class ConvexControlPlaneTransport implements ControlPlaneTransport {
       )
         throw new Error("INVALID_EVENT_ACKNOWLEDGEMENT");
     } else if (delivery.kind === "run.complete") {
-      const { kind: _, ...args } = delivery;
-      await this.mutation("completeRun", args);
+      const { kind: _, evidence, ...args } = delivery;
+      await this.mutation("completeRun", {
+        ...args,
+        ...(evidence ? { evidence: evidence.map((record) => ({ ...record })) } : {}),
+      });
     } else {
       // An observed ready workspace/native session proves startup happened, including across instance changes.
       await this.mutation("recoverCompletedCommand", {

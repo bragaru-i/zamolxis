@@ -45,6 +45,7 @@ export function evaluateTrust(
   candidateRunId: string,
   candidateSha: string,
   evidence: readonly TrustEvidence[],
+  requiredModalities: readonly string[] = ["static", "behavioral"],
 ): { eligible: boolean; reasons: string[] } {
   const matching = evidence.filter(
     (item) =>
@@ -53,9 +54,11 @@ export function evaluateTrust(
       item.verifierRunId !== candidateRunId,
   );
   const reasons: string[] = [];
+  if (!candidateSha || !requiredModalities.length)
+    reasons.push("Missing subject SHA or trust policy");
   if (matching.some((item) => item.result === "failed"))
     reasons.push("Independent verification failed");
-  for (const modality of ["static", "behavioral"])
+  for (const modality of requiredModalities)
     if (!matching.some((item) => item.modality === modality && item.result === "passed"))
       reasons.push(`Missing independent ${modality} evidence`);
   return { eligible: reasons.length === 0, reasons };

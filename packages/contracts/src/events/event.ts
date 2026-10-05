@@ -13,6 +13,16 @@ interface EventBase<T extends string, P> {
 
 export type NormalizedRunEventDto =
   | EventBase<"run.started", { nativeSessionId?: string; activity?: string }>
+  | EventBase<
+      "run.usage",
+      {
+        modelActual?: string;
+        inputTokens?: number;
+        cachedInputTokens?: number;
+        outputTokens?: number;
+        totalTokens?: number;
+      }
+    >
   | EventBase<"run.activity", { label: string; detail?: string }>
   | EventBase<"tool.started", { tool: string; summary: string }>
   | EventBase<"tool.completed", { tool: string; summary: string; success: boolean }>
