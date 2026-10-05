@@ -18,9 +18,11 @@ import { WorkspaceManager } from "../packages/node-core/src/workspace/workspace-
 import { repositoryFixture } from "../packages/node-core/src/testing/git-fixture";
 import { FakeRuntime } from "../packages/runtime-core/src/fake/fake-runtime";
 import { RuntimeRegistry } from "../packages/runtime-core/src/runtime-registry";
-import type { StartRunInput } from "../packages/runtime-core/src/agent-runtime";
+import type { AgentRuntime, StartRunInput } from "../packages/runtime-core/src/agent-runtime";
 import type { WorkstationId } from "../packages/contracts/src/shared/ids";
 import { git } from "../packages/git/src/repository-inspector";
+import { CodexRuntime, type CodexConnection } from "../packages/runtime-codex/src/codex-runtime";
+import type { AppServerNotification } from "../packages/runtime-codex/src/app-server-client";
 const modules = {
   "./_generated/server.ts": () => import("../convex/_generated/server"),
   "./profiles.ts": () => import("../convex/profiles"),
@@ -44,7 +46,7 @@ class CountingRuntime extends FakeRuntime {
     return super.start(input);
   }
 }
-async function fixture() {
+async function fixture(runtimeId = "fake") {
   const repo = repositoryFixture();
   cleanup.push(() => rmSync(repo.root, { recursive: true, force: true }));
   const originalHead = git(repo.path, ["rev-parse", "HEAD"]);
@@ -80,17 +82,17 @@ async function fixture() {
     description: "Deterministic execution",
     kind: "implementation",
     priority: 1,
-    runtimePolicy: { mode: "forced", runtime: "fake" },
+    runtimePolicy: { mode: "forced", runtime: runtimeId },
   });
   const runtime = new CountingRuntime();
-  const boot = async (adapter: CountingRuntime = runtime) => {
+  const boot = async (adapter: AgentRuntime = runtime) => {
     const store = new LocalStateStore(join(repo.root, "state.sqlite"));
     cleanup.push(() => store.close());
     const identity = store.getOrCreateIdentity();
     await node.mutation(api.node.heartbeat, {
       workstationId,
       instanceId: identity.instanceId,
-      runtimeCapabilities: [{ runtime: "fake", capabilities: ["start"] }],
+      runtimeCapabilities: [{ runtime: adapter.id, capabilities: ["start"] }],
     });
     const repositories = new RepositoryRegistry(store, () => true);
     repositories.register({
@@ -296,4 +298,40 @@ it("rejects dangling state-file symlinks before opening the database or contacti
     }),
   ).rejects.toThrow("UNSAFE_STATE_FILE");
   expect(existsSync(target)).toBe(false);
+});
+
+it("executes the Codex adapter through Node workspace assignment, Convex settlement and durable outbox", async () => {
+  const f = await fixture("codex");
+  let assignedCwd = "";
+  let listener: ((event: AppServerNotification) => void) | undefined;
+  const connection: CodexConnection = {
+    initialize: async () => {},
+    request: async (method, params) => {
+      if (method === "thread/start") return { thread: { id: "codex-native", cwd: params.cwd } };
+      if (method === "turn/start") {
+        listener?.({ method: "turn/started", params: { threadId: "codex-native", turn: { id: "native-turn" } } });
+        listener?.({ method: "turn/completed", params: { threadId: "codex-native", turn: { id: "native-turn", status: "completed" } } });
+        return { turn: { id: "native-turn", status: "inProgress" } };
+      }
+      throw new Error("UNEXPECTED_NATIVE_CALL");
+    },
+    onNotification: (fn) => { listener = fn; return () => { listener = undefined; }; },
+    onClose: () => () => {},
+    close: () => {},
+  };
+  const runtime = new CodexRuntime({ connect: (cwd) => { assignedCwd = cwd; return connection; }, now: () => 0 });
+  const n = await f.boot(runtime);
+  const workspaceId = await f.user.mutation(api.workspaces.request, { taskId: f.taskId, repositoryLocationId: f.repositoryLocationId, baseRef: "main" });
+  await n.driver().tick();
+  const runId = await f.user.mutation(api.runs.request, { taskId: f.taskId, workspaceId, runtime: "codex" });
+  await n.driver().tick();
+  expect(assignedCwd).toBe(n.workspaces.inspect(workspaceId).path);
+  expect(assignedCwd).not.toBe(f.path);
+  expect(n.store.getRuntimeSession(runId)?.nativeSessionId).toBe("codex-native");
+  expect((await f.user.query(api.runs.get, { runId })).status).toBe("completed");
+  expect((await f.user.query(api.sessions.get, { workSessionId: f.workSessionId })).completedTaskCount).toBe(1);
+  expect(n.store.listPendingEvents()).toEqual([]);
+  expect(n.store.getWorkspaceLease(workspaceId)).toBeUndefined();
+  expect(git(f.path, ["rev-parse", "HEAD"])).toBe(f.originalHead);
+  expect(git(f.path, ["status", "--porcelain"])).toBe(f.originalStatus);
 });
