@@ -781,6 +781,58 @@ code,
   background: none;
   color: var(--z-secondary-fg);
   font: inherit;
+  font-size: var(--z-text-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+.z-segmented__option[aria-pressed="true"] {
+  background: var(--z-surface);
+  color: var(--z-fg);
+  box-shadow: var(--z-shadow-subtle);
+}
+.z-check {
+  display: flex;
+  align-items: center;
+  gap: var(--z-space-2);
+  min-height: var(--z-touch);
+  font-size: var(--z-text-sm);
+}
+.z-check input {
+  width: var(--z-space-5);
+  height: var(--z-space-5);
+  accent-color: var(--z-primary);
+}
+.z-usage {
+  border: 1px solid var(--z-border);
+  border-radius: var(--z-radius-md);
+  background: var(--z-surface);
+}
+.z-usage > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--z-space-2);
+  min-height: var(--z-touch);
+  padding: 0 var(--z-space-3);
+  font-size: var(--z-text-sm);
+  color: var(--z-muted);
+  list-style: none;
+  cursor: pointer;
+}
+.z-usage > summary::-webkit-details-marker {
+  display: none;
+}
+.z-usage > summary::before {
+  content: "▸";
+}
+.z-usage[open] > summary::before {
+  content: "▾";
+}
+.z-usage__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--z-space-3);
+  padding: 0 var(--z-space-3) var(--z-space-3);
+}
 
 /* Lane G */
 /* Pressable row: a tap target that opens detail (e.g. a run row in a work card). */
@@ -903,54 +955,6 @@ code,
   font-weight: 600;
   cursor: pointer;
 }
-.z-segmented__option[aria-pressed="true"] {
-  background: var(--z-surface);
-  color: var(--z-fg);
-  box-shadow: var(--z-shadow-subtle);
-}
-.z-check {
-  display: flex;
-  align-items: center;
-  gap: var(--z-space-2);
-  min-height: var(--z-touch);
-  font-size: var(--z-text-sm);
-}
-.z-check input {
-  width: var(--z-space-5);
-  height: var(--z-space-5);
-  accent-color: var(--z-primary);
-}
-.z-usage {
-  border: 1px solid var(--z-border);
-  border-radius: var(--z-radius-md);
-  background: var(--z-surface);
-}
-.z-usage > summary {
-  display: flex;
-  align-items: center;
-  gap: var(--z-space-2);
-  min-height: var(--z-touch);
-  padding: 0 var(--z-space-3);
-  font-size: var(--z-text-sm);
-  color: var(--z-muted);
-  list-style: none;
-  cursor: pointer;
-}
-.z-usage > summary::-webkit-details-marker {
-  display: none;
-}
-.z-usage > summary::before {
-  content: "▸";
-}
-.z-usage[open] > summary::before {
-  content: "▾";
-}
-.z-usage__body {
-  display: flex;
-  flex-direction: column;
-  gap: var(--z-space-3);
-  padding: 0 var(--z-space-3) var(--z-space-3);
-
 .z-disclosure__body {
   display: flex;
   flex-direction: column;
