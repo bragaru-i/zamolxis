@@ -29,6 +29,7 @@ import type * as sessions from "../sessions.js";
 import type * as tasks from "../tasks.js";
 import type * as traces from "../traces.js";
 import type * as trust from "../trust.js";
+import type * as usage from "../usage.js";
 import type * as workspaces from "../workspaces.js";
 import type * as workstations from "../workstations.js";
 
@@ -61,6 +62,7 @@ const fullApi: ApiFromModules<{
   tasks: typeof tasks;
   traces: typeof traces;
   trust: typeof trust;
+  usage: typeof usage;
   workspaces: typeof workspaces;
   workstations: typeof workstations;
 }> = anyApi as any;
