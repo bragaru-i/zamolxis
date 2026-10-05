@@ -17,6 +17,8 @@ export interface StartRunInput {
   readonly workstationId: WorkstationId;
   readonly workspace: RuntimeWorkspace;
   readonly instruction: string;
+  readonly model?: string;
+  readonly reasoningEffort?: string;
 }
 export interface ResumeRunInput extends StartRunInput {
   readonly nativeSessionId: string;
