@@ -3,6 +3,7 @@ import { convexTest } from "convex-test";
 import { afterEach, expect, it, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
+import { seedHuman } from "../tests/fixtures/auth";
 
 const modules = {
   "./_generated/server.ts": () => import("./_generated/server"),
@@ -27,7 +28,7 @@ async function fixture() {
     }),
   );
   const t = convexTest(schema, modules);
-  const user = t.withIdentity({ subject: "alice", tokenIdentifier: "alice" });
+  const { user, userId } = await seedHuman(t, "alice");
   await user.mutation(api.profiles.ensure, {});
   const approvalCode = "a".repeat(64);
   const pollSecret = "b".repeat(64);
@@ -37,7 +38,7 @@ async function fixture() {
     pollSecret,
     name: "Fixture Mac",
   });
-  return { t, user, pairingId, approvalCode, pollSecret, credential, publicKey };
+  return { t, user, userId, pairingId, approvalCode, pollSecret, credential, publicKey };
 }
 it("requires authenticated single-use approval and a separate Mac secret before minting a signed device credential", async () => {
   const f = await fixture();
@@ -136,4 +137,30 @@ it("expires pending pairing and never mints credentials from QR alone", async ()
       credentialHash: "invalid",
     }),
   ).rejects.toThrow("FORBIDDEN");
+});
+
+it("binds device ownership to the stable auth user and denies activation/refresh after owner access is blocked", async () => {
+  const f = await fixture();
+  await f.t.run((ctx) => ctx.db.patch("users", f.userId, { authSubject: undefined }));
+  await f.user.mutation(api.pairing.approve, { approvalCode: f.approvalCode });
+  await f.t.run((ctx) => ctx.db.patch("users", f.userId, { accessStatus: "blocked" }));
+  await expect(
+    f.t.action(api.deviceTokens.enroll, {
+      pairingId: f.pairingId,
+      pollSecret: f.pollSecret,
+      credential: f.credential,
+    }),
+  ).rejects.toThrow("ACCESS_DENIED");
+  await f.t.run((ctx) => ctx.db.patch("users", f.userId, { accessStatus: "allowed" }));
+  const token = await f.t.action(api.deviceTokens.enroll, {
+    pairingId: f.pairingId,
+    pollSecret: f.pollSecret,
+    credential: f.credential,
+  });
+  const claims = JSON.parse(Buffer.from(token.token.split(".")[1] ?? "", "base64url").toString());
+  expect(claims.ownerSubject).toBe(`convex-auth:${f.userId}`);
+  await f.t.run((ctx) => ctx.db.patch("users", f.userId, { accessStatus: "blocked" }));
+  await expect(f.t.action(api.deviceTokens.refresh, { credential: f.credential })).rejects.toThrow(
+    "ACCESS_DENIED",
+  );
 });

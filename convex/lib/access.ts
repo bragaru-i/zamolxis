@@ -1,4 +1,5 @@
 import { ConvexError } from "convex/values";
+import { getAuthUserId, getAuthSessionId } from "@convex-dev/auth/server";
 import type { Doc, Id, TableNames } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
 export function fail(code: string, message = code): never {
@@ -18,14 +19,30 @@ export async function load<T extends TableNames>(
   if (!document) fail("NOT_FOUND");
   return document;
 }
-export async function requireUser(ctx: QueryCtx) {
+// Identity comes from a signed Convex Auth token, never a submitted email/userId.
+export async function authenticatedUser(ctx: QueryCtx) {
   const identity = await ctx.auth.getUserIdentity();
-  if (!identity) fail("FORBIDDEN");
-  const user = await ctx.db
-    .query("users")
-    .withIndex("by_auth_subject", (q) => q.eq("authSubject", identity.tokenIdentifier))
-    .unique();
-  if (!user) fail("FORBIDDEN", "User profile is required");
+  if (!identity || identity.ownerSubject !== undefined) return null;
+  const rawUserId = await getAuthUserId(ctx);
+  const rawSessionId = await getAuthSessionId(ctx);
+  const userId = rawUserId && ctx.db.normalizeId("users", rawUserId);
+  const sessionId = rawSessionId && ctx.db.normalizeId("authSessions", rawSessionId);
+  if (!userId || !sessionId) return null;
+  const session = await ctx.db.get("authSessions", sessionId);
+  if (!session || session.userId !== userId || session.expirationTime <= Date.now()) return null;
+  return ctx.db.get("users", userId);
+}
+export function ownerSubject(user: Doc<"users">): string {
+  return user.authSubject ?? `convex-auth:${user._id}`;
+}
+export function requireAllowed(user: Doc<"users">) {
+  if (user.accessStatus !== "allowed")
+    fail("ACCESS_DENIED", "Your account has not been granted access");
+}
+export async function requireUser(ctx: QueryCtx) {
+  const user = await authenticatedUser(ctx);
+  if (!user) fail("FORBIDDEN");
+  requireAllowed(user);
   return user;
 }
 export async function requireNode(ctx: QueryCtx, workstationId: Id<"workstations">) {
@@ -36,9 +53,10 @@ export async function requireNode(ctx: QueryCtx, workstationId: Id<"workstations
   if (
     workstation.status === "revoked" ||
     workstation.nodeAuthSubject !== identity.tokenIdentifier ||
-    identity.ownerSubject !== owner.authSubject
+    identity.ownerSubject !== ownerSubject(owner)
   )
     fail("FORBIDDEN");
+  requireAllowed(owner);
   return workstation;
 }
 export async function ownSession(ctx: QueryCtx, id: Id<"workSessions">) {

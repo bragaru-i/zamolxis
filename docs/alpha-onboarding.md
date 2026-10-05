@@ -36,18 +36,20 @@ queued and uncertain owned runs. Local dispatch launches at most 3+1 concurrentl
 A public HTTPS frontend and reachable Convex deployment must exist before an
 actual iPhone can pair. Configure `NEXT_PUBLIC_CONVEX_URL` and the canonical HTTPS origin
 `ZAMOLXIS_APP_URL` on the frontend.
-The frontend OIDC authorization-code/PKCE flow needs `ZAMOLXIS_OIDC_ISSUER`,
-`ZAMOLXIS_OIDC_CLIENT_ID`, and, only for a confidential client,
-`ZAMOLXIS_OIDC_CLIENT_SECRET`. Register the exact public
-`/api/auth/callback` URL with the provider. Convex's existing
-`ZAMOLXIS_AUTH_ISSUER`/`ZAMOLXIS_AUTH_AUDIENCE` must accept that provider's ID token.
+Human sign-in now uses Convex Auth with Google. Follow
+[Google login and database access](google-auth-access.md) for `AUTH_GOOGLE_ID`,
+`AUTH_GOOGLE_SECRET`, `SITE_URL`, `JWT_PRIVATE_KEY` and `JWKS` in Convex.
+The callback is the deployment HTTP Actions URL plus `/api/auth/callback/google`,
+not the old frontend `/api/auth/callback`. Approve each Google user's
+`users.accessStatus` in the database before they can view Products or pair a Mac.
 
-The device issuer uses `CONVEX_SITE_URL`, an operator-managed RSA private key
-`ZAMOLXIS_DEVICE_PRIVATE_KEY`, and matching public `ZAMOLXIS_DEVICE_JWKS` containing
-a `kid`. Private key stays in deployment secrets. The public JWKS is included in
-Convex custom-JWT configuration with fixed RS256 and `zamolxis-node` audience.
-No user supplies these values in the Mac wizard. Missing/mismatched keys fail
-closed. This session did not configure production signing keys or OIDC.
+Node identity remains separate: `CONVEX_SITE_URL`, `ZAMOLXIS_DEVICE_PRIVATE_KEY`
+and matching `ZAMOLXIS_DEVICE_JWKS` with a `kid`. Generate separate human/Node key
+pairs; private keys stay in deployment secrets. No end-user enters these values
+in the Mac wizard. Missing/mismatched keys fail closed. The old
+`ZAMOLXIS_OIDC_*` and `ZAMOLXIS_AUTH_ISSUER`/`ZAMOLXIS_AUTH_AUDIENCE` variables
+are no longer used. Google credentials and live signing keys have not been
+configured by this implementation.
 
 ## Verified and remaining acceptance
 
@@ -66,7 +68,7 @@ ZAMOLXIS_AUTHENTICATED_ACCEPTANCE=1 pnpm exec vitest run tests/control-plane-loo
 ```
 
 This is not a deployed device-authentication or iPhone test. Full public
-OIDC→QR→device JWT→launchd→phone command E2E still requires a configured deployment.
+Google/Convex Auth→QR→device JWT→launchd→phone command E2E still requires a configured deployment.
 Local tests cover approval authentication, separate QR/poll secrets, expiration,
 single use, real JWT signature, revocation, idempotent repository registration,
 3+1 reservation, lost-run capacity retention, Product isolation, idempotent text

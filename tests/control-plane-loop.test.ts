@@ -14,6 +14,7 @@ import { convexTest } from "convex-test";
 import { afterEach, expect, it } from "vitest";
 import { api } from "../convex/_generated/api";
 import schema from "../convex/schema";
+import { seedHuman } from "./fixtures/auth";
 import { runFakeLoopOnce } from "../apps/node/src/fake-loop";
 import {
   ConvexControlPlaneTransport,
@@ -68,7 +69,7 @@ async function fixture(runtimeId = "fake") {
   const originalHead = git(repo.path, ["rev-parse", "HEAD"]);
   const originalStatus = git(repo.path, ["status", "--porcelain"]);
   const t = convexTest(schema, modules);
-  const user = t.withIdentity({ subject: "alice", tokenIdentifier: "alice" });
+  const { user } = await seedHuman(t, "alice");
   await user.mutation(api.profiles.ensure, {});
   const workstationId = await user.mutation(api.workstations.register, {
     name: "Test",
@@ -520,7 +521,22 @@ it("runs text intent through discovery, native Builder, independent Verifier, de
         enabled: true,
       });
   const runtime = authenticated
-    ? new CodexRuntime({
+    ? new (class extends CodexRuntime {
+        override async start(input: StartRunInput) {
+          // Inject the initial fault at the fixture adapter boundary, not in
+          // acceptance criteria. Repair/Verifier receive the original backend
+          // context and the real failure evidence.
+          return super.start(
+            nativeRepair && input.role === "builder"
+              ? {
+                  ...input,
+                  instruction:
+                    "This is a deliberate failing-candidate acceptance fixture. Create outcome.txt containing exactly FAIL and a newline. Do not correct it to ALPHA_OK. Use the file editing tool; do not run Git commands, tests or network tools. Zamolxis will commit and independently verify the failing candidate.",
+                }
+              : input,
+          );
+        }
+      })({
         connect: (cwd) =>
           new AppServerClient({
             cwd,
@@ -555,9 +571,7 @@ it("runs text intent through discovery, native Builder, independent Verifier, de
   const sessionId = await f.user.mutation(api.supervisor.submit, {
     productId,
     repositoryId: f.repositoryId,
-    text: nativeRepair
-      ? "Acceptance requires outcome.txt containing exactly ALPHA_OK and a newline. This is a repair-loop acceptance exercise: the initial Builder must deliberately write FAIL and a newline; the Repair agent must replace it with ALPHA_OK and a newline after independent verification fails. Use the file editing tool. Do not run Git commands, tests or network tools. Zamolxis commits edits and executes checks independently."
-      : "Create outcome.txt containing exactly ALPHA_OK and a newline. Use the file editing tool. Do not run Git commands, tests or network tools. Zamolxis will commit your edits and run checks independently.",
+    text: "Create outcome.txt containing exactly ALPHA_OK and a newline. Use the file editing tool. Do not run Git commands, tests or network tools. Zamolxis will commit your edits and run checks independently.",
     idempotencyKey: "native-alpha",
   });
   for (let tick = 0; tick < 20; tick++) {

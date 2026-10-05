@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { internalMutation, mutation, query } from "./_generated/server";
-import { fail, load, requireUser } from "./lib/access";
+import { fail, load, requireUser, requireAllowed, ownerSubject } from "./lib/access";
 export async function digest(value: string): Promise<string> {
   const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -56,7 +56,7 @@ export const approve = mutation({
     await ctx.db.patch("pairingRequests", request._id, {
       status: "approved",
       workstationId,
-      ownerSubject: owner.authSubject,
+      ownerSubject: ownerSubject(owner),
     });
     return workstationId;
   },
@@ -93,6 +93,7 @@ export const activate = internalMutation({
       fail("FORBIDDEN");
     const device = await load(ctx, "workstations", request.workstationId);
     if (device.status === "revoked") fail("FORBIDDEN");
+    requireAllowed(await load(ctx, "users", device.ownerId));
     const credential = await ctx.db
       .query("deviceCredentials")
       .withIndex("by_workstation", (q) => q.eq("workstationId", device._id))
@@ -129,6 +130,7 @@ export const authenticateCredential = internalMutation({
     if (!credential) fail("FORBIDDEN");
     const device = await load(ctx, "workstations", credential.workstationId);
     const owner = await load(ctx, "users", device.ownerId);
+    requireAllowed(owner);
     const issuer = process.env.CONVEX_SITE_URL;
     if (
       device.status === "revoked" ||
@@ -139,7 +141,7 @@ export const authenticateCredential = internalMutation({
     return {
       workstationId: device._id,
       subject: device.nodeAuthSubject.slice(issuer.length + 1),
-      ownerSubject: owner.authSubject,
+      ownerSubject: ownerSubject(owner),
     };
   },
 });
