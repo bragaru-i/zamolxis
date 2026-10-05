@@ -24,6 +24,7 @@ import type * as lib_value from "../lib/value.js";
 import type * as node from "../node.js";
 import type * as profiles from "../profiles.js";
 import type * as repositories from "../repositories.js";
+import type * as runDetail from "../runDetail.js";
 import type * as runs from "../runs.js";
 import type * as sessions from "../sessions.js";
 import type * as tasks from "../tasks.js";
@@ -57,6 +58,7 @@ const fullApi: ApiFromModules<{
   node: typeof node;
   profiles: typeof profiles;
   repositories: typeof repositories;
+  runDetail: typeof runDetail;
   runs: typeof runs;
   sessions: typeof sessions;
   tasks: typeof tasks;
