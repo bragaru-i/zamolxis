@@ -2,6 +2,7 @@ import "@zamolxis/ui/styles.css";
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import { ConvexClientProvider } from "./ConvexClientProvider";
+import { startupWatchdog } from "./startup-watchdog";
 
 export const metadata: Metadata = {
   title: "Zamolxis",
@@ -20,6 +21,10 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
+      <head>
+        {/* biome-ignore lint/security/noDangerouslySetInnerHtml: static, first-party watchdog script. */}
+        <script dangerouslySetInnerHTML={{ __html: startupWatchdog }} />
+      </head>
       <body>
         <ConvexClientProvider>{children}</ConvexClientProvider>
       </body>

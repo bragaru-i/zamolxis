@@ -89,6 +89,14 @@ planned capability as shipped.
   manual full release (needs `pnpm dlx vercel@62 login` once).
 - The private prod setup directory is at
   `~/Library/Application Support/Zamolxis/prod-setup` (moved out of `/private/tmp`).
+- Phone sign-in: with a stale sign-in saved on the device (Convex Auth keys
+  `__convexAuth*` in localStorage), the app stayed on "Checking access…" forever and
+  made no backend calls, which looked like "cannot log in". Since the startup
+  diagnostics change, after 10 s it offers "Reset sign-in on this device"; an inline
+  watchdog reports "Zamolxis didn't start" (with the error and user agent) if the app
+  bundle never runs, and `app/error.tsx` shows render errors instead of a blank page.
+  When debugging phone issues, watch Convex logs for `profiles:viewer` and
+  `auth:signIn` calls from the device: their absence means the client never connected.
 - CI on GitHub occasionally leaves jobs queued with no runner until they are cancelled
   after 15 minutes; that shows as a failure without any step running. Re-run the job
   before treating it as a code failure.
