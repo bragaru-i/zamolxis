@@ -1,7 +1,7 @@
+import { getFunctionName } from "convex/server";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { getFunctionName } from "convex/server";
 
 const state = vi.hoisted(() => ({
   authenticated: true,
@@ -24,7 +24,9 @@ vi.mock("convex/react", () => ({
 vi.mock("@convex-dev/auth/react", () => ({
   useAuthActions: () => ({ signIn: vi.fn(), signOut: vi.fn() }),
 }));
+
 import HomePage from "./page";
+
 afterEach(() => vi.unstubAllEnvs());
 beforeEach(() => {
   state.authenticated = true;
