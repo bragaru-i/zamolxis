@@ -263,6 +263,24 @@ export default defineSchema({
     .index("by_repository_status", ["repositoryId", "status"])
     .index("by_owner_run", ["ownerRunId"]),
 
+  agentProfiles: defineTable({
+    ownerId: v.id("users"),
+    productId: v.optional(v.id("products")),
+    name: v.string(),
+    role: v.union(v.literal("supervisor"), v.literal("builder"), v.literal("verifier"), v.literal("repair"), v.literal("integration")),
+    runtime: v.string(),
+    model: v.optional(v.string()),
+    reasoningEffort: v.optional(v.string()),
+    enabled: v.boolean(),
+    maxConcurrency: v.optional(v.number()),
+    revision: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_owner", ["ownerId"])
+    .index("by_owner_role", ["ownerId", "role"])
+    .index("by_product_role", ["productId", "role"]),
+
   agentRuns: defineTable({
     workSessionId: v.id("workSessions"),
     taskId: v.id("tasks"),
@@ -270,6 +288,17 @@ export default defineSchema({
     workstationId: v.id("workstations"),
     role: v.optional(v.union(v.literal("builder"), v.literal("verifier"))),
     runtime: v.string(),
+    agentProfileId: v.optional(v.id("agentProfiles")),
+    agentProfileRevision: v.optional(v.number()),
+    modelRequested: v.optional(v.string()),
+    modelActual: v.optional(v.string()),
+    reasoningEffort: v.optional(v.string()),
+    runtimeVersion: v.optional(v.string()),
+    inputTokens: v.optional(v.number()),
+    cachedInputTokens: v.optional(v.number()),
+    outputTokens: v.optional(v.number()),
+    totalTokens: v.optional(v.number()),
+    estimatedCostUsd: v.optional(v.number()),
     nativeSessionId: v.optional(v.string()),
     parentRunId: v.optional(v.id("agentRuns")),
     status: runStatus,
