@@ -4,9 +4,14 @@ import {
   type KeyboardEvent,
   type ReactNode,
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
+  useState,
 } from "react";
+
+export type { Block as MarkdownBlock, Inline as MarkdownInline } from "./markdown";
+export { Markdown, parseInline, parseMarkdown, safeHref } from "./markdown";
 
 export type Tone = "success" | "warning" | "danger" | "info" | "neutral";
 
@@ -153,17 +158,95 @@ export function ConnectionIndicator({
 export function Message({
   author,
   label,
+  meta,
   children,
 }: {
   author: "user" | "assistant";
   label: string;
+  /** Small secondary line under the bubble, e.g. token usage. */
+  meta?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <article className={`z-message z-message--${author}`}>
       <span className="z-message__author">{label}</span>
       <div className="z-message__body">{children}</div>
+      {meta && <span className="z-message__meta">{meta}</span>}
     </article>
+  );
+}
+
+/** Live "working on it" state for a reply that has not arrived yet. */
+export function Thinking({ label = "Thinking…", detail }: { label?: string; detail?: ReactNode }) {
+  return (
+    <span className="z-thinking" role="status">
+      <span className="z-thinking__dots" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </span>
+      <span className="z-thinking__text">
+        <span className="z-thinking__label">{label}</span>
+        {detail && <span className="z-thinking__detail">{detail}</span>}
+      </span>
+    </span>
+  );
+}
+
+/** Clamps long content to a few lines with an accessible Show more / Show less toggle. */
+export function Collapsible({
+  children,
+  likelyLong = false,
+  moreLabel = "Show more",
+  lessLabel = "Show less",
+}: {
+  children: ReactNode;
+  /** Initial guess before layout is measured (also used for server rendering). */
+  likelyLong?: boolean;
+  moreLabel?: string;
+  lessLabel?: string;
+}) {
+  const id = useId();
+  const body = useRef<HTMLDivElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [overflowing, setOverflowing] = useState(likelyLong);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-measure when the content changes.
+  useLayoutEffect(() => {
+    const element = body.current;
+    if (!element || expanded) return;
+    const measure = () => setOverflowing(element.scrollHeight > element.clientHeight + 1);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [expanded, children]);
+  const clamped = overflowing && !expanded;
+  return (
+    <div className="z-collapsible">
+      <div
+        id={id}
+        ref={body}
+        className={
+          expanded ? "z-collapsible__body" : "z-collapsible__body z-collapsible__body--clamped"
+        }
+        data-faded={clamped ? "true" : undefined}
+      >
+        {children}
+      </div>
+      {(overflowing || expanded) && (
+        <Button
+          variant="ghost"
+          size="small"
+          className="z-collapsible__toggle"
+          aria-expanded={expanded}
+          aria-controls={id}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {expanded ? lessLabel : moreLabel}
+        </Button>
+      )}
+    </div>
   );
 }
 
