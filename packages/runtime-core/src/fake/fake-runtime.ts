@@ -6,13 +6,16 @@ import type {
   StartRunInput,
 } from "../agent-runtime";
 
-type FakeStep =
+export type FakeStep =
   | { readonly type: "activity"; readonly label: string }
   | { readonly type: "waiting"; readonly reason: string }
   | { readonly type: "success"; readonly summary: string }
   | { readonly type: "failure"; readonly message: string };
+// A scenario may depend on the run (for example its role), so one fake can play several agents.
+export type FakeScenario = readonly FakeStep[] | ((input: StartRunInput) => readonly FakeStep[]);
 interface FakeSession {
   input: StartRunInput;
+  steps: readonly FakeStep[];
   snapshot: RuntimeSessionSnapshot;
   events: NormalizedRunEventDto[];
   nextStep: number;
@@ -27,7 +30,7 @@ export class FakeRuntime implements AgentRuntime {
   readonly #sessions = new Map<string, FakeSession>();
   readonly #runs = new Map<string, string>();
   constructor(
-    private readonly scenario: readonly FakeStep[] = defaultScenario,
+    private readonly scenario: FakeScenario = defaultScenario,
     private readonly now: () => number = () => 0,
   ) {}
 
@@ -66,6 +69,7 @@ export class FakeRuntime implements AgentRuntime {
       },
       events: [],
       nextStep: 0,
+      steps: typeof this.scenario === "function" ? this.scenario(copied) : this.scenario,
     };
     this.#sessions.set(nativeSessionId, session);
     this.#runs.set(input.runId, nativeSessionId);
@@ -109,8 +113,8 @@ export class FakeRuntime implements AgentRuntime {
   }
   #advance(session: FakeSession): void {
     session.snapshot = { ...session.snapshot, state: "running" };
-    while (session.nextStep < this.scenario.length) {
-      const step = this.scenario[session.nextStep++];
+    while (session.nextStep < session.steps.length) {
+      const step = session.steps[session.nextStep++];
       if (!step) break;
       if (step.type === "activity")
         this.#emit(session, { type: "run.activity", payload: { label: step.label } });
