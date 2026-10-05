@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { git } from "@zamolxis/git";
 
 export function repositoryFixture() {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "zamolxis-git-")));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "zamolxis-git-")));
   const path = join(root, "repo");
   mkdirSync(path);
   git(path, ["init", "-b", "main"]);

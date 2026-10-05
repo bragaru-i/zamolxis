@@ -1,4 +1,4 @@
-import { mkdirSync, renameSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { git, inspectRepository } from "@zamolxis/git";
 import { afterEach, describe, expect, it } from "vitest";
@@ -49,6 +49,18 @@ describe("repository registry", () => {
     renameSync(f.path, join(f.root, "moved"));
     expect(() => registry.verify("a")).toThrow("MISSING");
     expect(store.getRepositoryLocation("a")?.status).toBe("missing");
+    store.close();
+  });
+
+  it("canonicalizes case-variant paths on case-insensitive filesystems", () => {
+    const f = fixture();
+    const variant = join(f.root, "REPO");
+    if (!existsSync(variant)) return; // Case-sensitive filesystem: the alias cannot exist.
+    expect(inspectRepository(variant).path).toBe(f.path);
+    const store = new LocalStateStore(":memory:");
+    const registry = new RepositoryRegistry(store, () => true);
+    registry.register({ repositoryLocationId: "a", repositoryId: "repo", workstationId: "a", path: variant, expectedIdentity: identity });
+    expect(registry.verify("a").path).toBe(f.path);
     store.close();
   });
 });

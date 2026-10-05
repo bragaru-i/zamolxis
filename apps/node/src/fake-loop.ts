@@ -31,8 +31,8 @@ function inside(root: string, path: string): boolean {
   );
 }
 export async function runFakeLoopOnce(options: FakeLoopOptions): Promise<void> {
-  const canonical = realpathSync(options.repositoryPath);
-  const managedRoot = realpathSync(options.managedRoot);
+  const canonical = realpathSync.native(options.repositoryPath);
+  const managedRoot = realpathSync.native(options.managedRoot);
   if (!isAbsolute(options.managedRoot) || inside(canonical, managedRoot))
     throw new Error("MANAGED_ROOT_MUST_BE_OUTSIDE_CANONICAL_REPOSITORY");
   // These explicit paths are local filesystem grants, not paths supplied by a cloud command.

@@ -190,7 +190,7 @@ export async function setup() {
         : selection.split(",").map((n) => found[Number(n.trim()) - 1]);
       if (!paths.length || paths.some((path) => !path)) throw new Error("Select a Git repository");
       const repositories = [...new Set(paths)].map((path) => {
-        const snapshot = inspectRepository(realpathSync(path!));
+        const snapshot = inspectRepository(realpathSync.native(path!));
         const remoteUrl = execFileSync(
           "git",
           ["-C", snapshot.path, "remote", "get-url", "origin"],
@@ -214,7 +214,7 @@ export async function setup() {
       };
       validateConfig(config);
       mkdirSync(managedRoot, { recursive: true, mode: 0o700 });
-      config.managedRoot = realpathSync(managedRoot);
+      config.managedRoot = realpathSync.native(managedRoot);
       saveConfig(config);
     }
     const client = new ConvexHttpClient(config.convexUrl);

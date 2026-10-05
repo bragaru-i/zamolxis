@@ -22,8 +22,8 @@ import { configPath, pause, readConfig } from "./setup";
 const pathIndex = process.argv.indexOf("--config");
 const config = readConfig(pathIndex >= 0 ? process.argv[pathIndex + 1] : configPath());
 if (!config.credential || !config.workstationId) throw new Error("SETUP_REQUIRED");
-const root = realpathSync(config.managedRoot);
-const canonical = config.repositories.map((repository) => realpathSync(repository.path));
+const root = realpathSync.native(config.managedRoot);
+const canonical = config.repositories.map((repository) => realpathSync.native(repository.path));
 const grant = (path: string) => {
   const suffix = relative(root, path);
   return (

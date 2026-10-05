@@ -32,7 +32,7 @@ export function validateWorktree(
 ): RepositorySnapshot {
   const snapshot = inspectRepository(path);
   const registered = listWorktrees(repositoryPath).some(
-    (entry) => realpathSync(entry.path) === snapshot.path && entry.branch === branch,
+    (entry) => realpathSync.native(entry.path) === snapshot.path && entry.branch === branch,
   );
   if (snapshot.gitCommonDir !== commonDir || snapshot.branch !== branch || !registered)
     throw new Error("WORKSPACE_IDENTITY_MISMATCH");
