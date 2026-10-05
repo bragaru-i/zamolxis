@@ -13,8 +13,8 @@ import {
 } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
-import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
+import { checkbox, input, select } from "@inquirer/prompts";
 import { inspectRepository } from "@zamolxis/git";
 import { ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
@@ -140,27 +140,121 @@ export function installService(path = configPath()) {
   writeFileSync(servicePath, plist, { mode: 0o600 });
   execFileSync("launchctl", ["bootstrap", domain, servicePath], { stdio: "pipe" });
 }
+export type AppAddress =
+  | { origin: string }
+  | { candidates: Array<{ origin: string; problem?: string }> };
+export function parseAppAddress(value: string): AppAddress {
+  const trimmed = value.trim();
+  if (/^[a-z][a-z\d+.-]*:\/\//i.test(trimmed)) {
+    const url = new URL(trimmed);
+    if (url.protocol !== "https:") throw new Error("PUBLIC_HTTPS_CONTROL_PLANE_REQUIRED");
+    return { origin: url.origin };
+  }
+  // Without a protocol the user chooses one; nothing is assumed silently.
+  const host = new URL(`https://${trimmed}`).host;
+  if (!trimmed || /[/?#\s]/.test(trimmed.replace(/\/+$/, "")))
+    throw new Error("INVALID_APP_ADDRESS");
+  return {
+    candidates: [
+      { origin: `https://${host}` },
+      { origin: `http://${host}`, problem: "Zamolxis requires HTTPS" },
+    ],
+  };
+}
+const EDIT_ADDRESS = "\0edit";
+async function promptAppUrl() {
+  for (;;) {
+    const parsed = parseAppAddress(
+      await input({
+        message: "Zamolxis app address",
+        validate: (value) => {
+          try {
+            parseAppAddress(value);
+            return true;
+          } catch (error) {
+            return error instanceof Error && error.message.includes("HTTPS")
+              ? "Zamolxis requires HTTPS"
+              : "Enter a host such as zamolxis.example.com";
+          }
+        },
+      }),
+    );
+    if ("origin" in parsed) return parsed.origin;
+    const choice = await select<string>({
+      message: "Which protocol?",
+      choices: [
+        ...parsed.candidates.map(({ origin, problem }) => ({
+          name: origin,
+          value: origin,
+          ...(problem ? { disabled: problem } : {}),
+        })),
+        { name: "Edit address", value: EDIT_ADDRESS },
+      ],
+    });
+    if (choice !== EDIT_ADDRESS) return choice;
+  }
+}
+export interface RepositoryChoice {
+  path: string;
+  remoteUrl?: string;
+  problem?: string;
+}
+export function inspectRepositoryChoice(path: string): RepositoryChoice {
+  try {
+    const snapshot = inspectRepository(realpathSync.native(path));
+    const remoteUrl = execFileSync("git", ["-C", snapshot.path, "remote", "get-url", "origin"], {
+      encoding: "utf8",
+      stdio: "pipe",
+    }).trim();
+    return { path: snapshot.path, remoteUrl };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    return {
+      path,
+      problem: message.includes("ROOT_REQUIRED")
+        ? "not a repository root"
+        : message.includes("HEAD^{commit}")
+          ? "no commits yet"
+          : message.includes("get-url origin")
+            ? "no origin remote"
+            : message.includes("UNSUPPORTED_REMOTE")
+              ? "unsupported origin remote"
+              : "not a readable Git repository",
+    };
+  }
+}
+export function discoverRepositories(candidates: Iterable<string>) {
+  const choices = new Map<string, RepositoryChoice>();
+  for (const candidate of candidates) {
+    if (!existsSync(join(candidate, ".git"))) continue;
+    const choice = inspectRepositoryChoice(candidate);
+    if (!choices.has(choice.path)) choices.set(choice.path, choice);
+  }
+  return [...choices.values()];
+}
+const OTHER_PATH = "\0other";
 export async function setup() {
   prerequisites();
-  const terminal = createInterface({ input: process.stdin, output: process.stdout });
   try {
     let config: NodeConfig;
     if (existsSync(configPath())) config = readConfig();
     else {
-      const appUrl = new URL((await terminal.question("Zamolxis public app URL: ")).trim()).origin;
-      if (new URL(appUrl).protocol !== "https:")
-        throw new Error("PUBLIC_HTTPS_CONTROL_PLANE_REQUIRED");
+      const appUrl = await promptAppUrl();
       const response = await fetch(`${appUrl}/api/bootstrap`, {
         signal: AbortSignal.timeout(10_000),
         redirect: "error",
       });
       if (!response.ok) throw new Error("Public control plane unavailable");
-      const bootstrap = (await response.json()) as { version: number; convexUrl: string; appUrl: string };
+      const bootstrap = (await response.json()) as {
+        version: number;
+        convexUrl: string;
+        appUrl: string;
+      };
       if (bootstrap.version !== 1) throw new Error("UNSUPPORTED_CONTROL_PLANE_VERSION");
       if (new URL(bootstrap.appUrl).origin !== appUrl)
         throw new Error("CANONICAL_APP_URL_MISMATCH");
       const name =
-        (await terminal.question(`Name this Mac [${hostname()}]: `)).trim() || hostname();
+        (await input({ message: "Name this Mac", default: hostname() })).trim() || hostname();
       const candidates = new Set([process.cwd()]);
       try {
         candidates.add(
@@ -178,30 +272,57 @@ export async function setup() {
           if (entry.isDirectory() && !entry.isSymbolicLink())
             candidates.add(join(root, entry.name));
       }
-      const found = [...candidates].filter((path) => existsSync(join(path, ".git")));
-      found.forEach((path, index) => {
-        console.log(`${index + 1}. ${path}`);
+      const selected = await checkbox<string>({
+        message: "Repositories this Mac may work on",
+        choices: [
+          ...discoverRepositories(candidates).map((choice) => ({
+            name: choice.path,
+            value: choice.path,
+            ...(choice.problem ? { disabled: choice.problem } : {}),
+          })),
+          { name: "Another repository path…", value: OTHER_PATH },
+        ],
+        validate: (choices) => choices.length > 0 || "Select at least one repository",
       });
-      const selection = (
-        await terminal.question("Repository numbers (comma separated) or absolute path: ")
+      const chosen = selected.filter((path) => path !== OTHER_PATH).map(inspectRepositoryChoice);
+      if (selected.includes(OTHER_PATH)) {
+        const other = await input({
+          message: "Absolute repository paths (comma separated)",
+          validate: (value) => {
+            const paths = value
+              .split(",")
+              .map((path) => path.trim())
+              .filter(Boolean);
+            if (!paths.length) return "Enter at least one path";
+            for (const path of paths) {
+              if (!isAbsolute(path)) return `${path}: use an absolute path`;
+              if (!existsSync(path)) return `${path}: does not exist`;
+              const { problem } = inspectRepositoryChoice(path);
+              if (problem) return `${path}: ${problem}`;
+            }
+            return true;
+          },
+        });
+        chosen.push(
+          ...other
+            .split(",")
+            .map((path) => path.trim())
+            .filter(Boolean)
+            .map(inspectRepositoryChoice),
+        );
+      }
+      const repositories = [...new Map(chosen.map((choice) => [choice.path, choice])).values()].map(
+        ({ path, remoteUrl, problem }) => {
+          if (problem || !remoteUrl) throw new Error(`${path}: ${problem ?? "no origin remote"}`);
+          return { path, remoteUrl, name: basename(path) };
+        },
+      );
+      const managedRoot = (
+        await input({
+          message: "Managed root",
+          default: join(configDirectory(), "worktrees"),
+        })
       ).trim();
-      const paths = isAbsolute(selection)
-        ? [selection]
-        : selection.split(",").map((n) => found[Number(n.trim()) - 1]);
-      if (!paths.length || paths.some((path) => !path)) throw new Error("Select a Git repository");
-      const repositories = [...new Set(paths)].map((path) => {
-        const snapshot = inspectRepository(realpathSync(path!));
-        const remoteUrl = execFileSync(
-          "git",
-          ["-C", snapshot.path, "remote", "get-url", "origin"],
-          { encoding: "utf8", stdio: "pipe" },
-        ).trim();
-        return { path: snapshot.path, remoteUrl, name: basename(snapshot.path) };
-      });
-      const managedRoot =
-        (
-          await terminal.question(`Managed root [${join(configDirectory(), "worktrees")}]: `)
-        ).trim() || join(configDirectory(), "worktrees");
       config = {
         version: 1,
         appUrl,
@@ -214,7 +335,7 @@ export async function setup() {
       };
       validateConfig(config);
       mkdirSync(managedRoot, { recursive: true, mode: 0o700 });
-      config.managedRoot = realpathSync(managedRoot);
+      config.managedRoot = realpathSync.native(managedRoot);
       saveConfig(config);
     }
     const client = new ConvexHttpClient(config.convexUrl);
@@ -294,7 +415,9 @@ export async function setup() {
       await pause(1500);
     }
     throw new Error("Heartbeat/runtime check failed; inspect node-error.log and rerun setup");
-  } finally {
-    terminal.close();
+  } catch (error) {
+    if (error instanceof Error && error.name === "ExitPromptError")
+      throw new Error("Setup cancelled");
+    throw error;
   }
 }

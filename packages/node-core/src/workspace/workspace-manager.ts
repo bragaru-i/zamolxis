@@ -21,7 +21,7 @@ function safeId(id: string): string {
 }
 
 function canonicalDestination(path: string): string {
-  if (existsSync(path)) return realpathSync(path);
+  if (existsSync(path)) return realpathSync.native(path);
   return join(canonicalDestination(dirname(path)), basename(path));
 }
 
@@ -33,7 +33,7 @@ export class WorkspaceManager {
     const destination = canonicalDestination(resolve(root));
     if (!isGranted(destination)) throw new Error("WORKSPACE_ROOT_DENIED");
     mkdirSync(destination, { recursive: true });
-    this.#root = realpathSync(destination);
+    this.#root = realpathSync.native(destination);
     if (!isGranted(this.#root)) throw new Error("WORKSPACE_ROOT_DENIED");
   }
 
@@ -42,7 +42,7 @@ export class WorkspaceManager {
     const directory = join(this.#root, safeId(location.repositoryId));
     if (!this.isGranted(directory)) throw new Error("WORKSPACE_DENIED");
     mkdirSync(directory, { recursive: true });
-    if (realpathSync(directory) !== directory) throw new Error("WORKSPACE_PATH_REDIRECTED");
+    if (realpathSync.native(directory) !== directory) throw new Error("WORKSPACE_PATH_REDIRECTED");
     const path = join(directory, safeId(input.workspaceId));
     const branch = `zam/${location.repositoryId}/${input.workspaceId}`;
     const previous = this.store.getManagedWorkspace(input.workspaceId);
@@ -80,7 +80,7 @@ export class WorkspaceManager {
 
   acquire(id: string, runId: string, cwd: string, branch: string): ManagedWorkspace {
     const workspace = this.inspect(id);
-    if (realpathSync(cwd) !== workspace.path || branch !== workspace.branch) throw new Error("RUN_WORKSPACE_MISMATCH");
+    if (realpathSync.native(cwd) !== workspace.path || branch !== workspace.branch) throw new Error("RUN_WORKSPACE_MISMATCH");
     this.store.acquireWorkspaceLease(id, runId, this.nodeInstanceId);
     return this.inspect(id);
   }

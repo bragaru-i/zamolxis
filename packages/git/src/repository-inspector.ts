@@ -34,10 +34,10 @@ export function remoteIdentity(remote: string): string {
 }
 
 export function inspectRepository(path: string): RepositorySnapshot {
-  const canonicalPath = realpathSync(path);
-  const topLevel = realpathSync(git(canonicalPath, ["rev-parse", "--show-toplevel"]));
+  const canonicalPath = realpathSync.native(path);
+  const topLevel = realpathSync.native(git(canonicalPath, ["rev-parse", "--show-toplevel"]));
   if (topLevel !== canonicalPath) throw new Error("REPOSITORY_ROOT_REQUIRED");
-  const gitCommonDir = realpathSync(git(path, ["rev-parse", "--path-format=absolute", "--git-common-dir"]));
+  const gitCommonDir = realpathSync.native(git(path, ["rev-parse", "--path-format=absolute", "--git-common-dir"]));
   const headSha = git(path, ["rev-parse", "--verify", "HEAD^{commit}"]);
   const branch = git(path, ["rev-parse", "--abbrev-ref", "HEAD"]);
   const status = git(path, ["status", "--porcelain=v1", "-z"]);

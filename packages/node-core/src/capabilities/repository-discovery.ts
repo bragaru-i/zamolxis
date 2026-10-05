@@ -59,7 +59,7 @@ export class RepositoryDiscovery {
         throw error;
       }
       if (stat.isSymbolicLink()) throw new Error(`UNSAFE_REPOSITORY_SOURCE:${path}`);
-      const resolved = realpathSync(absolute);
+      const resolved = realpathSync.native(absolute);
       // Do not follow skill/instruction symlinks, including directory symlinks.
       if (
         relative(workspace.path, resolved).split(sep).join("/") !== path ||
