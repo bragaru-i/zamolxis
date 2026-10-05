@@ -18,7 +18,8 @@ const transitions: Record<RunStatus, readonly RunStatus[]> = {
   running: ["waiting", "needs_approval", "stopping", "completed", "failed", "lost"],
   waiting: ["running", "needs_approval", "stopping", "completed", "failed", "lost"],
   needs_approval: ["running", "stopping", "failed", "lost"],
-  stopping: ["stopped", "failed", "lost"],
+  // A run may finish its turn before the interrupt lands.
+  stopping: ["stopped", "completed", "failed", "lost"],
   stopped: [],
   completed: [],
   failed: [],

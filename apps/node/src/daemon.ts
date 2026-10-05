@@ -71,7 +71,7 @@ try {
               encoding: "utf8",
               timeout: 5000,
             }).trim(),
-            capabilities: ["start", "message", "stop"],
+            capabilities: ["start", "stop"],
           },
         ],
       });
@@ -158,6 +158,16 @@ try {
     );
     // Discovery is performed before every assigned run by the driver.
     driver.setRepositoryDiscovery(new RepositoryDiscovery(workspaces));
+    const control = (async () => {
+      while (!stopping) {
+        try {
+          await driver.control();
+        } catch {
+          console.error("NODE_CONTROL_FAILED");
+        }
+        await pause(1000);
+      }
+    })();
     while (!stopping) {
       try {
         await client.mutation(makeFunctionReference<"mutation">("supervisor:dispatch"), {
@@ -169,6 +179,7 @@ try {
       }
       await pause(1000);
     }
+    await control;
   } finally {
     if (heartbeats) clearInterval(heartbeats);
     for (const child of children) child.kill("SIGKILL");

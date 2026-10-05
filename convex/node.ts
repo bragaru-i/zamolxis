@@ -601,6 +601,19 @@ export const recoverCompletedCommand = mutation({
         (["completed", "failed", "stopped"].includes(run.status) && run.completedAt === undefined)
       )
         fail("RECONCILIATION_REQUIRED");
+    } else if (command.type === "runtime.stop") {
+      // A stop is complete only once the run's terminal outcome has been settled.
+      const id = ctx.db.normalizeId("agentRuns", command.targetId);
+      if (!id) fail("INVALID_ARGUMENT");
+      const run = await nodeRun(ctx, device._id, id);
+      if (run.completedAt === undefined) fail("RECONCILIATION_REQUIRED");
+    } else if (command.type === "workspace.cleanup") {
+      const id = ctx.db.normalizeId("workspaces", command.targetId);
+      if (!id) fail("INVALID_ARGUMENT");
+      const workspace = await load(ctx, "workspaces", id);
+      if (workspace.workstationId !== device._id || workspace.ownerRunId)
+        fail("RECONCILIATION_REQUIRED");
+      await ctx.db.patch("workspaces", workspace._id, { status: "removed", updatedAt: Date.now() });
     } else if (command.type === "repository.plan") {
       const id = ctx.db.normalizeId("textCommands", command.targetId);
       if (!id || !(await load(ctx, "textCommands", id)).planDigest) fail("RECONCILIATION_REQUIRED");

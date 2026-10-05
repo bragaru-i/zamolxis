@@ -19,6 +19,7 @@ import { runFakeLoopOnce } from "../apps/node/src/fake-loop";
 import {
   ConvexControlPlaneTransport,
   parseExecutionCommand,
+  parsePendingCommand,
 } from "../apps/node/src/convex-control-plane";
 import { ControlPlaneDriver } from "../packages/node-core/src/control-plane/driver";
 import type { ControlPlaneTransport } from "../packages/node-core/src/control-plane/driver";
@@ -29,6 +30,7 @@ import { WorkspaceManager } from "../packages/node-core/src/workspace/workspace-
 import { repositoryFixture } from "../packages/node-core/src/testing/git-fixture";
 import { FakeRuntime } from "../packages/runtime-core/src/fake/fake-runtime";
 import { RuntimeRegistry } from "../packages/runtime-core/src/runtime-registry";
+import type { NormalizedRunEventDto } from "../packages/contracts/src";
 import type { AgentRuntime, StartRunInput } from "../packages/runtime-core/src/agent-runtime";
 import type { WorkstationId } from "../packages/contracts/src/shared/ids";
 import { git } from "../packages/git/src/repository-inspector";
@@ -296,6 +298,137 @@ it("rejects wrong targets and arbitrary cloud commands before any local operatio
   ).toThrow("TARGET");
 });
 
+it("fails unknown and unsupported commands individually and still stops a waiting run", async () => {
+  const f = await fixture();
+  const node = await f.boot(new FakeRuntime([{ type: "waiting", reason: "Needs input" }]));
+  const workspaceId = await f.user.mutation(api.workspaces.request, {
+    taskId: f.taskId,
+    repositoryLocationId: f.repositoryLocationId,
+    baseRef: "main",
+  });
+  await node.driver().tick();
+  const runId = await f.user.mutation(api.runs.request, {
+    taskId: f.taskId,
+    workspaceId,
+    runtime: "fake",
+  });
+  await node.driver().tick();
+  expect((await f.user.query(api.runs.get, { runId })).status).toBe("waiting");
+  const unknownId = await f.t.run((ctx) =>
+    ctx.db.insert("commands", {
+      workstationId: f.workstationId,
+      type: "shell.execute",
+      targetType: "workspace",
+      targetId: workspaceId,
+      idempotencyKey: "unknown:1",
+      status: "pending",
+      payload: { command: "rm -rf /" },
+      createdAt: Date.now(),
+    }),
+  );
+  const sendId = await f.user.mutation(api.runs.sendMessage, {
+    runId,
+    message: "Continue",
+    idempotencyKey: "first",
+  });
+  await f.user.mutation(api.runs.stop, { runId });
+  await node.driver().tick();
+  const run = await f.user.query(api.runs.get, { runId });
+  expect(run.status).toBe("stopped");
+  expect(run.completedAt).toBeDefined();
+  const commands = await f.t.run((ctx) => ctx.db.query("commands").collect());
+  const byId = new Map(commands.map((command) => [String(command._id), command]));
+  expect(byId.get(String(unknownId))).toMatchObject({
+    status: "failed",
+    error: "UNSUPPORTED_EXECUTION_COMMAND",
+  });
+  expect(byId.get(String(sendId))).toMatchObject({
+    status: "failed",
+    error: "RUNTIME_SEND_UNSUPPORTED",
+  });
+  expect(commands.find((command) => command.type === "runtime.stop")?.status).toBe("completed");
+  expect(commands.filter((command) => command.status === "pending")).toEqual([]);
+  expect(node.store.getWorkspaceLease(workspaceId)).toBeUndefined();
+  expect(git(f.path, ["rev-parse", "HEAD"])).toBe(f.originalHead);
+  expect(git(f.path, ["status", "--porcelain"])).toBe(f.originalStatus);
+});
+it("delivers a stop to a run that is still streaming", async () => {
+  class BlockingRuntime extends FakeRuntime {
+    streaming = false;
+    #release: () => void = () => {};
+    readonly #stopped = new Promise<void>((resolve) => {
+      this.#release = resolve;
+    });
+    override async *subscribe(input: {
+      nativeSessionId: string;
+      afterSequence?: number;
+    }): AsyncIterable<NormalizedRunEventDto> {
+      let cursor = input.afterSequence ?? 0;
+      for await (const event of super.subscribe({ ...input, afterSequence: cursor })) {
+        cursor = event.sequence;
+        yield event;
+      }
+      this.streaming = true;
+      await this.#stopped;
+      yield* super.subscribe({ ...input, afterSequence: cursor });
+    }
+    override async stop(input: { nativeSessionId: string }) {
+      await super.stop(input);
+      this.#release();
+    }
+  }
+  const f = await fixture();
+  const runtime = new BlockingRuntime([{ type: "activity", label: "Working" }]);
+  const node = await f.boot(runtime);
+  const workspaceId = await f.user.mutation(api.workspaces.request, {
+    taskId: f.taskId,
+    repositoryLocationId: f.repositoryLocationId,
+    baseRef: "main",
+  });
+  const driver = node.driver();
+  await driver.tick();
+  const runId = await f.user.mutation(api.runs.request, {
+    taskId: f.taskId,
+    workspaceId,
+    runtime: "fake",
+  });
+  const ticking = driver.tick();
+  for (let attempt = 0; !runtime.streaming && attempt < 200; attempt++)
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  expect(runtime.streaming).toBe(true);
+  await f.user.mutation(api.runs.stop, { runId });
+  await driver.control();
+  await ticking;
+  const run = await f.user.query(api.runs.get, { runId });
+  expect(run.status).toBe("stopped");
+  expect(run.completedAt).toBeDefined();
+  const commands = await f.t.run((ctx) => ctx.db.query("commands").collect());
+  expect(commands.find((command) => command.type === "runtime.stop")?.status).toBe("completed");
+  expect(node.store.getWorkspaceLease(workspaceId)).toBeUndefined();
+});
+it("turns an unparseable pending command into an individual failure", () => {
+  expect(
+    parsePendingCommand({
+      _id: "command",
+      workstationId: "node",
+      idempotencyKey: "key",
+      type: "shell.execute",
+      payload: {},
+    }),
+  ).toMatchObject({ type: "invalid", payload: { code: "UNSUPPORTED_EXECUTION_COMMAND" } });
+  expect(
+    parsePendingCommand({
+      _id: "command",
+      workstationId: "node",
+      idempotencyKey: "key",
+      type: "runtime.stop",
+      targetType: "run",
+      targetId: "other",
+      payload: { runId: "run" },
+    }),
+  ).toMatchObject({ type: "invalid", payload: { code: "INVALID_COMMAND_TARGET" } });
+  expect(parsePendingCommand({ type: "runtime.stop" })).toBeUndefined();
+});
 it("rejects dangling state-file symlinks before opening the database or contacting Convex", async () => {
   const repo = repositoryFixture();
   cleanup.push(() => rmSync(repo.root, { recursive: true, force: true }));

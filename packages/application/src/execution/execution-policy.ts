@@ -26,6 +26,9 @@ export function applyRunEvent(status: RunStatus, type: string): RunStatus {
     "run.stopped": "stopped",
   };
   const next = transitions[type];
+  // Events emitted before a stop was observed must not resurrect a stopping run.
+  if (status === "stopping" && (type === "run.started" || type === "run.waiting" || !next))
+    return status;
   if (!next) {
     if (!["running", "waiting", "needs_approval"].includes(status))
       throw new DomainError("INVALID_STATE", "Run is not active");
