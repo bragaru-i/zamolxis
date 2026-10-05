@@ -5,6 +5,97 @@ Clerk or other hosted auth service is required. Convex Auth is currently beta.
 Frontend private product data is client-rendered behind an access gate; the
 backend is the authority. Convex Auth owns session/token refresh and sign-out.
 
+## Guided setup: development and production
+
+Run this flow separately for your Convex **dev** and **prod** deployments.
+Environment variables, signing keys, user grants and Google clients are separate.
+Use a dedicated Google Web application OAuth client for each environment. Each
+frontend uses its matching Convex deployment and stable HTTPS origin. Development
+also requires HTTPS under Zamolxis's origin policy (plain localhost is rejected).
+
+From updated `main`, install dependencies with `pnpm install --frozen-lockfile`.
+Prepare development, replacing the deployment name and frontend origin:
+
+```sh
+node scripts/google-auth-setup.mjs prepare \
+  --environment dev \
+  --deployment YOUR-DEV-DEPLOYMENT \
+  --app-url https://YOUR-DEV-APP-ORIGIN \
+  --directory /private/tmp/zamolxis-google-dev
+```
+
+Use the actual lowercase deployment name from its `.convex.cloud` URL, not the
+project name. Choose a new absolute private directory outside the repository.
+Preparation is offline: it generates separate human/Node keys and prints the
+exact Google JavaScript origin and `.convex.site` callback URL. It refuses an
+existing directory, so rerunning preparation cannot rotate existing keys.
+
+In Google Auth Platform → Clients, create a **Web application** client with the
+printed origin and redirect URI. Add your account as a test user if the Google
+app is in Testing. Then edit the generated `credentials.json` privately:
+
+```json
+{
+  "googleClientId": "YOUR-ID.apps.googleusercontent.com",
+  "googleClientSecret": "YOUR-GOOGLE-SECRET",
+  "deployKey": "dev:YOUR-DEV-DEPLOYMENT|YOUR-DEPLOYMENT-KEY"
+}
+```
+
+Get a deployment-scoped key from **that deployment's** Convex Settings → Deploy
+keys. It needs environment-variable read/write permissions for `apply`, and
+code deployment permissions for `deploy`. Project-wide keys, legacy keys and
+keys for another environment/deployment are rejected. This avoids changing the
+machine's global Convex login or other products' configuration. Keep this file
+private (0600); do not paste its contents into chat or commit it.
+
+Review the target, apply auth variables, then deploy the backend:
+
+```sh
+node scripts/google-auth-setup.mjs inspect --environment dev --directory /private/tmp/zamolxis-google-dev
+node scripts/google-auth-setup.mjs apply --environment dev --directory /private/tmp/zamolxis-google-dev
+node scripts/google-auth-setup.mjs deploy --environment dev --directory /private/tmp/zamolxis-google-dev
+```
+
+`inspect` is offline. `apply` writes only the seven auth variables in one batch;
+it refuses all writes when any existing value differs, protecting established
+keys and origins. Reapplying the same bundle is idempotent. For an already
+configured deployment, resolve differences explicitly in its Dashboard rather
+than generating/replacing keys blindly. `deploy` uploads the current checkout's
+backend/schema and performs Convex's checks; it does not deploy the frontend.
+CLI output is suppressed to avoid leaking credentials; a failed command reports
+the operation and target without secrets. A temporary private CLI credentials
+file is removed after the command. No global login is modified.
+
+Import the generated `frontend.env` values into the **development web app's**
+hosting environment, then build/deploy that frontend. Open it, sign in and grant
+your user `accessStatus: "allowed"` in the **dev deployment's** `users` table.
+Verify a pending account is denied and blocking your test account revokes access.
+
+For production, repeat with production-specific values and a separate Google
+client. Do not copy the dev credential file or signing keys:
+
+```sh
+node scripts/google-auth-setup.mjs prepare \
+  --environment prod \
+  --deployment YOUR-PROD-DEPLOYMENT \
+  --app-url https://YOUR-PROD-APP-ORIGIN \
+  --directory /private/tmp/zamolxis-google-prod
+# Create the production Google client and fill this directory's credentials.json.
+node scripts/google-auth-setup.mjs inspect --environment prod --directory /private/tmp/zamolxis-google-prod
+node scripts/google-auth-setup.mjs apply --environment prod --directory /private/tmp/zamolxis-google-prod
+node scripts/google-auth-setup.mjs deploy --environment prod --directory /private/tmp/zamolxis-google-prod
+```
+
+Configure production hosting from the production `frontend.env`. Approve your
+production user separately. Store both private bundles in operator secrets
+storage; `/private/tmp` is temporary and is not a backup. After setup, pair each
+Mac with the intended public application origin using `./scripts/setup.sh`.
+
+The helper has offline tests for target mismatch rejection, dev/prod key
+separation, permissions and inherited selector isolation. Hosted `apply`,
+`deploy` and Google login have not been exercised without your credentials.
+
 ## Operator setup
 
 Use a dedicated Zamolxis deployment and one stable public HTTPS frontend origin.

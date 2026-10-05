@@ -112,7 +112,8 @@ value as `SITE_URL` in Convex) binds Google return redirects, bootstrap and QR
 links. Host headers and preview URLs do not establish trusted origins. Human
 Convex Auth sessions and Node-scoped credentials remain separate. An approved,
 authenticated owner approves a five-minute single-use QR; device tokens and
-revocation protect outbound Node access. See [Google login and access setup](docs/google-auth-access.md).
+revocation protect outbound Node access. See [Google login and access setup](docs/google-auth-access.md), including the
+`google-auth-setup.mjs` helper for separate dev/prod credentials and deployment.
 
 On a Mac with Node >=22, pnpm, Git, Codex CLI and an existing Codex login:
 
