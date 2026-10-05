@@ -155,8 +155,10 @@ export async function setup() {
         redirect: "error",
       });
       if (!response.ok) throw new Error("Public control plane unavailable");
-      const bootstrap = (await response.json()) as { version: number; convexUrl: string };
+      const bootstrap = (await response.json()) as { version: number; convexUrl: string; appUrl: string };
       if (bootstrap.version !== 1) throw new Error("UNSUPPORTED_CONTROL_PLANE_VERSION");
+      if (new URL(bootstrap.appUrl).origin !== appUrl)
+        throw new Error("CANONICAL_APP_URL_MISMATCH");
       const name =
         (await terminal.question(`Name this Mac [${hostname()}]: `)).trim() || hostname();
       const candidates = new Set([process.cwd()]);
