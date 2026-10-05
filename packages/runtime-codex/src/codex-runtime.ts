@@ -32,7 +32,10 @@ interface Session {
   seen: Set<string>;
   uncertain: boolean;
   waiters: Set<() => void>;
+  // Text of the last completed agent message: the agent's final reply for this turn.
+  reply?: string;
 }
+const REPLY_LIMIT = 8000;
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new Error("CODEX_INVALID_RESPONSE");
@@ -42,6 +45,10 @@ function text(value: unknown): string {
   if (typeof value !== "string" || !value || value.length > 4096)
     throw new Error("CODEX_INVALID_RESPONSE");
   return value;
+}
+// Verifier and Supervisor inspect the repository; they never edit it.
+function readOnly(input: StartRunInput): boolean {
+  return input.role === "verifier" || input.role === "supervisor";
 }
 function terminal(session: Session): boolean {
   return ["completed", "failed", "stopped"].includes(session.state);
@@ -108,7 +115,7 @@ export class CodexRuntime implements AgentRuntime {
       const response = record(
         await client.request("thread/start", {
           cwd: input.workspace.cwd,
-          sandbox: input.role === "verifier" ? "read-only" : "workspace-write",
+          sandbox: readOnly(input) ? "read-only" : "workspace-write",
           approvalPolicy: "on-request",
           ...((input.model ?? this.options.model)
             ? { model: input.model ?? this.options.model }
@@ -131,8 +138,8 @@ export class CodexRuntime implements AgentRuntime {
           input: [{ type: "text", text: input.instruction }],
           approvalPolicy: "on-request",
           sandboxPolicy: {
-            type: input.role === "verifier" ? "readOnly" : "workspaceWrite",
-            ...(input.role === "verifier" ? {} : { writableRoots: [input.workspace.cwd] }),
+            type: readOnly(input) ? "readOnly" : "workspaceWrite",
+            ...(readOnly(input) ? {} : { writableRoots: [input.workspace.cwd] }),
             networkAccess: false,
             excludeTmpdirEnvVar: true,
             excludeSlashTmp: true,
@@ -291,6 +298,9 @@ export class CodexRuntime implements AgentRuntime {
           return local;
         });
         this.#emit(session, "files.changed", { paths });
+      } else if (item.type === "agentMessage" && done) {
+        if (typeof item.text === "string" && item.text.trim())
+          session.reply = item.text.trim().slice(0, REPLY_LIMIT);
       } else if (["agentMessage", "reasoning", "plan"].includes(String(item.type)) && !done) {
         this.#emit(session, "run.activity", {
           label: item.type === "agentMessage" ? "Agent responding" : "Agent planning",
@@ -302,7 +312,8 @@ export class CodexRuntime implements AgentRuntime {
     }
   }
   #turnFinished(session: Session, status: unknown): void {
-    if (status === "completed") this.#finish(session, "completed", "Codex turn completed");
+    if (status === "completed")
+      this.#finish(session, "completed", session.reply ?? "Codex turn completed");
     else if (status === "interrupted") this.#finish(session, "stopped", "Codex turn interrupted");
     else if (status === "failed") this.#finish(session, "failed", "Codex turn failed");
     else throw new Error("CODEX_INVALID_TURN_STATUS");
