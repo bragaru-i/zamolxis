@@ -322,7 +322,13 @@ Builder, Verifier, Repair and Integration roles. Global summaries do not link ex
 your messages, the planning outcome for each, Task cards with their Runs (status, live
 activity label, reported token totals) and a Stop control per active Run and per Session.
 The Session composer stays pinned to the bottom; in an ended Session, sending starts a new Session.
-Computer status, removal of a computer and sign-out are in Settings.
+Computer status, removal of a computer and sign-out are in Settings. The sidebar's
+connection line counts connected computers ("Computers connected (2)"). Settings →
+Computers & repositories also lists **Products**: one per repository, matched by its remote
+origin wherever it is checked out; a product that only repeats repositories of another one
+(a leftover from before remotes were compared by identity) has **Archive duplicate**, which
+merges its repositories into the older product and archives it, keeping its sessions readable.
+It is refused while work runs in it or when a repository exists nowhere else.
 
 Supervisor replies (answers, proposals, delegated work, questions) and each agent's final reply appear in
 the conversation, rendered as safe Markdown. Not yet: steering a running agent,

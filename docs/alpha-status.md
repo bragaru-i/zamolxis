@@ -118,6 +118,15 @@ shipped or a tested implementation as proven in production.
   activity, elapsed time, tokens so far and cost when a provider reported one; tapping opens the
   Session or Run detail, Stop stops a run. Session task cards use the same agent rows. Cost is
   still never reported by Codex or Claude (see Usage).
+- **Products (2026-10-06):** Settings → Computers & repositories lists the owner's Products
+  (`products.list`: repositories, session count, and which repository the same remote origin
+  already has in an older Product). **Archive duplicate** (`products.archive`) merges each
+  repository into its older twin (locations move, Nodes naming the old entry land on the
+  survivor, same `mergeRepository` as registration) and archives the Product; refused while a
+  Session is active in it (`PRODUCT_IN_USE`), while a location is busy (`LOCATION_BUSY`) or
+  when a repository exists in no other Product. Archived Products leave every picker; their
+  Sessions stay listed. This is how the two "zamolxis" Products left by the pre-#115 rule are
+  tidied without a database edit. The sidebar connection line now counts connected computers.
 - **Run on (2026-10-06):** when more than one computer has the repository, the proposal review
   offers which computer runs the Session (`repositories.computers`: online state and agents per
   computer; `supervisor.submit`/`orchestrator.openProposal` take `workstationId`). The chosen

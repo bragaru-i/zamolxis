@@ -1,12 +1,5 @@
 import { spawn } from "node:child_process";
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  symlinkSync,
-} from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { convexTest } from "convex-test";

@@ -46,9 +46,12 @@ export function Workspace() {
     devices === undefined
       ? { state: "none" as const, label: "Checking computer…" }
       : online.length
-        ? { state: "online" as const, label: "Computer online" }
+        ? { state: "online" as const, label: `Computers connected (${online.length})` }
         : active.length
-          ? { state: "offline" as const, label: "Computer offline" }
+          ? {
+              state: "offline" as const,
+              label: `No computer connected (${active.length} offline)`,
+            }
           : { state: "none" as const, label: "No computer paired" };
   const indicator = (
     <button

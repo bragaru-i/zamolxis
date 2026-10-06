@@ -14,6 +14,8 @@ const modules = {
   "./approvals.ts": () => import("../convex/approvals"),
   "./events.ts": () => import("../convex/events"),
   "./node.ts": () => import("../convex/node"),
+  "./onboarding.ts": () => import("../convex/onboarding"),
+  "./products.ts": () => import("../convex/products"),
   "./profiles.ts": () => import("../convex/profiles"),
   "./repositories.ts": () => import("../convex/repositories"),
   "./runDetail.ts": () => import("../convex/runDetail"),
@@ -248,10 +250,14 @@ it("keeps every user-facing function closed to a second approved account", async
     other.query(api.repositories.computers, { repositoryId: o.repositoryId }),
   );
   await denied("admin.listUsers", () => other.query(api.admin.listUsers, {}));
+  await denied("products.archive", () =>
+    other.mutation(api.products.archive, { productId: o.productId }),
+  );
 
   // Lists scoped to the caller show none of the owner's data.
   expect((await other.query(api.sessions.listMine, { paginationOpts: page })).page).toEqual([]);
   expect(await other.query(api.supervisor.products, {})).toEqual([]);
+  expect(await other.query(api.products.list, {})).toEqual([]);
   expect(await other.query(api.approvals.listPending, {})).toEqual([]);
   expect(await other.query(api.agentProfiles.list, {})).toEqual([]);
   expect(await other.query(api.agentProfiles.list, { productId: o.productId })).toEqual([]);

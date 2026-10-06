@@ -578,6 +578,10 @@ code,
 .z-list-item:first-child {
   border-top: 0;
 }
+/* A list row that is information, not a button (Settings → Products). */
+.z-list-item--static {
+  cursor: default;
+}
 .z-list-item__title {
   font-weight: 600;
   display: -webkit-box;

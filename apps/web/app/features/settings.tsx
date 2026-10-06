@@ -17,6 +17,7 @@ import {
 import { DevicesSection } from "./devices";
 import { type Device, deviceState, MacItem } from "./macs";
 import { PeopleSection } from "./people";
+import { ProductsSection } from "./products";
 import { plural, StorageSettings, type StorageSummary } from "./storage";
 import { UsageSettings, type UsageSummary } from "./usage";
 
@@ -270,6 +271,7 @@ function MacsSettings({ devices, now }: { devices: Device[] | undefined; now: nu
         </p>
       )}
       {message && <Notice>{message}</Notice>}
+      <ProductsSection />
     </section>
   );
 }
