@@ -270,9 +270,16 @@ it("preserves an interrupted launch for reconciliation instead of replaying it",
   n.store.markCommandRunning(command.commandId);
   cleanup.pop()?.();
   const restarted = await f.boot();
-  await expect(restarted.driver().tick()).rejects.toThrow("RECONCILIATION_REQUIRED");
+  const driver = restarted.driver();
+  // The launch never recorded a native session: the run is reported lost (it keeps its
+  // workspace and capacity) and the queue is not blocked.
+  await driver.tick();
+  await driver.idle();
+  await driver.tick();
   expect(f.runtime.starts).toBe(0);
-  expect((await f.user.query(api.runs.get, { runId })).status).toBe("lost");
+  const lost = await f.user.query(api.runs.get, { runId });
+  expect(lost.status).toBe("lost");
+  expect(lost.exitReason).toContain("RUNTIME_SESSION_UNKNOWN");
   expect(
     (await f.user.query(api.workspaces.listBySession, { workSessionId: f.workSessionId }))[0]
       ?.ownerRunId,
