@@ -4,6 +4,7 @@ import {
   Button,
   Chip,
   Composer,
+  IconButton,
   Markdown,
   Message,
   Notice,
@@ -101,14 +102,12 @@ export function SessionList({
           <ProductMark />
           <strong>Zamolxis</strong>
         </div>
-        <Button
-          variant="ghost"
-          size="small"
+        <IconButton
+          icon="close"
+          label="Close menu"
           className="z-home-nav__close"
           onClick={() => setDrawerOpen(false)}
-        >
-          Close
-        </Button>
+        />
       </div>
       <button
         type="button"
@@ -286,24 +285,18 @@ export function SessionList({
       <div className="z-home-main">
         <AppHeader
           leading={
-            <Button
-              variant="ghost"
-              size="small"
+            <IconButton
+              icon="menu"
+              label="Open chats and sessions"
               className="z-home-sessions-trigger"
               aria-expanded={drawerOpen}
               aria-controls="work-sessions"
               onClick={() => setDrawerOpen(true)}
-            >
-              Sessions
-            </Button>
+            />
           }
           title={chatId ? (openChat?.title ?? "Chat") : "Home"}
           subtitle={indicator}
-          trailing={
-            <Button variant="ghost" onClick={() => onSettings()}>
-              Settings
-            </Button>
-          }
+          trailing={<IconButton icon="settings" label="Settings" onClick={() => onSettings()} />}
         />
         <main className="z-home-conversation">
           {notices}

@@ -131,6 +131,57 @@ export function AppShell({
   );
 }
 
+const ICON_PATHS: Record<string, ReactNode> = {
+  menu: <path d="M3 5h14M3 10h14M3 15h14" />,
+  back: <path d="M12.5 4l-6 6 6 6" />,
+  close: <path d="M5 5l10 10M15 5L5 15" />,
+  settings: (
+    <>
+      <path d="M3 5.5h8M15 5.5h2M3 14.5h2M9 14.5h8" />
+      <circle cx="13" cy="5.5" r="2" />
+      <circle cx="7" cy="14.5" r="2" />
+    </>
+  ),
+};
+export type IconName = "menu" | "back" | "close" | "settings";
+
+export function Icon({ name }: { name: IconName }) {
+  return (
+    <svg
+      className="z-icon"
+      viewBox="0 0 20 20"
+      aria-hidden="true"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      {ICON_PATHS[name]}
+    </svg>
+  );
+}
+
+/** A square, touch-sized button showing only an icon; `label` names it for screen readers. */
+export function IconButton({
+  icon,
+  label,
+  className,
+  ...props
+}: Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children"> & { icon: IconName; label: string }) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      className={`z-icon-button${className ? ` ${className}` : ""}`}
+      {...props}
+    >
+      <Icon name={icon} />
+    </button>
+  );
+}
+
 export function AppHeader({
   leading,
   title,
@@ -401,7 +452,7 @@ export function Sheet({
             aria-label={`Back to ${backLabel}`}
             onClick={onBack}
           >
-            ‹ {backLabel}
+            <Icon name="back" />
           </button>
         )}
         <div className="z-sheet__titles">
@@ -411,9 +462,7 @@ export function Sheet({
           {description && <p className="z-sheet__description">{description}</p>}
         </div>
         <button type="button" className="z-sheet__close" aria-label="Close" onClick={onClose}>
-          <svg viewBox="0 0 16 16" aria-hidden="true">
-            <path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" strokeWidth="1.8" />
-          </svg>
+          <Icon name="close" />
         </button>
       </div>
       <div className="z-sheet__body">{children}</div>
