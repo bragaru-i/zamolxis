@@ -621,6 +621,8 @@ code,
 .z-chat-timeline {
   display: flex;
   flex-direction: column;
+  /* Space between exchanges, and before Work, notices and Usage that follow them. */
+  gap: var(--z-space-5);
   min-width: 0;
 }
 .z-chat-timeline__item {
@@ -629,13 +631,13 @@ code,
   grid-template-columns: 18px minmax(0, 1fr);
   gap: var(--z-space-2);
   min-width: 0;
-  padding-bottom: var(--z-space-5);
 }
-.z-chat-timeline__item:not(:last-child)::before {
+/* The line joins one exchange to the next only; it stops before Work and Usage. */
+.z-chat-timeline__item:has(+ .z-chat-timeline__item)::before {
   content: "";
   position: absolute;
   top: 12px;
-  bottom: -2px;
+  bottom: calc(-1 * var(--z-space-5) - 2px);
   left: 8px;
   width: 2px;
   background: linear-gradient(var(--z-primary), var(--z-border));
