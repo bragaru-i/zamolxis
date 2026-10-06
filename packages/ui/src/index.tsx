@@ -171,9 +171,9 @@ function ToastRegion({ label, children }: { label: string; children: ReactNode }
   return createPortal(region, host ?? document.body);
 }
 function ToastPopover({ label, children }: { label: string; children: ReactNode }) {
-  const root = useRef<HTMLDivElement>(null);
+  const root = useRef<HTMLElement>(null);
   useEffect(() => {
-    const element = root.current as (HTMLDivElement & { showPopover?: () => void }) | null;
+    const element = root.current as (HTMLElement & { showPopover?: () => void }) | null;
     try {
       // In the top layer above the sheet it belongs to; the fixed layout applies anyway.
       element?.showPopover?.();
@@ -182,9 +182,9 @@ function ToastPopover({ label, children }: { label: string; children: ReactNode 
     }
   }, []);
   return (
-    <div className="z-toasts" ref={root} popover="manual" role="region" aria-label={label}>
+    <section className="z-toasts" ref={root} popover="manual" aria-label={label}>
       {children}
-    </div>
+    </section>
   );
 }
 /** One notice in a ToastStack: a title line, the message and optional actions. */
