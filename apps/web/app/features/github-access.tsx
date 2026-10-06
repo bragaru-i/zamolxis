@@ -81,7 +81,7 @@ export function GithubAccessRow({
   const { tone, text, needsToken } = describeGithubAccess(access, now);
   const link = safeHref(github.tokenUrl);
   return (
-    <div className="z-stack" aria-label={`GitHub access for ${github.slug}`}>
+    <section className="z-stack" aria-label={`GitHub access for ${github.slug}`}>
       <Notice tone={tone}>{text}</Notice>
       {access && (
         <span className="z-xsmall z-muted">Checked {relativeTime(access.checkedAt, now)}</span>
@@ -104,6 +104,6 @@ export function GithubAccessRow({
           </span>
         </>
       )}
-    </div>
+    </section>
   );
 }
