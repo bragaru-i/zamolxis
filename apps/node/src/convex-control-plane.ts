@@ -203,7 +203,17 @@ export function parseExecutionCommand(value: unknown): ExecutionCommand {
     const workspaceId = field(payload, "workspaceId");
     if (command.targetType !== "workspace" || command.targetId !== workspaceId)
       throw new Error("INVALID_COMMAND_TARGET");
-    return { ...common, type: "workspace.cleanup", payload: { workspaceId } };
+    const deleteBranchAt = payload.deleteBranchAt;
+    if (
+      deleteBranchAt !== undefined &&
+      (typeof deleteBranchAt !== "string" || !/^[a-f0-9]{40,64}$/.test(deleteBranchAt))
+    )
+      throw new Error("INVALID_COMMAND");
+    return {
+      ...common,
+      type: "workspace.cleanup",
+      payload: { workspaceId, ...(deleteBranchAt ? { deleteBranchAt } : {}) },
+    };
   }
   throw new Error("UNSUPPORTED_EXECUTION_COMMAND");
 }

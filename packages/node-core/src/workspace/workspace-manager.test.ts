@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { git } from "@zamolxis/git";
+import { deleteManagedBranch, git } from "@zamolxis/git";
 import { afterEach, describe, expect, it } from "vitest";
 import { LocalStateStore } from "../persistence/local-state";
 import { RepositoryRegistry } from "../repository/repository-registry";
@@ -126,5 +126,98 @@ describe("workspace lifecycle with real Git", () => {
     expect(() => f.manager.cleanup("a", { ...retention, integrationPending: true })).toThrow(
       "DENIED",
     );
+  });
+});
+
+describe("worktree cleanup and Git metadata (#8)", () => {
+  const branches = (path: string) =>
+    git(path, ["for-each-ref", "--format=%(refname:short)", "refs/heads"]).split("\n").sort();
+  const commit = (path: string, file: string, content = `${file}\n`) => {
+    writeFileSync(join(path, file), content);
+    git(path, ["add", "."]);
+    git(path, ["-c", "user.name=T", "-c", "user.email=t@example.invalid", "commit", "-m", file]);
+    return git(path, ["rev-parse", "HEAD"]);
+  };
+
+  it("removes a clean worktree with ignored output and deletes its branch only at the named commit", () => {
+    const f = fixture();
+    const canonicalHead = git(f.path, ["rev-parse", "HEAD"]);
+    const canonicalStatus = git(f.path, ["status", "--porcelain"]);
+    // User branches and a published zamolxis/* branch must survive every cleanup.
+    git(f.path, ["branch", "feature/mine"]);
+    git(f.path, ["branch", "zamolxis/task-1234567"]);
+    const a = f.provision("a");
+    const stale = commit(a.path, "a.txt");
+    // Ignored build output does not make a worktree dirty and is removed with it.
+    commit(a.path, ".gitignore", "build/\n");
+    mkdirSync(join(a.path, "build"));
+    writeFileSync(join(a.path, "build", "out.js"), "x\n");
+    // A stale commit name keeps the branch: the backend did not authorize this tip.
+    expect(f.manager.cleanup("a", retention, { deleteBranchAt: stale })).toEqual({
+      branchDeleted: false,
+    });
+    expect(existsSync(a.path)).toBe(false);
+    expect(branches(f.path)).toContain(a.branch);
+    expect(f.store.getManagedWorkspace("a")?.status).toBe("removed");
+    // Removal is idempotent and never touches the branch again.
+    const tip = git(f.path, ["rev-parse", a.branch]);
+    expect(f.manager.cleanup("a", retention, { deleteBranchAt: tip })).toEqual({
+      branchDeleted: false,
+    });
+    expect(branches(f.path)).toContain(a.branch);
+
+    const b = f.provision("b");
+    const bHead = commit(b.path, "b.txt");
+    expect(f.manager.cleanup("b", retention, { deleteBranchAt: bHead })).toEqual({
+      branchDeleted: true,
+    });
+    expect(branches(f.path)).not.toContain(b.branch);
+    expect(branches(f.path)).toEqual(
+      expect.arrayContaining(["feature/mine", "main", "zamolxis/task-1234567", a.branch]),
+    );
+    expect(git(f.path, ["worktree", "list", "--porcelain"])).not.toContain(b.path);
+    // The canonical checkout is never a cleanup target and stays exactly as it was.
+    expect(git(f.path, ["rev-parse", "HEAD"])).toBe(canonicalHead);
+    expect(git(f.path, ["status", "--porcelain"])).toBe(canonicalStatus);
+  });
+
+  it("preserves untracked work and keeps the branch when nothing was authorized", () => {
+    const f = fixture();
+    const a = f.provision("a");
+    writeFileSync(join(a.path, "notes.txt"), "untracked\n");
+    expect(() => f.manager.cleanup("a", retention, { deleteBranchAt: a.baseSha })).toThrow(
+      "DIRTY_WORKSPACE_PRESERVED",
+    );
+    expect(readFileSync(join(a.path, "notes.txt"), "utf8")).toBe("untracked\n");
+    expect(branches(f.path)).toContain(a.branch);
+    rmSync(join(a.path, "notes.txt"));
+    expect(f.manager.cleanup("a", retention)).toEqual({ branchDeleted: false });
+    expect(branches(f.path)).toContain(a.branch);
+  });
+
+  it("prunes the registration of a worktree deleted outside Zamolxis", () => {
+    const f = fixture();
+    const a = f.provision("a");
+    rmSync(a.path, { recursive: true, force: true });
+    expect(git(f.path, ["worktree", "list", "--porcelain"])).toContain(a.path);
+    expect(f.manager.cleanup("a", retention, { deleteBranchAt: a.baseSha })).toEqual({
+      branchDeleted: true,
+    });
+    expect(git(f.path, ["worktree", "list", "--porcelain"])).not.toContain(a.path);
+    expect(f.store.getManagedWorkspace("a")?.status).toBe("removed");
+    expect(branches(f.path)).toEqual(["main"]);
+  });
+
+  it("never deletes a branch outside zam/ or one checked out in a worktree", () => {
+    const f = fixture();
+    const head = git(f.path, ["rev-parse", "HEAD"]);
+    expect(() => deleteManagedBranch(f.path, "main", head)).toThrow("BRANCH_NOT_MANAGED");
+    expect(() => deleteManagedBranch(f.path, "zamolxis/task-1", head)).toThrow(
+      "BRANCH_NOT_MANAGED",
+    );
+    const a = f.provision("a");
+    expect(deleteManagedBranch(f.path, a.branch, a.baseSha)).toBe(false);
+    expect(deleteManagedBranch(f.path, "zam/repo/missing", head)).toBe(false);
+    expect(branches(f.path)).toContain(a.branch);
   });
 });

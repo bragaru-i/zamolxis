@@ -124,6 +124,10 @@ planned capability as shipped.
    out). Nothing merges automatically. PRs are authored by whichever `gh` account is
    active on the Mac. Missing: combining several task branches into one PR; base
    branch comes from the checkout's branch when the remote default is unknown.
+   Worktree retention: an hourly sweep removes eligible managed worktrees (default 3
+   days, 1–30 per owner; planning worktrees after 1 day; unpublished trusted work is
+   kept indefinitely), prunes Git metadata and deletes only `zam/...` branches at the
+   expected SHA; Settings → Storage shows counts and "Clean up now".
 8. **Not validated end to end:** real iPhone (keyboard with the pinned composer,
    home-screen mode), deployed OIDC/device auth, launchd service across restarts,
    stop against a real Codex session.

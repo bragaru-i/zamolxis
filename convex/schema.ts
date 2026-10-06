@@ -359,12 +359,29 @@ export default defineSchema({
     removedAt: v.optional(v.number()),
     errorCode: v.optional(v.string()),
     errorMessage: v.optional(v.string()),
+    // Retention cleanup (convex/lib/retention.ts): requested -> removed, or failed with a
+    // code; failures back off and stop after a bounded number of attempts.
+    cleanupStatus: v.optional(
+      v.union(v.literal("requested"), v.literal("removed"), v.literal("failed")),
+    ),
+    cleanupCommandId: v.optional(v.id("commands")),
+    cleanupAttempts: v.optional(v.number()),
+    cleanupRequestedAt: v.optional(v.number()),
+    cleanupError: v.optional(v.string()),
+    cleanupNextAttemptAt: v.optional(v.number()),
   })
     .index("by_session", ["workSessionId"])
     .index("by_task", ["taskId"])
     .index("by_workstation_status", ["workstationId", "status"])
     .index("by_repository_status", ["repositoryId", "status"])
     .index("by_owner_run", ["ownerRunId"]),
+
+  // Per-owner worktree retention (Settings -> Storage); absent means the default window.
+  storageSettings: defineTable({
+    ownerId: v.id("users"),
+    retentionDays: v.number(),
+    updatedAt: v.number(),
+  }).index("by_owner", ["ownerId"]),
 
   agentProfiles: defineTable({
     ownerId: v.id("users"),
@@ -431,6 +448,7 @@ export default defineSchema({
     .index("by_workstation_status", ["workstationId", "status"])
     .index("by_parent", ["parentRunId"])
     .index("by_profile", ["agentProfileId"])
+    .index("by_profile_status", ["agentProfileId", "status"])
     .index("by_native_session", ["workstationId", "runtime", "nativeSessionId"]),
 
   runEvents: defineTable({

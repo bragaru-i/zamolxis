@@ -54,6 +54,45 @@ export function removeWorktree(repositoryPath: string, path: string): void {
   git(repositoryPath, ["worktree", "remove", "--", path]);
 }
 
+/**
+ * Drops registrations of worktrees whose directory no longer exists. Git itself does this
+ * during `gc`; it never removes a directory or a branch.
+ */
+export function pruneWorktrees(repositoryPath: string): void {
+  git(repositoryPath, ["worktree", "prune"]);
+}
+
+/**
+ * Deletes a Zamolxis-managed branch (`zam/...`) only if it still points at exactly
+ * `expectedSha` and no worktree has it checked out. Returns whether it was deleted.
+ * User branches and published `zamolxis/*` branches are never candidates.
+ */
+export function deleteManagedBranch(
+  repositoryPath: string,
+  branch: string,
+  expectedSha: string,
+): boolean {
+  if (!branch.startsWith("zam/") || !/^[a-f0-9]{40,64}$/.test(expectedSha))
+    throw new Error("BRANCH_NOT_MANAGED");
+  git(repositoryPath, ["check-ref-format", "--branch", branch]);
+  const ref = `refs/heads/${branch}`;
+  let tip: string;
+  try {
+    tip = git(repositoryPath, ["rev-parse", "--verify", "--quiet", "--end-of-options", ref]);
+  } catch {
+    return false;
+  }
+  if (tip !== expectedSha) return false;
+  if (listWorktrees(repositoryPath).some((entry) => entry.branch === branch)) return false;
+  // Compare-and-delete: a branch moved since the check is left alone.
+  try {
+    git(repositoryPath, ["update-ref", "-d", ref, expectedSha]);
+  } catch {
+    return false;
+  }
+  return true;
+}
+
 export function workspaceChanges(
   path: string,
   baseSha: string,
