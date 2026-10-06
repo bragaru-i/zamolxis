@@ -14,8 +14,15 @@ import {
 import { homedir, hostname } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkbox, confirm, input, select } from "@inquirer/prompts";
+import { checkbox, confirm, input, password, select } from "@inquirer/prompts";
 import { inspectRepository, remoteIdentity } from "@zamolxis/git";
+import {
+  type GitHubAccess,
+  type GitHubClient,
+  KeychainRepositoryTokenStore,
+  type RepositoryTokenStore,
+  RestGitHubClient,
+} from "@zamolxis/node-core";
 import { ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
 import QRCode from "qrcode";
@@ -27,6 +34,7 @@ import {
   loadDeviceCredential,
   pairingAccount,
 } from "./credential-store";
+import { type GitHubTokenEnvironment, manageGitHubTokens, openInBrowser } from "./github-token";
 export interface NodeConfig {
   version: 1;
   appUrl: string;
@@ -361,6 +369,12 @@ export interface ControlPlane {
   removeOwnLocation(workstationId: string, repositoryId: string): Promise<"removed" | "absent">;
   /** Called with the previous entry's token: revokes it in favour of `replacementId`. */
   retireReplaced(workstationId: string, replacementId: string): Promise<void>;
+  /** Reports a repository's GitHub publishing access on this Mac (never the token). */
+  reportGithubAccess?(
+    workstationId: string,
+    repositoryId: string,
+    access: GitHubAccess,
+  ): Promise<void>;
 }
 export interface NodeHealth {
   online: boolean;
@@ -414,6 +428,13 @@ export function convexControlPlane(convexUrl: string): ControlPlane {
         replacementId,
       });
     },
+    reportGithubAccess: async (workstationId, repositoryId, access) => {
+      await client.mutation(makeFunctionReference<"mutation">("node:reportGithubAccess"), {
+        workstationId,
+        repositoryId,
+        access,
+      });
+    },
   };
 }
 export interface Choice<T extends string> {
@@ -436,6 +457,8 @@ export interface SetupIo {
     options?: { default?: string; validate?: (value: string) => true | string },
   ): Promise<string>;
   confirm(message: string, defaultValue: boolean): Promise<boolean>;
+  /** Reads a secret without echoing it; absent where nothing secret can be asked. */
+  password?(message: string): Promise<string>;
 }
 export const terminalIo: SetupIo = {
   log: (message) => console.log(message),
@@ -450,6 +473,8 @@ export const terminalIo: SetupIo = {
     }),
   input: (message, options) => input({ message, ...options }),
   confirm: (message, defaultValue) => confirm({ message, default: defaultValue }),
+  // No mask: nothing is echoed while the token is pasted.
+  password: (message) => password({ message }),
 };
 export interface SetupEnvironment {
   io: SetupIo;
@@ -464,6 +489,13 @@ export interface SetupEnvironment {
   githubAccounts(host: string): string[];
   verifyGithubAccount(host: string, login: string, owner: string, repo: string): boolean;
   secret(): string;
+  /** Per-repository GitHub publishing tokens; absent where setup must not touch them. */
+  github?: GitHubSetup;
+}
+export interface GitHubSetup {
+  tokens: RepositoryTokenStore;
+  client: Pick<GitHubClient, "checkAccess">;
+  openUrl(url: string): void;
 }
 interface GhAuthStatus {
   hosts?: Record<string, Array<{ login?: string; state?: string }>>;
@@ -552,6 +584,11 @@ export function defaultEnvironment(): SetupEnvironment {
     githubAccounts: authenticatedGithubAccounts,
     verifyGithubAccount,
     secret: () => randomBytes(32).toString("hex"),
+    github: {
+      tokens: new KeychainRepositoryTokenStore(),
+      client: new RestGitHubClient(),
+      openUrl: openInBrowser,
+    },
   };
 }
 
@@ -1049,6 +1086,7 @@ export async function checkAndRepair(
       io.log(
         `✓ Node online${restarted ? " (heartbeat from the restarted service)" : ""}; Codex available; 3 builders + 1 verifier\nOpen ${config.appUrl} on iPhone`,
       );
+      await githubStep(config, env, options.interactive, client, workstationId);
       return;
     }
     await env.pause(1500);
@@ -1059,11 +1097,101 @@ export async function checkAndRepair(
     );
   throw new Error("Heartbeat/runtime check failed; inspect node-error.log and rerun setup");
 }
-export type MenuAction = "repair" | "repositories" | "rename" | "pair" | "exit";
+/** The environment for managing GitHub tokens, or undefined where setup has none. */
+export function githubTokenEnvironment(
+  env: SetupEnvironment,
+  interactive: boolean,
+  report?: { client: ControlPlane; workstationId: string },
+): GitHubTokenEnvironment | undefined {
+  const github = env.github;
+  const ask = env.io.password?.bind(env.io);
+  if (!github) return undefined;
+  return {
+    io: {
+      log: (message) => env.io.log(message),
+      confirm: (message, value) => env.io.confirm(message, value),
+      select: (message, choices, value) => env.io.select(message, choices, value),
+      password: async (message) => {
+        if (!ask) throw new Error("SECRET_INPUT_UNAVAILABLE");
+        return ask(message);
+      },
+    },
+    tokens: github.tokens,
+    github: github.client,
+    openUrl: github.openUrl,
+    interactive: interactive && !!ask,
+    ...(report?.client.reportGithubAccess
+      ? {
+          report: async (entry, access) => {
+            if (entry.repositoryId)
+              await report.client.reportGithubAccess?.(
+                report.workstationId,
+                entry.repositoryId,
+                access,
+              );
+          },
+        }
+      : {}),
+  };
+}
+/** Last setup step: GitHub publishing access per repository. Never fails setup. */
+async function githubStep(
+  config: NodeConfig,
+  env: SetupEnvironment,
+  interactive: boolean,
+  client: ControlPlane,
+  workstationId: string,
+) {
+  const tokens = githubTokenEnvironment(env, interactive, { client, workstationId });
+  if (!tokens) return;
+  try {
+    await manageGitHubTokens(config.repositories, tokens, { offer: "when-needed" });
+  } catch (error) {
+    if (error instanceof Error && error.name === "ExitPromptError") throw error;
+    env.io.log(
+      `GitHub access could not be checked; run ${"pnpm zamolxis github-token"} later to connect publishing.`,
+    );
+  }
+}
+/**
+ * `pnpm zamolxis github-token [repository] [--remove]`: shows and manages this Mac's
+ * per-repository GitHub tokens. Reports the new status to Zamolxis when the Mac is paired.
+ */
+export async function githubToken(
+  options: { repository?: string; remove?: boolean; interactive: boolean },
+  env: SetupEnvironment,
+) {
+  if (!existsSync(env.configPath))
+    throw new Error("This Mac is not set up yet; run pnpm zamolxis setup first");
+  const config = readConfig(env.configPath);
+  let report: { client: ControlPlane; workstationId: string } | undefined;
+  if (config.workstationId)
+    try {
+      const client = env.connect(config.convexUrl);
+      if (!(await authenticate(config, env, client)))
+        report = { client, workstationId: config.workstationId };
+    } catch {
+      /* Not reachable: the Node reports the change itself within a minute or so. */
+    }
+  const tokens = githubTokenEnvironment(env, options.interactive, report);
+  if (!tokens) throw new Error("GitHub tokens are not available here");
+  try {
+    await manageGitHubTokens(config.repositories, tokens, {
+      ...(options.repository ? { repository: options.repository } : {}),
+      ...(options.remove ? { remove: true } : {}),
+      offer: "always",
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "ExitPromptError") throw new Error("Cancelled");
+    throw error;
+  }
+}
+export type MenuAction = "repair" | "repositories" | "github" | "rename" | "pair" | "exit";
 export function menuChoices(): Choice<MenuAction>[] {
   return [
     { name: "Check and repair", value: "repair" },
     { name: "Add or remove repositories", value: "repositories" },
+    { name: "GitHub access for publishing (tokens per repository)", value: "github" },
     { name: "Rename this Mac", value: "rename" },
     { name: "Pair again (new QR code, replaces the device credential)", value: "pair" },
     { name: "Exit", value: "exit" },
@@ -1155,6 +1283,7 @@ export async function runSetup(options: { repair?: boolean }, env: SetupEnvironm
     const action = await env.io.select("What do you want to do?", menuChoices(), "repair");
     if (action === "exit") return;
     if (action === "rename") return await renameMac(config, env);
+    if (action === "github") return await githubToken({ interactive: true }, env);
     if (action === "repositories") {
       const change = await editRepositories(config, env);
       if (!change) return;
@@ -1190,4 +1319,10 @@ export async function runSetup(options: { repair?: boolean }, env: SetupEnvironm
 export async function setup(options: { repair?: boolean } = {}) {
   prerequisites();
   await runSetup(options, defaultEnvironment());
+}
+export async function githubTokenCli(options: { repository?: string; remove?: boolean }) {
+  await githubToken(
+    { ...options, interactive: !!process.stdin.isTTY && !!process.stdout.isTTY },
+    defaultEnvironment(),
+  );
 }

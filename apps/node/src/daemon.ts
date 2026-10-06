@@ -6,10 +6,14 @@ import type { WorkstationId } from "@zamolxis/contracts";
 import { inspectRepository, remoteIdentity } from "@zamolxis/git";
 import {
   ControlPlaneDriver,
+  GitHubAccessMonitor,
+  githubRepositoryFromRemote,
+  KeychainRepositoryTokenStore,
   LocalStateStore,
   RepositoryDiscovery,
   RepositoryRegistry,
   RuntimeManager,
+  RestGitHubClient,
   RuntimeModelCatalog,
   WorkspaceManager,
 } from "@zamolxis/node-core";
@@ -113,6 +117,26 @@ try {
   const catalog = new RuntimeModelCatalog((id) =>
     runtimes.ids().includes(id) ? runtimes.get(id) : undefined,
   );
+  // Per-repository GitHub tokens (login Keychain): used only by this process, only to
+  // publish; agents never receive them. Their status (never the token) is reported at
+  // most every 30 minutes per repository and soon after a token is added or replaced.
+  const githubTokens = new KeychainRepositoryTokenStore();
+  const github = new RestGitHubClient();
+  const githubAccess = new GitHubAccessMonitor(
+    config.repositories.flatMap(({ repositoryId, remoteUrl }) => {
+      const repository = githubRepositoryFromRemote(remoteUrl);
+      return repository && repositoryId ? [{ repositoryId, github: repository }] : [];
+    }),
+    githubTokens,
+    github,
+    async (repositoryId, access) => {
+      await client.mutation(makeFunctionReference<"mutation">("node:reportGithubAccess"), {
+        workstationId: config.workstationId,
+        repositoryId,
+        access,
+      });
+    },
+  );
   let stopping = false;
   let heartbeatBusy = false;
   let heartbeats: ReturnType<typeof setInterval> | undefined;
@@ -149,6 +173,8 @@ try {
             : []),
         ]),
       });
+      // After the heartbeat, so the client is authenticated; never fails it.
+      void githubAccess.tick().catch(() => undefined);
     } finally {
       heartbeatBusy = false;
     }
@@ -209,42 +235,7 @@ try {
       manager,
       new ConvexControlPlaneTransport(client, config.workstationId, identity.instanceId),
       config.workstationId,
-      {
-        githubCredentials: {
-          get: async ({ repositoryId, host }) => {
-            const repository = config.repositories.find(
-              (candidate) => candidate.repositoryId === repositoryId,
-            );
-            const identity = repository?.publishingIdentity;
-            if (identity?.provider !== "github" || identity.host !== host) return undefined;
-            try {
-              const token = execFileSync(
-                "gh",
-                ["auth", "token", "--hostname", host, "--user", identity.login],
-                {
-                  encoding: "utf8",
-                  timeout: 10_000,
-                  stdio: ["ignore", "pipe", "pipe"],
-                },
-              ).trim();
-              const login = execFileSync(
-                "gh",
-                ["api", "--hostname", host, "user", "--jq", ".login"],
-                {
-                  encoding: "utf8",
-                  timeout: 15_000,
-                  env: { ...process.env, GH_TOKEN: token, GH_PROMPT_DISABLED: "1" },
-                  stdio: ["ignore", "pipe", "pipe"],
-                },
-              ).trim();
-              if (login !== identity.login) throw new Error("GITHUB_IDENTITY_MISMATCH");
-              return { login, token };
-            } catch {
-              throw new Error("PUBLISH_GITHUB_AUTH_REQUIRED");
-            }
-          },
-        },
-      },
+      { githubTokens, github },
     );
     // Discovery is performed before every assigned run by the driver. Its first tick
     // reattaches the runs a previous Node process left unfinished (resumed from the

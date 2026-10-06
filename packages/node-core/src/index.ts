@@ -20,3 +20,4 @@ export * from "./workspace/workspace-manager";
 export * from "./integration/publish";
 export * from "./github/github-api";
 export * from "./github/token-store";
+export * from "./github/access-monitor";

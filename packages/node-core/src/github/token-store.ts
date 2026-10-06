@@ -134,3 +134,13 @@ export const NO_REPOSITORY_TOKENS: RepositoryTokenStore = {
   },
   remove: () => undefined,
 };
+
+// The GitHub vocabulary the Node's setup needs, so apps depend on node-core alone.
+export {
+  type GitHubAccess,
+  type GitHubAccessStatus,
+  type GitHubRepository,
+  githubRepositoryFromRemote,
+  githubSlug,
+  githubTokenUrl,
+} from "@zamolxis/application";

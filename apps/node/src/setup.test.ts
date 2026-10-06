@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ConvexError } from "convex/values";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { type GitHubAccess, MemoryRepositoryTokenStore } from "@zamolxis/node-core";
 import { MemoryCredentialStore } from "./credential-store";
 import {
   type ControlPlane,
@@ -171,6 +172,7 @@ describe("credential helpers", () => {
     expect(choices.map(({ value }) => value)).toEqual([
       "repair",
       "repositories",
+      "github",
       "rename",
       "pair",
       "exit",
@@ -432,6 +434,62 @@ describe("rerunning setup", () => {
     expect(orphan.credential).toBeUndefined();
     expect(saved).toHaveLength(2);
     expect(migratePlaintextCredential(orphan, store, (c) => saved.push(c))).toBe(false);
+  });
+
+  describe("GitHub access for publishing", () => {
+    const TOKEN = `github_pat_${"H4rn3ssT0k".repeat(8)}`;
+    function withGitHub() {
+      const config = baseConfig(harness.root);
+      const [first] = config.repositories;
+      if (!first) throw new Error("no repository");
+      config.repositories = [{ ...first, remoteUrl: "https://github.com/bragaru-i/one.git" }];
+      saveConfig(config, harness.env.configPath);
+      harness.store.write("ws1", OLD_SECRET);
+      const tokens = new MemoryRepositoryTokenStore();
+      const reported: Array<[string, string, GitHubAccess["status"]]> = [];
+      const opened: string[] = [];
+      harness.env.github = {
+        tokens,
+        client: {
+          checkAccess: async () => ({ status: "ok", login: "bragaru-i", checkedAt: Date.now() }),
+        },
+        openUrl: (url) => opened.push(url),
+      };
+      const connect = harness.env.connect;
+      harness.env.connect = (url) => ({
+        ...connect(url),
+        reportGithubAccess: async (workstationId, repositoryId, access) => {
+          reported.push([workstationId, repositoryId, access.status]);
+        },
+      });
+      return { tokens, reported, opened };
+    }
+
+    it("reports each repository's GitHub access during --repair without asking anything", async () => {
+      const g = withGitHub();
+      harness.env.io.password = async () => {
+        throw new Error("unexpected password prompt");
+      };
+      await runSetup({ repair: true }, harness.env);
+      expect(harness.logs).toContain(
+        "GitHub bragaru-i/one: not connected: no token for this repository yet",
+      );
+      expect(harness.logs.at(-1)).toContain("pnpm zamolxis github-token");
+      expect(g.reported).toEqual([["ws1", "r-one", "missing"]]);
+      expect(g.opened).toEqual([]);
+    });
+
+    it("adds a token from the setup menu with hidden input", async () => {
+      const g = withGitHub();
+      harness.answers.select.push("github");
+      harness.answers.confirm.push(true);
+      harness.env.io.password = async () => TOKEN;
+      await runSetup({}, harness.env);
+      expect(g.tokens.read({ host: "github.com", owner: "bragaru-i", repo: "one" })).toBe(TOKEN);
+      expect(g.opened).toHaveLength(1);
+      expect(g.reported.at(-1)).toEqual(["ws1", "r-one", "ok"]);
+      expect(harness.logs.join("\n")).not.toContain(TOKEN);
+    });
   });
 
   it("repairs without changes when everything is healthy", async () => {
