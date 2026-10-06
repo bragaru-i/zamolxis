@@ -13,7 +13,15 @@ vi.mock("convex/react", () => ({
         : undefined,
 }));
 
-import { currentStep, type MapRun, stepAgent, WorkMap, workSteps } from "./work-map";
+import {
+  currentStep,
+  type MapRun,
+  stepAgent,
+  TaskProgress,
+  taskProcess,
+  WorkMap,
+  workSteps,
+} from "./work-map";
 
 const run = (role: string, status: string, extra: Partial<MapRun> = {}): MapRun => ({
   role,
@@ -128,4 +136,25 @@ it("renders every step with its agent and a summary of now", () => {
   expect(html).toContain("Builder");
   expect(html).toContain("Codex · gpt-5.1-codex");
   expect(html).toMatch(/<strong>Build<\/strong> · 1 agent writing code/);
+});
+
+it("colors tasks by process and renders their compact progress track", () => {
+  expect(taskProcess({ phase: "building", status: "running" })).toBe("build");
+  expect(taskProcess({ phase: "verifying", status: "running" })).toBe("check");
+  expect(taskProcess({ phase: "repairing", status: "running" })).toBe("fix");
+  expect(taskProcess({ phase: "completed", status: "completed" })).toBe("ready");
+  expect(taskProcess({ phase: "queued", status: "waiting" })).toBe("queued");
+
+  const html = renderToStaticMarkup(
+    createElement(TaskProgress, {
+      sessionStatus: "running",
+      task: { phase: "verifying", status: "running" },
+      runs: [run("builder", "completed"), run("verifier", "running")],
+    }),
+  );
+  expect(html).toContain('aria-label="Task progress"');
+  expect(html).toContain('aria-label="Build: Done"');
+  expect(html).toContain('aria-label="Check: Working"');
+  expect(html).toContain('aria-label="Fix: Skipped"');
+  expect(html).toContain('aria-label="Ready: Not yet"');
 });

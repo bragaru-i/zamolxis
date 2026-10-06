@@ -34,9 +34,10 @@ import { RunDetail } from "./run-detail";
 import { runtimeLabel } from "./run-detail-model";
 import { STEERABLE, SteerRun } from "./steer";
 import { SupervisorLog } from "./supervisor-log";
+import { relativeTime } from "./time";
 import { SessionUsage } from "./usage";
 import { useSearchParam } from "./use-location";
-import { WorkMap } from "./work-map";
+import { TaskProgress, taskProcess, WorkMap } from "./work-map";
 
 interface Session {
   _id: Id<"workSessions">;
@@ -48,6 +49,7 @@ interface Session {
 interface UserMessage extends ConversationMessage {
   _id: string;
   text: string;
+  createdAt: number;
   productId: Id<"products">;
   repositoryId: Id<"repositories">;
 }
@@ -250,27 +252,35 @@ export function SessionView({
           Loading session…
         </p>
       ) : (
-        <div className="z-stack" aria-live="polite">
+        <div className="z-chat-timeline" aria-live="polite">
           {messages.map((message) => (
-            <div className="z-stack" key={message._id}>
-              <Message author="user" label="You">
-                {message.text}
-              </Message>
-              <AssistantMessage
-                message={message}
-                onError={(text) => setNotice({ tone: "danger", text })}
-              />
+            <div className="z-chat-timeline__item" key={message._id}>
+              <span className="z-chat-timeline__marker" aria-hidden="true" />
+              <div className="z-chat-timeline__exchange">
+                <Message author="user" label="You" meta={relativeTime(message.createdAt, now)}>
+                  {message.text}
+                </Message>
+                <AssistantMessage
+                  message={message}
+                  onError={(text) => setNotice({ tone: "danger", text })}
+                />
+              </div>
             </div>
           ))}
           {sortedTasks.length > 0 && (
             <section className="z-stack" aria-label="Work">
               <h2 className="z-section-title">Work</h2>
               {sortedTasks.map((task) => (
-                <article className="z-work" key={task._id}>
+                <article className={`z-work z-work--${taskProcess(task)}`} key={task._id}>
                   <div className="z-work__head">
                     <h3 className="z-work__title">{task.title}</h3>
                     <StatusBadge status={task.phase ?? task.status} />
                   </div>
+                  <TaskProgress
+                    sessionStatus={session.status}
+                    task={task}
+                    runs={runsFor(task._id)}
+                  />
                   {(task.trustOutcome || (task.repairAttempts ?? 0) > 0) && (
                     <div className="z-row z-xsmall z-muted">
                       {task.trustOutcome && <StatusBadge status={task.trustOutcome} />}
