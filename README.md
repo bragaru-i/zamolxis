@@ -44,7 +44,8 @@ edits are captured as local candidate commits after terminal runtime success.
 A Builder saying “done” does not complete its Task or Session.
 
 Each candidate receives a separate Verifier Run and worktree at its exact SHA.
-Codex Verifiers use a read-only sandbox and receive acceptance criteria and
+Verifiers are read-only (Codex: read-only sandbox; Claude: read-only tools with
+every other permission denied) and receive acceptance criteria and
 repository context, without Builder private reasoning. The Node then executes
 repository-owned package scripts in the verification worktree. Evidence records
 contain the command outcome, modality, verifier identity and exact subject SHA.
@@ -112,10 +113,27 @@ retried after 6 h and 24 h, at most 3 attempts.
 ## Agent Profiles and runtimes
 
 Runtime is an execution environment; model is an inference choice. `runtime-core`
-provides start, resume, send, stop, inspect and subscribe. The native Codex adapter
-is implemented. Claude and Hermes have reserved packages/identities, not working
-native adapters; selecting an unavailable runtime fails or waits, without routing
-through another vendor.
+provides start, resume, send, stop, inspect and subscribe. Two native adapters are
+implemented: Codex (`packages/runtime-codex`, the Codex app-server) and Claude
+(`packages/runtime-claude`, labelled "Claude" in the web app). Hermes has a reserved
+identity only. Selecting a runtime the Mac does not advertise fails or waits, without
+routing through another vendor (a Supervisor/Orchestrator profile for a runtime the
+Node lacks falls back to Codex on that Node).
+
+The Claude adapter runs the installed, unmodified `claude` CLI (Claude Code) in
+`-p` stream-json mode, in the same managed worktrees as Codex; models run in
+Anthropic's cloud and usage is billed to the owner's own Claude subscription through
+the CLI's existing login. Zamolxis never reads, copies or forwards Claude credentials
+or tokens, does not use the Agent SDK, and removes `ANTHROPIC_API_KEY`,
+`ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_BASE_URL` from the CLI's environment. User and
+project settings files and MCP servers are not loaded. Builder/Repair runs accept edits
+inside the workspace and run shell commands in Claude Code's sandbox; anything else is
+a permission request held for the owner (never auto-approved, rejected on stop).
+Verifier, Supervisor and Orchestrator runs only get read/search tools and Claude
+Code's read-only shell commands. The Node registers Claude when `claude --version`
+runs and advertises it while `claude auth status` reports a Claude subscription login;
+models come from the CLI's own catalog. Pro/Max limits assume ordinary individual use,
+so heavy parallel or always-on use may hit plan limits.
 
 `agentProfiles.upsert/list` configure enabled profiles by owner, optional Product
 and role. Resolution is enabled Product profile -> enabled global profile ->
@@ -257,6 +275,8 @@ pnpm check
 ZAMOLXIS_CODEX_ACCEPTANCE=1 pnpm exec vitest run tests/control-plane-loop.test.ts -t 'runs text intent'
 # Exercise native failure, Repair and a second independent verification:
 ZAMOLXIS_CODEX_ACCEPTANCE=1 ZAMOLXIS_CODEX_REPAIR_ACCEPTANCE=1 pnpm exec vitest run tests/control-plane-loop.test.ts -t 'runs text intent'
+# Real Claude acceptance with the owner's signed-in `claude` CLI (Haiku, small prompts):
+ZAMOLXIS_CLAUDE_ACCEPTANCE=1 pnpm exec vitest run tests/control-plane-loop.test.ts -t 'Claude'
 ```
 
 `pnpm check` runs lint, package boundaries, workspace/Convex typechecks, unit and
@@ -321,7 +341,7 @@ available; `--help` lists them. The first web deploy needs `pnpm dlx vercel@62 l
 `apps/web` is Next.js/Convex React; `apps/node` is the Mac executable. Pure rules
 live in `packages/domain` and `packages/application`, DTOs in `packages/contracts`,
 Git/worktrees in `packages/git`, local state/execution in `packages/node-core`, and
-native transport in `packages/runtime-codex`. `convex` owns authenticated
+native transports in `packages/runtime-codex` and `packages/runtime-claude`. `convex` owns authenticated
 persistence and transactional authorization. Dependency direction points inward;
 domain/application do not import native processes or vendor adapters.
 

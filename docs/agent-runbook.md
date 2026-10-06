@@ -17,7 +17,8 @@ grant, open PRs, report CI and state the merge order.
    attribution. `apps/web/next-env.d.ts` is rewritten by every build — revert it,
    never commit it.
 2. `pnpm check` must pass. For changes to `packages/runtime-*`, `packages/node-core`
-   or `apps/node` also run the real-Codex acceptance (below). Parallel lanes that
+   or `apps/node` also run the real-Codex acceptance (below), and the real-Claude
+   acceptance for `packages/runtime-claude` or its Node wiring. Parallel lanes that
    touched the same files must be re-checked after rebasing onto each other.
 3. Push and open the PR as `bragaru-i` with the per-command token (AGENTS.md).
 4. Wait for CI to finish. Right after `gh pr create` the checks may not be
@@ -73,6 +74,25 @@ ZAMOLXIS_CODEX_ACCEPTANCE=1 pnpm exec vitest run tests/control-plane-loop.test.t
 ZAMOLXIS_AUTHENTICATED_ACCEPTANCE=1 pnpm exec vitest run tests/approvals-steering.test.ts -t "real Codex approval" # reject, approve
 ZAMOLXIS_CODEX_RESTART_ACCEPTANCE=1 pnpm exec vitest run tests/restart-recovery.test.ts -t "real Codex"          # resume after kill
 ```
+
+## Real-Claude acceptance (uses the owner's signed-in `claude` CLI, disposable repositories)
+
+Runs the installed `claude` with the owner's normal login and config (nothing is copied
+into a temporary profile; API key variables are stripped), on `claude-haiku-4-5` with
+minimal prompts. Keep usage modest: run it when `packages/runtime-claude` or its Node
+wiring changes, not in loops. Required before merging changes to
+`packages/runtime-claude`.
+
+```bash
+ZAMOLXIS_CLAUDE_ACCEPTANCE=1 pnpm exec vitest run tests/control-plane-loop.test.ts -t "Claude"                     # all seven below (~2 min)
+ZAMOLXIS_CLAUDE_ACCEPTANCE=1 pnpm exec vitest run tests/control-plane-loop.test.ts -t "runs text intent with real Claude"  # plan → build → verify → trust
+ZAMOLXIS_CLAUDE_ACCEPTANCE=1 pnpm exec vitest run tests/control-plane-loop.test.ts -t "real Claude Orchestrator"   # top-level reply, no repository
+ZAMOLXIS_CLAUDE_ACCEPTANCE=1 pnpm exec vitest run tests/control-plane-loop.test.ts -t "real Claude permission"     # held approval, restart resume, stop
+ZAMOLXIS_CLAUDE_ACCEPTANCE=1 pnpm exec vitest run tests/control-plane-loop.test.ts -t "real Claude Verifier"       # read-only even when told to write
+```
+
+The other Claude tests: Supervisor question (no runs), Builder edit with usage, model
+catalog. `claude auth status` shows whether the CLI is signed in (it prints no tokens).
 
 `--testTimeout 1500000` helps on slow runs. When one fails, log the real outcome
 (e.g. the Supervisor's decision and reply) before changing code — the parser's safe
