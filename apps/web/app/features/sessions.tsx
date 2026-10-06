@@ -4,6 +4,8 @@ import {
   AppShell,
   Button,
   Composer,
+  Markdown,
+  Message,
   Notice,
   ProductMark,
   StatusBadge,
@@ -61,11 +63,12 @@ export function SessionList({
           }
         />
       }
-      footer={<NewSession ready={ready} onCreated={onOpen} />}
+      footer={<OrchestratorComposer ready={ready} />}
     >
       {notices}
       <OnboardingChecklist ready={ready} />
       <ApprovalsInbox ready={ready} onOpen={onOpen} />
+      <OrchestratorConversation ready={ready} onOpen={onOpen} />
       <section className="z-stack" aria-label="Sessions">
         <h2 className="z-section-title">Sessions</h2>
         {status === "LoadingFirstPage" ? (
@@ -95,7 +98,9 @@ export function SessionList({
             ))}
           </div>
         ) : (
-          <p className="z-muted">No sessions yet. Describe what you want to build below.</p>
+          <p className="z-muted">
+            No work sessions yet. Ask Zamolxis a question, or explicitly tell it to start work.
+          </p>
         )}
         {status === "CanLoadMore" && (
           <Button variant="secondary" block onClick={() => loadMore(20)}>
@@ -116,13 +121,95 @@ interface Repository {
   name: string;
 }
 
-function NewSession({
+interface OrchestratorLink {
+  _id: Id<"orchestratorMessageLinks">;
+  targetType: string;
+  label: string;
+  status?: string;
+  workSessionId?: Id<"workSessions">;
+}
+
+interface OrchestratorMessage {
+  _id: Id<"orchestratorMessages">;
+  text: string;
+  reply: string;
+  route: "answer" | "create" | "continue";
+  links: OrchestratorLink[];
+}
+
+function OrchestratorConversation({
   ready,
-  onCreated,
+  onOpen,
 }: {
   ready: boolean;
-  onCreated: (id: Id<"workSessions">) => void;
+  onOpen: (id: Id<"workSessions">) => void;
 }) {
+  const messages = useQuery(api.orchestrator.messages, ready ? {} : "skip") as
+    | OrchestratorMessage[]
+    | undefined;
+  return (
+    <section className="z-stack" aria-label="Orchestrator conversation">
+      <div className="z-row z-row--between">
+        <h2 className="z-section-title">Orchestrator</h2>
+        <span className="z-xsmall z-muted">
+          Questions stay here · explicit work opens a session
+        </span>
+      </div>
+      {messages === undefined ? (
+        <p className="z-muted" role="status">
+          Loading conversation…
+        </p>
+      ) : messages.length ? (
+        <div className="z-stack" aria-live="polite">
+          {messages.map((message) => (
+            <div className="z-stack" key={message._id}>
+              <Message author="user" label="You">
+                {message.text}
+              </Message>
+              <Message
+                author="assistant"
+                label="Zamolxis"
+                meta={
+                  message.route === "answer"
+                    ? "Answered without opening work"
+                    : message.route === "continue"
+                      ? "Continued linked work"
+                      : "Opened linked work"
+                }
+              >
+                <Markdown>{message.reply}</Markdown>
+                {message.links.length > 0 && (
+                  <div className="z-row">
+                    {message.links.map((link) => {
+                      const sessionId = link.workSessionId;
+                      return link.targetType === "session" && sessionId ? (
+                        <Button
+                          key={link._id}
+                          variant="secondary"
+                          size="small"
+                          onClick={() => onOpen(sessionId)}
+                        >
+                          {link.label}
+                          {link.status ? ` · ${link.status}` : ""}
+                        </Button>
+                      ) : null;
+                    })}
+                  </div>
+                )}
+              </Message>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="z-muted">
+          Ask what is happening, how orchestration works, or tell Zamolxis explicitly to start work.
+        </p>
+      )}
+    </section>
+  );
+}
+
+function OrchestratorComposer({ ready }: { ready: boolean }) {
   const products = useQuery(api.supervisor.products, ready ? {} : "skip") as Product[] | undefined;
   const [productId, setProductId] = useState<Id<"products"> | "">("");
   const repositories = useQuery(
@@ -130,7 +217,7 @@ function NewSession({
     ready && productId ? { productId } : "skip",
   ) as Repository[] | undefined;
   const [repositoryId, setRepositoryId] = useState<Id<"repositories"> | "">("");
-  const submit = useMutation(api.supervisor.submit);
+  const submit = useMutation(api.orchestrator.submit);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -146,7 +233,10 @@ function NewSession({
         className="z-select"
         aria-label="Product"
         value={productId}
-        onChange={(event) => setProductId(event.target.value as Id<"products">)}
+        onChange={(event) => {
+          setProductId(event.target.value as Id<"products">);
+          setRepositoryId("");
+        }}
       >
         {products.map((product) => (
           <option key={product._id} value={product._id}>
@@ -179,9 +269,9 @@ function NewSession({
         setError("");
       }}
       busy={busy}
-      disabled={!ready || !repositoryId}
-      placeholder="What should we work on?"
-      submitLabel="Start"
+      disabled={!ready}
+      placeholder="Ask Zamolxis, or tell it to start work…"
+      submitLabel="Send"
       above={
         <>
           {error && <Notice tone="danger">{error}</Notice>}
@@ -195,25 +285,23 @@ function NewSession({
       }
       hint={
         products && !products.length
-          ? "Pair a Mac with a repository to start a session."
+          ? "Pair a Mac with a repository before delegating work. Questions still stay here."
           : repositoryName
-            ? `New session in ${repositoryName}`
+            ? `Context: ${repositoryName}`
             : undefined
       }
       onSubmit={async () => {
-        if (!productId || !repositoryId) return;
         setBusy(true);
         try {
-          const id = await submit({
-            productId,
-            repositoryId,
+          await submit({
+            ...(productId ? { productId } : {}),
+            ...(repositoryId ? { repositoryId } : {}),
             text,
             idempotencyKey: crypto.randomUUID(),
           });
           setText("");
-          onCreated(id);
         } catch (failure) {
-          setError(explainError(failure, "Could not start the session. Try again."));
+          setError(explainError(failure, "Could not send the message. Try again."));
         } finally {
           setBusy(false);
         }

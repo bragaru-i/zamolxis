@@ -48,7 +48,7 @@ it.each(["pending", "blocked"] as const)(
         ? "Contact an admin to restore access"
         : "Wait until an admin adds you to the system",
     );
-    expect(html).not.toContain("What should we work on?");
+    expect(html).not.toContain("Ask Zamolxis, or tell it to start work");
     expect(html).not.toContain("Approve this Mac");
     expect(state.queries).toEqual(["profiles:viewer"]);
   },
@@ -57,7 +57,7 @@ it("renders the sessions workspace only after a database grant", () => {
   state.accessStatus = "allowed";
   const html = renderToStaticMarkup(createElement(HomePage));
   expect(html).toContain("Sessions");
-  expect(html).toContain("What should we work on?");
+  expect(html).toContain("Ask Zamolxis, or tell it to start work");
   expect(html).not.toContain("Access pending");
 });
 it("offers Google sign-in to signed-out users", () => {
