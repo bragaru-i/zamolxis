@@ -17,6 +17,7 @@ import type * as onboarding from "../onboarding.js";
 import type * as supervisor from "../supervisor.js";
 import type * as approvals from "../approvals.js";
 import type * as events from "../events.js";
+import type * as integration from "../integration.js";
 import type * as lib_access from "../lib/access.js";
 import type * as lib_commands from "../lib/commands.js";
 import type * as lib_settlement from "../lib/settlement.js";
@@ -51,6 +52,7 @@ const fullApi: ApiFromModules<{
   supervisor: typeof supervisor;
   approvals: typeof approvals;
   events: typeof events;
+  integration: typeof integration;
   "lib/access": typeof lib_access;
   "lib/commands": typeof lib_commands;
   "lib/settlement": typeof lib_settlement;
