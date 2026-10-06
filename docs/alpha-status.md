@@ -98,16 +98,20 @@ planned capability as shipped.
    the same session. A reopened session is judged only by work planned since it
    reopened (`workSessions.reopenedAt`), so an earlier failed task no longer pulls it
    back to failed.
-4. **Profiles and usage (#48), mostly shipped.** Missing: editing profile name and
-   max concurrency in the UI, instruction/policy references on profiles, any cost data
-   source.
-5. **Identity (#47), mostly shipped.** Missing: device names for signed-in sessions
-   (Convex Auth stores no user agent), service worker, a live second-account test.
-6. **Onboarding (#45), mostly shipped.** Missing: web onboarding progress, workstation
-   rename and backend repository removal (no backend functions), automatic revoke of
-   the old Mac entry after pairing again, an exact heartbeat check (`node:health` is
-   only a boolean). Fixed after the first real run: repair could leave the service
-   unloaded when launchd was still unloading (wait and retry added).
+4. **Profiles and usage (#48), mostly shipped.** Profile name, max concurrency and
+   per-product overrides (create/remove) are editable in Settings → Agents. Missing:
+   instruction/policy references on profiles, any cost data source.
+5. **Identity (#47), mostly shipped.** Signed-in devices show a self-reported label
+   ("Safari on iPhone"); a minimal service worker makes the app installable with an
+   offline page (no caching of app data or API responses); a second-account isolation
+   test covers every user-facing query/mutation (convex-test identities). Missing:
+   validation with two real Google accounts on the deployed app and iPhone home-screen
+   / offline checks.
+6. **Onboarding (#45), mostly shipped.** Rename a Mac (Settings or setup), remove a
+   repository from a Mac (refused while busy; sticky across Node restarts; re-granted
+   from setup's repository list), "Pair again" revokes the previous entry when its
+   credential is still valid, and setup waits for a heartbeat from the new Node
+   instance. Missing: web onboarding progress.
 7. **Integration, shipped for single tasks.** On the owner's explicit "Open pull
    request", the Node pushes the trusted integration commit as
    `zamolxis/<task>-<sha7>` (no force, hooks respected, never the default branch) and
