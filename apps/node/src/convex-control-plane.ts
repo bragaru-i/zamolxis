@@ -151,6 +151,24 @@ export function parseExecutionCommand(value: unknown): ExecutionCommand {
       },
     };
   }
+  if (command.type === "integration.publish") {
+    const taskId = field(payload, "taskId");
+    if (command.targetType !== "task" || command.targetId !== taskId)
+      throw new Error("INVALID_COMMAND_TARGET");
+    return {
+      ...common,
+      type: "integration.publish",
+      payload: {
+        taskId,
+        workspaceId: field(payload, "workspaceId"),
+        branch: field(payload, "branch", 256),
+        ...(payload.base !== undefined ? { base: field(payload, "base", 256) } : {}),
+        subjectSha: field(payload, "subjectSha"),
+        title: field(payload, "title", 512),
+        body: field(payload, "body", 65536),
+      },
+    };
+  }
   if (command.type === "runtime.stop" || command.type === "runtime.send") {
     const runId = field(payload, "runId");
     if (command.targetType !== "run" || command.targetId !== runId)
@@ -286,6 +304,14 @@ export class ConvexControlPlaneTransport implements ControlPlaneTransport {
     } else if (delivery.kind === "integration.ready") {
       const { kind: _, ...args } = delivery;
       await this.mutation("completeIntegration", args);
+    } else if (delivery.kind === "integration.published") {
+      const { kind: _, ...args } = delivery;
+      await this.client.mutation(
+        makeFunctionReference<"mutation", Record<string, Value>, unknown>(
+          "integration:completePublish",
+        ),
+        { workstationId: this.workstationId, ...args },
+      );
     } else if (delivery.kind === "workspace.ready") {
       const { kind: _, ...args } = delivery;
       await this.mutation("markReady", args);
