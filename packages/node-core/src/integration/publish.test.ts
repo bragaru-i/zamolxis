@@ -173,7 +173,7 @@ describe("publishing a trusted integration branch", () => {
     // Bodies leave the Mac redacted.
     expect(f.opened[0]?.body).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz0123456789");
     // Retrying the same publication is safe: same commit, nothing forced, and the GitHub
-    // client is asked again (it returns the already open pull request).
+    // client is asked again so it can recover an existing open, closed or merged PR.
     const again = await publishIntegration(
       f.workspaces.inspect("integration"),
       f.request,
