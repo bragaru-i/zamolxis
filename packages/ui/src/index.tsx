@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { compactPath, crownPath, facePath } from "./product-mark";
 
 export { AgentRow, compactCount, costLabel, elapsed } from "./agent";
 export { KeyValueList, SegmentedControl, Stat, StatGrid, TextInput } from "./data";
@@ -21,7 +22,16 @@ export type Tone = "success" | "warning" | "danger" | "info" | "neutral";
 export function ProductMark({ size = "md" }: { size?: "md" | "lg" }) {
   return (
     <span className={size === "lg" ? "z-mark z-mark--lg" : "z-mark"} title="Zamolxis">
-      Z
+      <svg viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+        {size === "lg" ? (
+          <>
+            <path d={crownPath} fill="currentColor" />
+            <path d={facePath} fill="currentColor" fillRule="evenodd" />
+          </>
+        ) : (
+          <path d={compactPath} fill="currentColor" fillRule="evenodd" />
+        )}
+      </svg>
     </span>
   );
 }
