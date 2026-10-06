@@ -1,15 +1,8 @@
 import type { PlannedTask } from "@zamolxis/application";
 import type { AgentRunId, NormalizedRunEventDto, WorkspaceId } from "@zamolxis/contracts";
 import { commitCandidate, mergeDependencies } from "@zamolxis/git";
-import type { AgentRuntime, RuntimeRegistry } from "@zamolxis/runtime-core";
+import type { AgentRuntime, InterruptedTurnPolicy, RuntimeRegistry } from "@zamolxis/runtime-core";
 import type { RepositoryDiscovery } from "../capabilities/repository-discovery";
-import {
-  ghPullRequestOpener,
-  type PublishRequest,
-  type PublishResult,
-  type PullRequestOpener,
-  publishIntegration,
-} from "../integration/publish";
 import {
   type ConversationMessage,
   explicitPlan,
@@ -20,13 +13,27 @@ import {
   type SupervisorDecisionKind,
   supervisorInstruction,
 } from "../capabilities/supervisor";
-import type { LocalStateStore, OutboxEvent, StoredCommand } from "../persistence/local-state";
+import {
+  ghPullRequestOpener,
+  type PublishRequest,
+  type PublishResult,
+  type PullRequestOpener,
+  publishIntegration,
+} from "../integration/publish";
+import type {
+  LocalStateStore,
+  OutboxEvent,
+  RecordedRunEvent,
+  StoredCommand,
+  StoredRuntimeSession,
+} from "../persistence/local-state";
 import type { RuntimeManager } from "../runtime/runtime-manager";
 import { type TraceBatch, TraceRecorder } from "../trace/recorder";
 import {
   candidateStep,
   checkStep,
   discoveryStep,
+  recoveryStep,
   runtimeStep,
   workspaceStep,
 } from "../trace/steps";
@@ -281,12 +288,82 @@ export type Delivery =
   | TraceBatch
   | { readonly kind: "command.failed"; readonly commandId: string; readonly code: string }
   | { readonly kind: "command.complete"; readonly commandId: string };
+/** The control plane's view of a run, returned by reconcile when it is known. */
+export interface RunReconciliation {
+  readonly status?: string;
+}
+// An interrupted turn is continued at most this many times per run; then it fails.
+export const MAX_RESTART_CONTINUATIONS = 2;
+interface RunHistory {
+  readonly lastSequence: number;
+  readonly pendingApprovals: string[];
+  readonly usage: Partial<Record<(typeof USAGE_COUNTERS)[number], number>>;
+  readonly terminal?: { readonly state: "completed" | "failed" | "stopped"; summary?: string };
+}
+// What the control plane has seen of a run, from the events this Node recorded.
+function runHistory(events: readonly RecordedRunEvent[]): RunHistory {
+  let lastSequence = 0;
+  const approvals = new Set<string>();
+  const usage: RunHistory["usage"] = {};
+  let terminal: RunHistory["terminal"];
+  for (const event of events) {
+    lastSequence = Math.max(lastSequence, event.sequence);
+    const approvalId = event.payload.approvalId;
+    if (event.type === "approval.requested" && typeof approvalId === "string")
+      approvals.add(approvalId);
+    if (event.type === "approval.resolved" && typeof approvalId === "string")
+      approvals.delete(approvalId);
+    if (event.type === "run.usage")
+      for (const counter of USAGE_COUNTERS) {
+        const value = event.payload[counter];
+        if (typeof value === "number" && Number.isSafeInteger(value))
+          usage[counter] = Math.max(usage[counter] ?? 0, value);
+      }
+    if (
+      event.type === "run.completed" ||
+      event.type === "run.failed" ||
+      event.type === "run.stopped"
+    ) {
+      const summary =
+        event.type === "run.completed" ? boundedSummary(event.payload.summary) : undefined;
+      terminal = {
+        state:
+          event.type === "run.completed"
+            ? "completed"
+            : event.type === "run.failed"
+              ? "failed"
+              : "stopped",
+        ...(summary ? { summary } : {}),
+      };
+    }
+  }
+  return {
+    lastSequence,
+    pendingApprovals: [...approvals],
+    usage,
+    ...(terminal ? { terminal } : {}),
+  };
+}
+function errorCode(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  return /^[A-Z_]{1,64}$/.test(message) ? message : "LOCAL_OPERATION_FAILED";
+}
 export interface ControlPlaneTransport {
   listPending(): Promise<readonly ExecutionCommand[]>;
   claim(commandId: string): Promise<void>;
   acknowledge(commandId: string): Promise<void>;
   deliver(delivery: Delivery): Promise<void>;
-  reconcile(runId: string, observation?: "active" | "missing"): Promise<void>;
+  /**
+   * Reports what the Node observes about a run and returns the control plane's view of it.
+   * "missing": the native session cannot be recovered (the run becomes lost and keeps its
+   * capacity); "resuming": the Node is reattaching it (no change).
+   */
+  reconcile(
+    runId: string,
+    observation?: "active" | "missing" | "resuming",
+    reason?: string,
+    // biome-ignore lint/suspicious/noConfusingVoidType: transports may report nothing back.
+  ): Promise<RunReconciliation | undefined | void>;
   // Best effort and not persisted: progress is superseded by the plan outcome.
   reportProgress?(progress: SupervisorProgress): Promise<void>;
 }
@@ -303,6 +380,13 @@ export class ControlPlaneDriver {
   readonly #cursors = new Map<string, number>();
   // Text commands whose repository.plan executes in this process.
   readonly #planning = new Map<string, Planning>();
+  // Runs this driver started or tried to recover, so a run is recovered at most once per
+  // process; and runs being reattached, so their commands wait for the native session.
+  readonly #known = new Set<string>();
+  readonly #attaching = new Map<string, Promise<void>>();
+  // Runs followed by their recovery, and those a message or approval reached meanwhile.
+  readonly #recovering = new Set<string>();
+  readonly #nudged = new Set<string>();
   #flushing: Promise<void> | undefined;
   #discovery: RepositoryDiscovery | undefined;
   setRepositoryDiscovery(discovery: RepositoryDiscovery): void {
@@ -322,11 +406,12 @@ export class ControlPlaneDriver {
     this.#busy = true;
     try {
       await this.flush();
+      const listed = await this.transport.listPending();
+      // Runs a previous Node process left unfinished are reattached in the background.
+      await this.#recoverRuns(listed);
       for (const stored of this.store.listInterruptedCommands())
         if (!this.#executing.has(stored.commandId)) await this.reconcileInterrupted(stored);
-      const pending = (await this.transport.listPending()).filter(
-        (command) => !this.#executing.has(command.commandId),
-      );
+      const pending = listed.filter((command) => !this.#executing.has(command.commandId));
       for (const command of pending) if (!continuesRun(command)) await this.execute(command);
       const starts = pending.filter((command) => command.type === "runtime.start");
       let builders = 0;
@@ -394,6 +479,8 @@ export class ControlPlaneDriver {
     try {
       if (!continuesRun(command)) return await this.#execute(command, false);
       const { runId } = command.payload;
+      // Already followed (by its recovery after a restart): never started or owned twice.
+      if (command.type === "runtime.start" && this.#streaming.has(runId)) return;
       // Another command already streams this run: just deliver to the runtime.
       if (command.type !== "runtime.start" && this.#streaming.has(runId))
         return await this.#execute(command, false);
@@ -523,16 +610,27 @@ export class ControlPlaneDriver {
         });
       } else if (command.type === "runtime.stop") {
         const { runId } = command.payload;
+        // A run being reattached after a restart is stopped once its session is back.
+        await this.#attaching.get(runId);
         const session = this.store.getRuntimeSession(runId);
         if (!session?.nativeSessionId) throw new Error("RUN_NOT_ACTIVE");
         const runtime = this.runtimes.get(session.runtime);
         const before = await runtime.inspect(session.nativeSessionId);
+        // Already ended (for example settled by its recovery): wait until that outcome is
+        // recorded, so the stop is acknowledged after the run's completion.
+        if (TERMINAL.includes(before.state)) await this.#streaming.get(runId);
         if (!TERMINAL.includes(before.state)) {
           await runtime.stop({ nativeSessionId: session.nativeSessionId });
           // A streaming runtime.start reports the outcome; a waiting run has no owner.
           const owner = this.#streaming.get(runId);
-          if (owner) await owner;
-          else {
+          if (owner) {
+            // A recovery that already stopped following the run looks again.
+            if (this.#recovering.has(runId)) this.#nudged.add(runId);
+            await owner;
+          }
+          const recorded = this.store.getRuntimeSession(runId)?.status;
+          // Nobody reported the stopped run (no owner, or one that ended before the stop).
+          if (!owner || !recorded || !TERMINAL.includes(recorded)) {
             const events: NormalizedRunEventDto[] = [];
             const ends = TERMINAL.map((state) => `run.${state}`);
             for await (const event of this.#follow(
@@ -563,6 +661,7 @@ export class ControlPlaneDriver {
         }
       } else if (command.type === "runtime.send" || command.type === "runtime.approval") {
         const { runId } = command.payload;
+        await this.#attaching.get(runId);
         const session = this.store.getRuntimeSession(runId);
         if (!session?.nativeSessionId) throw new Error("RUN_NOT_ACTIVE");
         const runtime = this.runtimes.get(session.runtime);
@@ -585,6 +684,8 @@ export class ControlPlaneDriver {
             message: command.payload.message,
           });
         }
+        // Its recovery follows the run: make sure it looks again after this.
+        if (!context && this.#recovering.has(runId)) this.#nudged.add(runId);
         // A run streamed by another command reports through that command; otherwise this
         // command follows the run until it pauses again and completes it like a start.
         if (context) {
@@ -644,6 +745,8 @@ export class ControlPlaneDriver {
           }
           const startedAt = Date.now();
           let session: Awaited<ReturnType<RuntimeManager["start"]>>;
+          // Started by this process: never "recovered" while it pauses.
+          this.#known.add(input.runId);
           try {
             session = await this.manager.start(input);
           } catch (error) {
@@ -773,19 +876,32 @@ export class ControlPlaneDriver {
     }
     const session = await this.manager.observe(runId);
     if (!TERMINAL.includes(session.state)) return;
-    this.#contexts.delete(runId);
-    trace.record(
-      runtimeStep(
-        runId,
-        context.runtime,
-        Date.now(),
-        session.state as "completed" | "failed" | "stopped",
-      ),
+    await this.#settle(
+      commandId,
+      context,
+      session.state as "completed" | "failed" | "stopped",
+      summary,
+      deliveries,
+      trace,
     );
+  }
+  // Completes a terminal run: candidate commit (builder/repair), deterministic checks
+  // (verifier) and the final snapshot with the agent's last reply.
+  async #settle(
+    commandId: string,
+    context: RunContext,
+    state: "completed" | "failed" | "stopped",
+    summary: string | undefined,
+    deliveries: Delivery[],
+    trace: TraceRecorder,
+  ): Promise<void> {
+    const { runId, workspaceId } = context;
+    this.#contexts.delete(runId);
+    trace.record(runtimeStep(runId, context.runtime, Date.now(), state));
     let workspace = this.workspaces.inspect(workspaceId);
     let evidence: CheckEvidence[] | undefined;
     try {
-      if (context.role !== "verifier" && session.state === "completed") {
+      if (context.role !== "verifier" && state === "completed") {
         const at = Date.now();
         const before = workspace.headSha ?? workspace.baseSha;
         try {
@@ -954,15 +1070,208 @@ export class ControlPlaneDriver {
         this.workspaces.release(workspaceId, runId);
     }
   }
+  /**
+   * Finds runs a previous Node process left unfinished (a run it was following, paused or
+   * whose start command was interrupted) and reattaches each once, in the background. The
+   * run's commands (stop, message, approval) wait until its session is back.
+   */
+  async #recoverRuns(pending: readonly ExecutionCommand[]): Promise<void> {
+    const candidates = new Map<string, StoredRuntimeSession | undefined>();
+    for (const session of this.store.listUnfinishedRuntimeSessions())
+      candidates.set(session.runId, session);
+    for (const command of this.store.listInterruptedCommands()) {
+      const runId = (command.payload as { runId?: unknown } | undefined)?.runId;
+      if (command.type === "runtime.start" && typeof runId === "string" && !candidates.has(runId))
+        candidates.set(runId, this.store.getRuntimeSession(runId));
+    }
+    for (const [runId, session] of candidates) {
+      if (this.#known.has(runId) || this.#streaming.has(runId)) continue;
+      this.#known.add(runId);
+      if (session?.nativeSessionId) {
+        try {
+          // Attached in this process (another driver instance started it): not a restart.
+          await this.runtimes.get(session.runtime).inspect(session.nativeSessionId);
+          continue;
+        } catch {
+          /* Unknown to this process: recover it. */
+        }
+      }
+      const stop = this.store.findCommandByIdempotencyKey(`stop:${runId}`);
+      const stopRequested =
+        pending.some(
+          (command) => command.type === "runtime.stop" && command.payload.runId === runId,
+        ) ||
+        stop?.status === "received" ||
+        stop?.status === "running";
+      let attached: () => void = () => undefined;
+      this.#attaching.set(
+        runId,
+        new Promise<void>((resolve) => {
+          attached = resolve;
+        }),
+      );
+      // The interrupted start command (if any) belongs to the recovery from now on.
+      const start = this.store.findCommandByIdempotencyKey(`start:${runId}`);
+      const command =
+        start?.type === "runtime.start" && start.status === "running" ? start : undefined;
+      if (command) this.#executing.add(command.commandId);
+      this.#recovering.add(runId);
+      const owner = this.#recover(runId, session, command, stopRequested, () => attached())
+        .catch(() => undefined)
+        .finally(() => {
+          attached();
+          this.#attaching.delete(runId);
+          this.#recovering.delete(runId);
+          this.#nudged.delete(runId);
+          if (command) this.#executing.delete(command.commandId);
+        });
+      this.#streaming.set(runId, owner);
+      void owner.then(() => {
+        if (this.#streaming.get(runId) === owner) this.#streaming.delete(runId);
+      });
+    }
+  }
+  /**
+   * Reattaches one run after a restart. If the runtime already reported its outcome, the
+   * run is completed from what this Node recorded. Otherwise its native session is resumed
+   * after the recorded event cursor: approvals pending at the restart are rejected, an
+   * interrupted turn is continued (at most MAX_RESTART_CONTINUATIONS times), or failed or
+   * stopped, and the run is followed and completed like a start (summary, candidate commit,
+   * checks). A run that cannot be resumed is reported lost and keeps its workspace and
+   * capacity until reconciled; nothing is ever started again.
+   */
+  async #recover(
+    runId: string,
+    stored: StoredRuntimeSession | undefined,
+    command: StoredCommand | undefined,
+    stopRequested: boolean,
+    attached: () => void,
+  ): Promise<void> {
+    let status: string | undefined;
+    try {
+      status = (await this.transport.reconcile(runId, "resuming"))?.status;
+    } catch {
+      // The control plane is unreachable: try again on a later tick.
+      this.#known.delete(runId);
+      return;
+    }
+    const start = this.store.findCommandByIdempotencyKey(`start:${runId}`);
+    const deliveries: Delivery[] = [];
+    let trace: TraceRecorder | undefined;
+    let attempt = 0;
+    try {
+      if (!stored?.nativeSessionId) throw new Error("RUNTIME_SESSION_UNKNOWN");
+      const context = this.#context(runId);
+      const history = runHistory(this.store.listRecordedRunEvents(runId));
+      attempt = this.store.recordRecovery(runId);
+      trace = new TraceRecorder(this.store, runId, `recovery:${runId}:${attempt}`);
+      // Outbox identities of this recovery: the interrupted start command's when it exists.
+      const scope = command?.commandId ?? `recovery:${runId}:${attempt}`;
+      this.#cursors.set(runId, history.lastSequence);
+      if (history.terminal) {
+        // The outcome was recorded before the restart; only its completion was lost.
+        this.manager.settle(runId, history.terminal.state);
+        attached();
+        trace.record(recoveryStep(runId, attempt, Date.now(), { settled: history.terminal.state }));
+        await this.#settle(
+          scope,
+          context,
+          history.terminal.state,
+          history.terminal.summary,
+          deliveries,
+          trace,
+        );
+      } else {
+        if (status && TERMINAL.includes(status)) throw new Error("RUN_SETTLED_ELSEWHERE");
+        const payload = (start?.payload ?? {}) as Record<string, unknown>;
+        if (typeof payload.instruction !== "string") throw new Error("RECONCILIATION_REQUIRED");
+        const policy: InterruptedTurnPolicy =
+          stopRequested || status === "stopping"
+            ? "stop"
+            : attempt <= MAX_RESTART_CONTINUATIONS
+              ? "continue"
+              : "fail";
+        const snapshot = await this.manager.resume(runId, {
+          instruction: payload.instruction,
+          ...(context.role ? { role: context.role } : {}),
+          ...(typeof payload.model === "string" ? { model: payload.model } : {}),
+          ...(typeof payload.reasoningEffort === "string"
+            ? { reasoningEffort: payload.reasoningEffort }
+            : {}),
+          afterSequence: history.lastSequence,
+          // The control plane must see the run start (again) before anything else.
+          announce: history.lastSequence === 0 || status === "lost" || status === "starting",
+          pendingApprovalIds: history.pendingApprovals,
+          interrupted: policy,
+          usage: history.usage,
+        });
+        attached();
+        trace.record(recoveryStep(runId, attempt, Date.now(), { policy, state: snapshot.state }));
+        if (trace.persist()) await this.flush().catch(() => undefined);
+        const runtime = this.runtimes.get(stored.runtime);
+        await this.#stream(scope, context, runtime, stored.nativeSessionId, deliveries, trace);
+        // A message or approval delivered while this recovery followed the run may have
+        // continued it after the stream paused: keep following until nothing new arrived.
+        while (this.#nudged.delete(runId)) {
+          const state = this.store.getRuntimeSession(runId)?.status;
+          if (state === undefined || TERMINAL.includes(state)) break;
+          await this.#stream(scope, context, runtime, stored.nativeSessionId, deliveries, trace);
+        }
+      }
+      trace.persist();
+      if (command) {
+        deliveries.push({ kind: "command.complete", commandId: command.commandId });
+        this.store.completeCommandWithEvents(
+          command.commandId,
+          this.#outbox(`delivery:${command.commandId}`, deliveries),
+        );
+      } else for (const event of this.#outbox(scope, deliveries)) this.store.appendEvent(event);
+      await this.flush();
+    } catch (error) {
+      attached();
+      // Events observed before the failure are still reported, then the run is lost.
+      const observed = deliveries.filter((delivery) => delivery.kind === "run.events");
+      for (const event of this.#outbox(`recovery:${runId}:${attempt}:failed`, observed))
+        this.store.appendEvent(event);
+      trace?.record(recoveryStep(runId, attempt, Date.now(), { error }));
+      trace?.persist();
+      await this.flush().catch(() => undefined);
+      await this.transport.reconcile(runId, "missing", errorCode(error)).catch(() => undefined);
+    }
+  }
+  #outbox(scope: string, deliveries: readonly Delivery[]): OutboxEvent[] {
+    const now = Date.now();
+    return deliveries.map((payload, index) => ({
+      eventId: `${scope}:${String(index).padStart(3, "0")}`,
+      type: "control-plane.delivery",
+      payload,
+      createdAt: now,
+    }));
+  }
+  // Releases a run's workspace lease, also when a previous Node instance took it.
+  #releaseLease(workspaceId: string, runId: string): void {
+    const lease = this.store.getWorkspaceLease(workspaceId);
+    if (lease?.runId !== runId) return;
+    try {
+      this.workspaces.releaseStaleLease(workspaceId, (owner) => owner === runId);
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== "LEASE_NOT_RECONCILED") throw error;
+      this.workspaces.release(workspaceId, runId);
+    }
+  }
   private async reconcileInterrupted(command: StoredCommand): Promise<void> {
     if (command.type === "repository.plan" && command.status === "running") {
-      // An interrupted Supervisor only read the planning workspace: release it and
-      // fail the plan visibly instead of blocking the queue on reconciliation.
+      // An interrupted Supervisor only read the planning workspace: release it (the lease
+      // belongs to the previous Node instance after a restart) and fail the plan visibly
+      // so the owner can send the message again. Its thread is not resumed: a new plan
+      // must be bound to the repository context current when it is accepted.
       const payload = command.payload as Record<string, unknown>;
       if (typeof payload.textCommandId === "string" && typeof payload.workspaceId === "string") {
         const runId = supervisorRunId(payload.textCommandId);
-        if (this.store.getWorkspaceLease(payload.workspaceId)?.runId === runId)
-          this.workspaces.release(payload.workspaceId, runId);
+        this.#releaseLease(payload.workspaceId, runId);
+        const session = this.store.getRuntimeSession(runId);
+        if (session && !TERMINAL.includes(session.status))
+          this.store.upsertRuntimeSession({ ...session, status: "failed" });
       }
       this.store.completeCommandWithEvents(command.commandId, [
         {
@@ -1031,10 +1340,38 @@ export class ControlPlaneDriver {
       await this.flush();
       return;
     }
+    if (command.type === "runtime.stop" && command.status === "running") {
+      // The run's recovery settles it (stopping an interrupted turn); acknowledge the stop
+      // once that outcome is recorded, otherwise fail it visibly so it can be sent again.
+      const runId = (command.payload as { runId?: unknown }).runId;
+      if (typeof runId !== "string") throw new Error("INVALID_PERSISTED_COMMAND");
+      await this.#streaming.get(runId);
+      const status = this.store.getRuntimeSession(runId)?.status;
+      const settled = status !== undefined && TERMINAL.includes(status);
+      this.store.completeCommandWithEvents(command.commandId, [
+        {
+          eventId: `delivery:${command.commandId}:000`,
+          type: "control-plane.delivery",
+          payload: (settled
+            ? { kind: "command.complete", commandId: command.commandId }
+            : {
+                kind: "command.failed",
+                commandId: command.commandId,
+                code: "RUNTIME_COMMAND_INTERRUPTED",
+              }) satisfies Delivery,
+          createdAt: Date.now(),
+        },
+      ]);
+      await this.flush();
+      return;
+    }
     if (command.type === "runtime.start") {
       const payload = command.payload as Record<string, unknown>;
       if (typeof payload.runId !== "string" || typeof payload.runtime !== "string")
         throw new Error("INVALID_PERSISTED_COMMAND");
+      // Recovered after a restart, or reported lost by its recovery: the command completes
+      // with the run or waits for the next Node start; it never blocks the queue.
+      if (this.#known.has(payload.runId)) return;
       const session = this.store.getRuntimeSession(payload.runId);
       let observation: "active" | "missing" = "missing";
       if (session?.nativeSessionId) {

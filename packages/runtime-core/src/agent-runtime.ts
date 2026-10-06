@@ -24,9 +24,45 @@ export interface StartRunInput {
   readonly model?: string;
   readonly reasoningEffort?: string;
 }
+export const USAGE_COUNTERS = [
+  "inputTokens",
+  "cachedInputTokens",
+  "outputTokens",
+  "totalTokens",
+] as const;
+export type UsageCounter = (typeof USAGE_COUNTERS)[number];
+/**
+ * What a resumed session does with a turn the restart interrupted: start a new turn on the
+ * same native session that continues the original task, report it failed, or report it
+ * stopped (a stop was requested before the restart).
+ */
+export type InterruptedTurnPolicy = "continue" | "fail" | "stop";
+/**
+ * Reattaches a run to its native session in a new Node process (for example after a
+ * restart). The Node supplies what it durably recorded so the resumed event stream never
+ * duplicates or contradicts what the control plane has already seen.
+ */
 export interface ResumeRunInput extends StartRunInput {
   readonly nativeSessionId: string;
+  /** Last event sequence the Node recorded; resumed events continue after it. */
+  readonly afterSequence?: number;
+  /** Emit `run.started` first: the control plane never saw it or reported the run lost. */
+  readonly announce?: boolean;
+  /**
+   * Approvals requested before the restart and not settled. Their native requests died
+   * with the old process: each is reported `approval.resolved` rejected ("withdrawn")
+   * before anything else; the agent must ask again.
+   */
+  readonly pendingApprovalIds?: readonly string[];
+  /** Default "fail". */
+  readonly interrupted?: InterruptedTurnPolicy;
+  /** Usage already reported for the run, so resumed totals never go backwards. */
+  readonly usage?: Partial<Record<UsageCounter, number>>;
 }
+/** The message a continuation turn sends after a restart interrupted the previous turn. */
+export const RESTART_CONTINUATION =
+  "Zamolxis restarted while you were working, so your previous turn was interrupted: any command that was still running was stopped and any approval you were waiting for was rejected. Check the current state of the workspace, then continue and finish the original task. Ask again for any approval you still need.";
+export const RESTART_INTERRUPTED_CODE = "NODE_RESTART_INTERRUPTED";
 export type RuntimeState = "running" | "waiting" | "completed" | "failed" | "stopped";
 export interface RuntimeSessionSnapshot {
   readonly nativeSessionId: string;
@@ -40,6 +76,12 @@ export interface AgentRuntime {
   readonly id: string;
   capabilities(): RuntimeCapabilitiesDto;
   start(input: StartRunInput): Promise<RuntimeSessionSnapshot>;
+  /**
+   * Reattaches to a native session, in this process (a no-op returning its snapshot) or
+   * after the process that ran it ended. Adapters that cannot resume advertise
+   * `canResume: false` and throw. A session whose native state is uncertain (for example
+   * still running elsewhere) throws RECONCILIATION_REQUIRED; it is never started again.
+   */
   resume(input: ResumeRunInput): Promise<RuntimeSessionSnapshot>;
   send(input: { readonly nativeSessionId: string; readonly message: string }): Promise<void>;
   stop(input: { readonly nativeSessionId: string }): Promise<void>;

@@ -248,11 +248,10 @@ export const failCommand = mutation({
     const device = await requireNode(ctx, args.workstationId);
     if (device.nodeInstanceId !== args.instanceId) fail("FORBIDDEN");
     const command = await load(ctx, "commands", args.commandId);
-    if (
-      command.workstationId !== args.workstationId ||
-      command.claimNodeInstanceId !== args.instanceId
-    )
-      fail("FORBIDDEN");
+    // The current instance of this Node may fail a command an earlier instance claimed:
+    // after a restart it reports what was interrupted (for example SUPERVISOR_INTERRUPTED).
+    // Only the registered instance gets here (checked above), so a replaced one cannot.
+    if (command.workstationId !== args.workstationId) fail("FORBIDDEN");
     if (command.status === "failed") return null;
     if (!["claimed", "acknowledged"].includes(command.status)) fail("INVALID_STATE");
     await ctx.db.patch("commands", command._id, {
@@ -590,23 +589,38 @@ export const reconcile = mutation({
   args: {
     ...deviceArgs,
     runId: v.id("agentRuns"),
-    observation: v.union(v.literal("missing"), v.literal("active")),
+    // "resuming": the Node is reattaching the run after a restart and reads its status.
+    observation: v.union(v.literal("missing"), v.literal("active"), v.literal("resuming")),
+    // Why the native session could not be recovered (an error code).
+    reason: v.optional(v.string()),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
     const run = await nodeRun(ctx, args.workstationId, args.runId);
+    if (args.reason !== undefined && !/^[A-Z_]{1,64}$/.test(args.reason)) fail("INVALID_ARGUMENT");
+    let status: RunStatus = run.status;
     if (
       args.observation === "missing" &&
-      ["starting", "running", "waiting", "stopping"].includes(run.status)
+      ["starting", "running", "waiting", "needs_approval", "stopping"].includes(run.status)
     ) {
       assertRunTransition(run.status, "lost");
+      status = "lost";
       await ctx.db.patch("agentRuns", run._id, {
-        status: "lost",
-        exitReason: "Native session missing after reconnect",
+        status,
+        exitReason: args.reason
+          ? `Native session could not be recovered after a Node restart (${args.reason})`
+          : "Native session missing after reconnect",
       });
+      // Nothing the lost session asked for can be acted on; a resumed run asks again.
+      await expireRunApprovals(ctx, run);
     }
-    // This reports uncertainty; it never starts another runtime or removes workspaces/leases.
-    return { runId: run._id, reconciliationRequired: args.observation === "missing" };
+    // This reports uncertainty; it never starts another runtime or removes workspaces/leases:
+    // a lost run keeps its workspace and capacity until it is reconciled.
+    return {
+      runId: run._id,
+      status,
+      reconciliationRequired: args.observation === "missing",
+    };
   },
 });
 

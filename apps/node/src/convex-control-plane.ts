@@ -1,5 +1,6 @@
 import type {
   ControlPlaneTransport,
+  RunReconciliation,
   ConversationMessage,
   Delivery,
   ExecutionCommand,
@@ -275,8 +276,19 @@ export class ConvexControlPlaneTransport implements ControlPlaneTransport {
   async acknowledge(commandId: string): Promise<void> {
     await this.mutation("acknowledge", { commandId, instanceId: this.instanceId });
   }
-  async reconcile(runId: string, observation: "active" | "missing" = "missing"): Promise<void> {
-    await this.mutation("reconcile", { runId, observation });
+  async reconcile(
+    runId: string,
+    observation: "active" | "missing" | "resuming" = "missing",
+    reason?: string,
+  ): Promise<RunReconciliation> {
+    const result = await this.mutation("reconcile", {
+      runId,
+      observation,
+      ...(reason ? { reason } : {}),
+    });
+    const status =
+      result && typeof result === "object" ? (result as { status?: unknown }).status : undefined;
+    return typeof status === "string" ? { status } : {};
   }
   async reportProgress(progress: SupervisorProgress): Promise<void> {
     await this.client.mutation(

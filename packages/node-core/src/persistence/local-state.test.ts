@@ -129,3 +129,51 @@ it("rejects changed command content and rolls back completion if outbox persiste
   expect(store.listPendingEvents()).toEqual([]);
   store.close();
 });
+it("remembers unfinished runs, recovery attempts and recorded run events across restart", () => {
+  const path = databasePath();
+  const first = new LocalStateStore(path);
+  for (const [runId, status] of [
+    ["run-a", "running"],
+    ["run-b", "waiting"],
+    ["run-c", "completed"],
+    ["supervisor:text", "running"],
+  ] as const)
+    first.upsertRuntimeSession({ runId, runtime: "fake", workspaceId: "w", status });
+  const event = (sequence: number, type: string, payload: Record<string, unknown> = {}) => ({
+    eventId: `e${sequence}`,
+    sequence,
+    type,
+    payload,
+  });
+  const runEvents = (eventId: string, runId: string, events: unknown[], createdAt: number) =>
+    first.appendEvent({
+      eventId,
+      type: "control-plane.delivery",
+      payload: { kind: "run.events", runId, events },
+      createdAt,
+    });
+  runEvents("stream:1", "run-a", [event(1, "run.started"), event(2, "approval.requested")], 1);
+  first.acknowledgeEvent("stream:1");
+  // Overlapping batches are merged by sequence.
+  runEvents("delivery:1", "run-a", [event(2, "approval.requested"), event(3, "run.activity")], 2);
+  runEvents("delivery:2", "run-b", [event(1, "run.started")], 3);
+  expect(first.recordRecovery("run-a")).toBe(1);
+  first.close();
+
+  const second = new LocalStateStore(path);
+  expect(
+    second
+      .listUnfinishedRuntimeSessions()
+      .map((session) => session.runId)
+      .sort(),
+  ).toEqual(["run-a", "run-b"]);
+  expect(second.recordRecovery("run-a")).toBe(2);
+  expect(() => second.recordRecovery("unknown")).toThrow("RECONCILIATION_REQUIRED");
+  expect(second.listRecordedRunEvents("run-a")).toEqual([
+    { sequence: 1, type: "run.started", payload: {} },
+    { sequence: 2, type: "approval.requested", payload: {} },
+    { sequence: 3, type: "run.activity", payload: {} },
+  ]);
+  expect(second.listRecordedRunEvents("run-c")).toEqual([]);
+  second.close();
+});

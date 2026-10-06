@@ -5,11 +5,12 @@ import type {
   NormalizedRunEventDto,
   RuntimeCapabilitiesDto,
 } from "@zamolxis/contracts";
-import type {
-  AgentRuntime,
-  ResumeRunInput,
-  RuntimeSessionSnapshot,
-  StartRunInput,
+import {
+  type AgentRuntime,
+  RESTART_INTERRUPTED_CODE,
+  type ResumeRunInput,
+  type RuntimeSessionSnapshot,
+  type StartRunInput,
 } from "../agent-runtime";
 import { approvalIdFor, approvalSummary } from "../approvals";
 
@@ -34,6 +35,35 @@ interface FakeSession {
   events: NormalizedRunEventDto[];
   nextStep: number;
   pendingApproval?: string | undefined;
+  // Scenario step of the pending approval, so a resumed session can ask again.
+  pendingStep?: number | undefined;
+  // How many times the session was resumed in a new process (scopes approval ids).
+  generation: number;
+}
+/** What a native runtime keeps on disk for a session (a Codex rollout, for example). */
+export interface FakeNativeRecord {
+  readonly input: StartRunInput;
+  readonly steps: readonly FakeStep[];
+  readonly nextStep: number;
+  readonly state: RuntimeSessionSnapshot["state"];
+  // A held approval: the turn was in flight when the process ended.
+  readonly pendingStep?: number | undefined;
+  readonly generation: number;
+  readonly terminal?: { readonly type: string; readonly payload: Record<string, unknown> };
+}
+/**
+ * Durable native session state shared by FakeRuntime instances, so a test can end one
+ * "process" (drop its FakeRuntime) and resume its sessions in another.
+ */
+export class FakeNativeStore {
+  readonly #records = new Map<string, FakeNativeRecord>();
+  get(nativeSessionId: string): FakeNativeRecord | undefined {
+    const record = this.#records.get(nativeSessionId);
+    return record ? structuredClone(record) : undefined;
+  }
+  set(nativeSessionId: string, record: FakeNativeRecord): void {
+    this.#records.set(nativeSessionId, structuredClone(record));
+  }
 }
 const defaultScenario: readonly FakeStep[] = [
   { type: "activity", label: "Fake runtime executing" },
@@ -47,6 +77,8 @@ export class FakeRuntime implements AgentRuntime {
   constructor(
     private readonly scenario: FakeScenario = defaultScenario,
     private readonly now: () => number = () => 0,
+    // Without a shared store, sessions die with this instance (like an in-memory runtime).
+    private readonly native: FakeNativeStore = new FakeNativeStore(),
   ) {}
 
   capabilities(): RuntimeCapabilitiesDto {
@@ -85,18 +117,75 @@ export class FakeRuntime implements AgentRuntime {
       },
       events: [],
       nextStep: 0,
+      generation: 0,
       steps: typeof this.scenario === "function" ? this.scenario(copied) : this.scenario,
     };
     this.#sessions.set(nativeSessionId, session);
     this.#runs.set(input.runId, nativeSessionId);
     this.#emit(session, { type: "run.started", payload: { nativeSessionId } });
     this.#advance(session);
+    this.#persist(session);
     return this.#snapshot(session);
   }
+  /**
+   * In this process: reattaches without side effects. After the process ended: rebuilds
+   * the session from the native store, continuing event sequences after `afterSequence`.
+   * A held approval means the turn was in flight: it is withdrawn and, depending on
+   * `interrupted`, asked again ("continue"), failed or stopped. A waiting session stays
+   * waiting; a terminal one reports its outcome again.
+   */
   async resume(input: ResumeRunInput): Promise<RuntimeSessionSnapshot> {
-    const session = this.#get(input.nativeSessionId);
+    const live = this.#sessions.get(input.nativeSessionId);
+    if (live) {
+      this.#assertAssignment(live, input);
+      return this.#snapshot(live);
+    }
+    const record = this.native.get(input.nativeSessionId);
+    if (!record) throw new Error("RUNTIME_SESSION_NOT_FOUND");
+    const after = input.afterSequence ?? 0;
+    if (!Number.isSafeInteger(after) || after < 0) throw new Error("INVALID_EVENT_CURSOR");
+    const session: FakeSession = {
+      input: { ...record.input, workspace: { ...record.input.workspace } },
+      steps: record.steps,
+      snapshot: {
+        nativeSessionId: input.nativeSessionId,
+        runId: record.input.runId,
+        workspace: { ...record.input.workspace },
+        state: record.state,
+        lastSequence: after,
+      },
+      events: [],
+      nextStep: record.nextStep,
+      generation: record.generation + 1,
+    };
     this.#assertAssignment(session, input);
-    if (session.snapshot.state === "waiting") this.#advance(session);
+    this.#sessions.set(input.nativeSessionId, session);
+    this.#runs.set(record.input.runId, input.nativeSessionId);
+    if (input.announce)
+      this.#emit(session, {
+        type: "run.started",
+        payload: { nativeSessionId: input.nativeSessionId },
+      });
+    for (const approvalId of input.pendingApprovalIds ?? [])
+      this.#emit(session, {
+        type: "approval.resolved",
+        payload: { approvalId, decision: "rejected", reason: "withdrawn" },
+      });
+    if (record.terminal) {
+      this.#emit(session, record.terminal as never);
+    } else if (record.pendingStep !== undefined || record.state === "running") {
+      const policy = input.interrupted ?? "fail";
+      if (policy === "continue") {
+        this.#emit(session, {
+          type: "run.activity",
+          payload: { label: "Continuing after a restart" },
+        });
+        session.nextStep = record.pendingStep ?? record.nextStep;
+        this.#advance(session);
+      } else if (policy === "stop") this.#end(session, "stopped", "Stopped during a restart");
+      else this.#end(session, "failed", "Interrupted by a Node restart");
+    }
+    this.#persist(session);
     return this.#snapshot(session);
   }
   async send(input: { nativeSessionId: string; message: string }): Promise<void> {
@@ -106,6 +195,7 @@ export class FakeRuntime implements AgentRuntime {
     this.#emit(session, { type: "run.activity", payload: { label: "Message received" } });
     // A message never settles a pending approval.
     if (!session.pendingApproval) this.#advance(session);
+    this.#persist(session);
   }
   async resolveApproval(input: {
     nativeSessionId: string;
@@ -117,6 +207,7 @@ export class FakeRuntime implements AgentRuntime {
       throw new Error("APPROVAL_NOT_PENDING");
     this.#settleApproval(session, input.decision === "approve" ? "approved" : "rejected", "user");
     this.#advance(session);
+    this.#persist(session);
   }
   async stop(input: { nativeSessionId: string }): Promise<void> {
     const session = this.#get(input.nativeSessionId);
@@ -124,6 +215,7 @@ export class FakeRuntime implements AgentRuntime {
     this.#settleApproval(session, "rejected", "stopped");
     this.#emit(session, { type: "run.stopped", payload: { reason: "Stop requested" } });
     session.snapshot = { ...session.snapshot, state: "stopped" };
+    this.#persist(session);
   }
   async inspect(nativeSessionId: string): Promise<RuntimeSessionSnapshot> {
     return this.#snapshot(this.#get(nativeSessionId));
@@ -148,6 +240,7 @@ export class FakeRuntime implements AgentRuntime {
     const approvalId = session.pendingApproval;
     if (!approvalId) return;
     session.pendingApproval = undefined;
+    session.pendingStep = undefined;
     this.#emit(session, { type: "approval.resolved", payload: { approvalId, decision, reason } });
   }
   #advance(session: FakeSession): void {
@@ -157,8 +250,13 @@ export class FakeRuntime implements AgentRuntime {
       const step = session.steps[session.nextStep++];
       if (!step) break;
       if (step.type === "approval") {
-        const approvalId = approvalIdFor(session.input.runId, `fake-${index}`);
+        // A resumed session asks again under a new id: the old one was already reported.
+        const approvalId = approvalIdFor(
+          session.input.runId,
+          session.generation ? `fake-${index}-r${session.generation}` : `fake-${index}`,
+        );
         session.pendingApproval = approvalId;
+        session.pendingStep = index;
         this.#emit(session, {
           type: "approval.requested",
           payload: {
@@ -187,6 +285,37 @@ export class FakeRuntime implements AgentRuntime {
       }
     }
     session.snapshot = { ...session.snapshot, state: "waiting" };
+  }
+  #end(session: FakeSession, state: "failed" | "stopped", message: string): void {
+    if (state === "failed")
+      this.#emit(session, {
+        type: "run.failed",
+        payload: { code: RESTART_INTERRUPTED_CODE, message },
+      });
+    else this.#emit(session, { type: "run.stopped", payload: { reason: message } });
+    session.snapshot = { ...session.snapshot, state };
+  }
+  // Writes what a native runtime would keep on disk after every change.
+  #persist(session: FakeSession): void {
+    const terminal = ["completed", "failed", "stopped"].includes(session.snapshot.state)
+      ? [...session.events]
+          .reverse()
+          .find((event) => ["run.completed", "run.failed", "run.stopped"].includes(event.type))
+      : undefined;
+    const previous = this.native.get(session.snapshot.nativeSessionId)?.terminal;
+    this.native.set(session.snapshot.nativeSessionId, {
+      input: session.input,
+      steps: session.steps,
+      nextStep: session.nextStep,
+      state: session.snapshot.state,
+      pendingStep: session.pendingStep,
+      generation: session.generation,
+      ...(terminal
+        ? { terminal: { type: terminal.type, payload: { ...terminal.payload } } }
+        : previous
+          ? { terminal: previous }
+          : {}),
+    });
   }
   #emit(
     session: FakeSession,

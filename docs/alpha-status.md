@@ -95,9 +95,13 @@ planned capability as shipped.
    command approval being rejected (HEAD unchanged) and approved (the command runs and
    the agent reports its result). File-change approvals, MCP elicitations, live
    `turn/steer` and the 30-minute timeout are covered by controlled tests only. A completed Codex turn ends its run, so "send to a waiting run" only
-   applies to runtimes that pause. Native sessions live in Node memory: a Node
-   restart loses runs left waiting or in `needs_approval` (reconciled through their
-   start command). A follow-up message in the composer is a new Supervisor turn in
+   applies to runtimes that pause. **Restart recovery:** Codex runs resume after a Node
+   restart from the persistent `<managedRoot>/codex-home` (`thread/resume`); an
+   interrupted turn is continued (at most twice per run), approvals pending at the
+   restart are rejected and the agent asks again, an interrupted Supervisor plan fails
+   with `SUPERVISOR_INTERRUPTED` and must be resent, and runs that cannot be resumed
+   become lost with a reason (the owner can Dismiss them). Real-Codex restart
+   acceptance (2026-10-06): a builder killed mid-command resumed and completed. A follow-up message in the composer is a new Supervisor turn in
    the same session. A reopened session is judged only by work planned since it
    reopened (`workSessions.reopenedAt`), so an earlier failed task no longer pulls it
    back to failed.

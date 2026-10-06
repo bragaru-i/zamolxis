@@ -268,7 +268,7 @@ export function SessionView({
                               </span>
                             </button>
                             <span className="z-spacer" />
-                            {ACTIVE_RUN.includes(run.status) && (
+                            {(ACTIVE_RUN.includes(run.status) || run.status === "lost") && (
                               <Button
                                 variant="ghost"
                                 size="small"
@@ -283,7 +283,7 @@ export function SessionView({
                                   }
                                 }}
                               >
-                                Stop
+                                {run.status === "lost" ? "Dismiss" : "Stop"}
                               </Button>
                             )}
                           </div>

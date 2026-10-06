@@ -11,14 +11,18 @@ import {
   type AgentRuntime,
   approvalIdFor,
   approvalSummary,
+  boundText,
   classifyCommandRisk,
   insideWorkspace,
   maxRisk,
+  RESTART_CONTINUATION,
+  RESTART_INTERRUPTED_CODE,
   type ResumeRunInput,
   type RuntimeSessionSnapshot,
-  boundText,
   redactSecrets,
   type StartRunInput,
+  USAGE_COUNTERS,
+  type UsageCounter,
 } from "@zamolxis/runtime-core";
 import { describeItem, fitPayload, redactedText } from "./activity";
 import {
@@ -54,6 +58,12 @@ interface Session {
   id: string;
   turnId: string;
   state: RuntimeSessionSnapshot["state"];
+  // Sequence of the last event a previous process reported (0 for a new session).
+  base: number;
+  // Scopes approval ids of a resumed session: a new app-server reuses request ids.
+  approvalScope: string;
+  // Usage already reported for the run; resumed totals never go below it.
+  usageFloor: Partial<Record<UsageCounter, number>>;
   events: NormalizedRunEventDto[];
   seen: Set<string>;
   uncertain: boolean;
@@ -95,6 +105,26 @@ function text(value: unknown): string {
 function readOnly(input: StartRunInput): boolean {
   return input.role === "verifier" || input.role === "supervisor";
 }
+function sameAssignment(a: StartRunInput, b: StartRunInput): boolean {
+  return (
+    a.runId === b.runId &&
+    a.workstationId === b.workstationId &&
+    a.workspace.workspaceId === b.workspace.workspaceId &&
+    a.workspace.cwd === b.workspace.cwd &&
+    a.workspace.branch === b.workspace.branch
+  );
+}
+// The text of the last agent message among a turn's items: the agent's final reply.
+function finalReply(items: unknown): string | undefined {
+  if (!Array.isArray(items)) return undefined;
+  for (let index = items.length - 1; index >= 0; index--) {
+    const item: unknown = items[index];
+    if (!item || typeof item !== "object") continue;
+    const { type, text: value } = item as Record<string, unknown>;
+    if (type === "agentMessage" && typeof value === "string" && value.trim()) return value;
+  }
+  return undefined;
+}
 function terminal(session: Session): boolean {
   return ["completed", "failed", "stopped"].includes(session.state);
 }
@@ -106,12 +136,17 @@ export class CodexRuntime implements AgentRuntime {
     string,
     { input: StartRunInput; result: Promise<RuntimeSessionSnapshot> }
   >();
+  // In-flight reattachments by native session, so a retried resume shares one.
+  readonly #resumes = new Map<
+    string,
+    { input: ResumeRunInput; result: Promise<RuntimeSessionSnapshot> }
+  >();
   constructor(private readonly options: CodexRuntimeOptions = {}) {}
   capabilities(): RuntimeCapabilitiesDto {
     return {
       runtime: this.id,
       canStart: true,
-      canResume: false,
+      canResume: true,
       canMessage: true,
       canStop: true,
       canDiscoverSessions: false,
@@ -134,19 +169,24 @@ export class CodexRuntime implements AgentRuntime {
     this.#starts.set(input.runId, { input: copied, result });
     return result;
   }
-  async #start(input: StartRunInput): Promise<RuntimeSessionSnapshot> {
+  // A native connection and an empty session bound to it.
+  #open(input: StartRunInput, resumed?: ResumeRunInput): Session {
     const client =
       this.options.connect?.(input.workspace.cwd) ??
       new AppServerClient({
         cwd: input.workspace.cwd,
         ...(this.options.executable ? { executable: this.options.executable } : {}),
       });
+    const base = resumed?.afterSequence ?? 0;
     const session: Session = {
       input,
       client,
       id: "",
       turnId: "",
       state: "running",
+      base,
+      approvalScope: resumed ? `r${base}.` : "",
+      usageFloor: { ...(resumed?.usage ?? {}) },
       events: [],
       seen: new Set(),
       uncertain: false,
@@ -159,6 +199,37 @@ export class CodexRuntime implements AgentRuntime {
     client.onClose(() => {
       if (session.id && !terminal(session)) this.#abort(session);
     });
+    return session;
+  }
+  // Every turn of a run uses the assigned cwd and the role's sandbox.
+  async #startTurn(session: Session, instruction: string): Promise<void> {
+    const input = session.input;
+    const result = record(
+      await session.client.request("turn/start", {
+        threadId: session.id,
+        ...(input.reasoningEffort ? { effort: input.reasoningEffort } : {}),
+        cwd: input.workspace.cwd,
+        input: [{ type: "text", text: instruction }],
+        approvalPolicy: "on-request",
+        sandboxPolicy: {
+          type: readOnly(input) ? "readOnly" : "workspaceWrite",
+          ...(readOnly(input) ? {} : { writableRoots: [input.workspace.cwd] }),
+          networkAccess: false,
+          excludeTmpdirEnvVar: true,
+          excludeSlashTmp: true,
+        },
+      }),
+    );
+    const turn = record(result.turn);
+    const id = text(turn.id);
+    if (session.turnId && session.turnId !== id) throw new Error("CODEX_TURN_MISMATCH");
+    session.turnId = id;
+    if (!terminal(session) && turn.status !== "inProgress")
+      this.#turnFinished(session, turn.status);
+  }
+  async #start(input: StartRunInput): Promise<RuntimeSessionSnapshot> {
+    const session = this.#open(input);
+    const client = session.client;
     try {
       await client.initialize();
       const response = record(
@@ -179,28 +250,7 @@ export class CodexRuntime implements AgentRuntime {
       this.#emit(session, "run.started", { nativeSessionId: session.id });
       if (typeof response.model === "string")
         this.#emit(session, "run.usage", { modelActual: response.model });
-      const result = record(
-        await client.request("turn/start", {
-          threadId: session.id,
-          ...(input.reasoningEffort ? { effort: input.reasoningEffort } : {}),
-          cwd: input.workspace.cwd,
-          input: [{ type: "text", text: input.instruction }],
-          approvalPolicy: "on-request",
-          sandboxPolicy: {
-            type: readOnly(input) ? "readOnly" : "workspaceWrite",
-            ...(readOnly(input) ? {} : { writableRoots: [input.workspace.cwd] }),
-            networkAccess: false,
-            excludeTmpdirEnvVar: true,
-            excludeSlashTmp: true,
-          },
-        }),
-      );
-      const turn = record(result.turn);
-      const id = text(turn.id);
-      if (session.turnId && session.turnId !== id) throw new Error("CODEX_TURN_MISMATCH");
-      session.turnId = id;
-      if (!terminal(session) && turn.status !== "inProgress")
-        this.#turnFinished(session, turn.status);
+      await this.#startTurn(session, input.instruction);
       return this.#snapshot(session);
     } catch (error) {
       if (session.id && !terminal(session)) this.#abort(session);
@@ -209,8 +259,144 @@ export class CodexRuntime implements AgentRuntime {
       throw error;
     }
   }
-  async resume(_input: ResumeRunInput): Promise<RuntimeSessionSnapshot> {
-    throw new Error("CODEX_RESUME_REQUIRES_DURABLE_BINDING");
+  /**
+   * Reattaches a run to its persisted Codex thread in a new app-server process
+   * (`thread/resume`, then the last turn from `thread/turns/list`). The app-server exits
+   * with the Node, so a turn in flight at the restart is reported `interrupted`: it is
+   * continued with a new turn on the same thread, failed or stopped according to
+   * `interrupted`. A completed or failed last turn reports its outcome (with the final
+   * reply). A thread that is still active or a turn still in progress is uncertain and
+   * requires reconciliation; nothing is ever started from scratch.
+   */
+  resume(input: ResumeRunInput): Promise<RuntimeSessionSnapshot> {
+    if (!isAbsolute(input.workspace.cwd) || !input.workspace.branch || !input.workspace.headSha)
+      return Promise.reject(new Error("WORKSPACE_ASSIGNMENT_REQUIRED"));
+    const after = input.afterSequence ?? 0;
+    if (!Number.isSafeInteger(after) || after < 0)
+      return Promise.reject(new Error("INVALID_EVENT_CURSOR"));
+    const live = this.#sessions.get(input.nativeSessionId);
+    // Attached in this process: nothing to do. An uncertain session's connection is
+    // closed (nothing runs on it), so it may be replaced by a fresh reattachment.
+    if (live && !live.uncertain) {
+      if (!sameAssignment(live.input, input))
+        return Promise.reject(new Error("RUNTIME_WORKSPACE_MISMATCH"));
+      return this.inspect(input.nativeSessionId);
+    }
+    const existing = this.#resumes.get(input.nativeSessionId);
+    if (existing) {
+      if (JSON.stringify(existing.input) !== JSON.stringify(input))
+        return Promise.reject(new Error("RUNTIME_REQUEST_CONFLICT"));
+      return existing.result.then((snapshot) => this.inspect(snapshot.nativeSessionId));
+    }
+    const copied = structuredClone(input);
+    const result = Promise.resolve().then(() => this.#resume(copied));
+    const entry = { input: copied, result };
+    this.#resumes.set(input.nativeSessionId, entry);
+    // Settled either way: a later resume (for example after another restart) starts over.
+    const forget = () => {
+      if (this.#resumes.get(input.nativeSessionId) === entry)
+        this.#resumes.delete(input.nativeSessionId);
+    };
+    result.then(forget, forget);
+    return result;
+  }
+  async #resume(input: ResumeRunInput): Promise<RuntimeSessionSnapshot> {
+    const session = this.#open(
+      {
+        runId: input.runId,
+        workstationId: input.workstationId,
+        workspace: input.workspace,
+        instruction: input.instruction,
+        ...(input.role ? { role: input.role } : {}),
+        ...(input.model ? { model: input.model } : {}),
+        ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
+      },
+      input,
+    );
+    const client = session.client;
+    try {
+      await client.initialize();
+      const response = record(
+        await client.request("thread/resume", {
+          threadId: input.nativeSessionId,
+          cwd: input.workspace.cwd,
+          approvalPolicy: "on-request",
+          sandbox: readOnly(input) ? "read-only" : "workspace-write",
+          ...((input.model ?? this.options.model)
+            ? { model: input.model ?? this.options.model }
+            : {}),
+          // Turns are paged below: a long run's full history could exceed a frame.
+          excludeTurns: true,
+        }),
+      );
+      const thread = record(response.thread);
+      if (text(thread.id) !== input.nativeSessionId || thread.cwd !== input.workspace.cwd)
+        throw new Error("RUNTIME_WORKSPACE_MISMATCH");
+      // A fresh app-server reports an active thread only if something else still runs it.
+      const status =
+        thread.status && typeof thread.status === "object" ? record(thread.status).type : undefined;
+      if (status === "active" || status === "systemError")
+        throw new Error("RECONCILIATION_REQUIRED");
+      const page = record(
+        await client.request("thread/turns/list", {
+          threadId: input.nativeSessionId,
+          limit: 1,
+          sortDirection: "desc",
+          itemsView: "summary",
+        }),
+      );
+      const last: unknown = Array.isArray(page.data) ? page.data[0] : undefined;
+      if (!last) throw new Error("CODEX_RESUME_NO_TURN");
+      const turn = record(last);
+      const turnId = text(turn.id);
+      if (turn.status === "inProgress") throw new Error("RECONCILIATION_REQUIRED");
+      if (!["completed", "failed", "interrupted"].includes(String(turn.status)))
+        throw new Error("CODEX_INVALID_TURN_STATUS");
+      const previous = this.#sessions.get(input.nativeSessionId);
+      if (previous && !previous.uncertain) throw new Error("RUNTIME_REQUEST_CONFLICT");
+      session.id = input.nativeSessionId;
+      this.#sessions.set(session.id, session);
+      if (input.announce) this.#emit(session, "run.started", { nativeSessionId: session.id });
+      // Their native requests died with the old app-server: nothing was approved.
+      for (const approvalId of input.pendingApprovalIds ?? [])
+        this.#emit(session, "approval.resolved", {
+          approvalId,
+          decision: "rejected",
+          reason: "withdrawn",
+        });
+      if (input.announce && typeof response.model === "string")
+        this.#emit(session, "run.usage", { modelActual: response.model });
+      if (turn.status === "interrupted") {
+        const policy = input.interrupted ?? "fail";
+        if (policy === "continue") {
+          this.#emit(session, "run.activity", { label: "Continuing after a restart" });
+          await this.#startTurn(session, RESTART_CONTINUATION);
+        } else if (policy === "stop")
+          this.#finish(session, "stopped", "Stopped: the Node restarted before the turn ended");
+        else
+          this.#finish(
+            session,
+            "failed",
+            "Interrupted by a Node restart",
+            RESTART_INTERRUPTED_CODE,
+          );
+      } else {
+        session.turnId = turnId;
+        const reply = finalReply(turn.items);
+        if (reply)
+          session.reply =
+            session.input.role === "supervisor"
+              ? boundText(reply, REPLY_LIMIT)
+              : redactedText(reply, REPLY_LIMIT);
+        this.#turnFinished(session, turn.status);
+      }
+      return this.#snapshot(session);
+    } catch (error) {
+      if (session.id && !terminal(session)) this.#abort(session);
+      client.close();
+      if (session.id && terminal(session)) return this.#snapshot(session);
+      throw error;
+    }
   }
   async inspect(nativeSessionId: string): Promise<RuntimeSessionSnapshot> {
     return this.#snapshot(this.#get(nativeSessionId));
@@ -324,10 +510,11 @@ export class CodexRuntime implements AgentRuntime {
       if (event.method === "thread/tokenUsage/updated") {
         const usage = record(record(params.tokenUsage).total);
         const payload: Record<string, number> = {};
-        for (const field of ["inputTokens", "cachedInputTokens", "outputTokens", "totalTokens"]) {
+        for (const field of USAGE_COUNTERS) {
           const value = usage[field];
           if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) return;
-          payload[field] = value;
+          // A resumed thread's totals never go below what was already reported.
+          payload[field] = Math.max(value, session.usageFloor[field] ?? 0);
         }
         this.#emit(session, "run.usage", payload);
         return;
@@ -401,14 +588,19 @@ export class CodexRuntime implements AgentRuntime {
     else if (status === "failed") this.#finish(session, "failed", "Codex turn failed");
     else throw new Error("CODEX_INVALID_TURN_STATUS");
   }
-  #finish(session: Session, state: "completed" | "failed" | "stopped", message: string): void {
+  #finish(
+    session: Session,
+    state: "completed" | "failed" | "stopped",
+    message: string,
+    code?: string,
+  ): void {
     if (terminal(session)) return;
     // Pending approvals settle (rejected) before the terminal event.
     this.#rejectPending(session, "stopped");
     session.state = state;
     if (state === "completed") this.#emit(session, "run.completed", { summary: message });
     else if (state === "stopped") this.#emit(session, "run.stopped", { reason: message });
-    else this.#emit(session, "run.failed", { message });
+    else this.#emit(session, "run.failed", { ...(code ? { code } : {}), message });
     session.client.close();
   }
   #emit(
@@ -421,7 +613,7 @@ export class CodexRuntime implements AgentRuntime {
       session.client.close();
       return;
     }
-    const sequence = session.events.length + 1;
+    const sequence = session.base + session.events.length + 1;
     session.events.push({
       type,
       // Every payload stays under the backend event limit.
@@ -450,7 +642,7 @@ export class CodexRuntime implements AgentRuntime {
       return false;
     const held = this.#describe(session, request);
     if (!held) return false;
-    const approvalId = approvalIdFor(session.input.runId, request.id);
+    const approvalId = approvalIdFor(session.input.runId, `${session.approvalScope}${request.id}`);
     if (session.approvals.has(approvalId)) return false;
     session.approvals.set(approvalId, {
       requestId: request.id,
@@ -636,7 +828,7 @@ export class CodexRuntime implements AgentRuntime {
       runId: session.input.runId,
       workspace: { ...session.input.workspace },
       state: session.state,
-      lastSequence: session.events.length,
+      lastSequence: session.base + session.events.length,
     };
   }
 }
