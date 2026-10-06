@@ -1,9 +1,18 @@
-import { readFile, readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { readdir, readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 
 const rules = {
-  "packages/domain/src": [/from [\"']convex(?:\/|[\"'])/, /from [\"']next(?:\/|[\"'])/, /from [\"']node:child_process[\"']/, /from [\"']@zamolxis\/runtime-/],
-  "packages/application/src": [/from [\"']next(?:\/|[\"'])/, /from [\"']node:child_process[\"']/, /from [\"']@zamolxis\/runtime-(?:codex|claude|hermes)/],
+  "packages/domain/src": [
+    /from ["']convex(?:\/|["'])/,
+    /from ["']next(?:\/|["'])/,
+    /from ["']node:child_process["']/,
+    /from ["']@zamolxis\/runtime-/,
+  ],
+  "packages/application/src": [
+    /from ["']next(?:\/|["'])/,
+    /from ["']node:child_process["']/,
+    /from ["']@zamolxis\/runtime-(?:codex|claude|hermes)/,
+  ],
 };
 
 async function walk(dir) {
@@ -29,5 +38,30 @@ for (const [dir, patterns] of Object.entries(rules)) {
     }
   }
 }
+// Convex bundles these entry points for its own runtime, which has no Node built-ins
+// (node:fs, node:child_process…): nothing they reach may import one. Node-only helpers get
+// their own export path instead (e.g. @zamolxis/runtime-core/known-commits).
+const convexEntries = ["packages/runtime-core/src/index.ts", "packages/contracts/src/index.ts"];
+const seen = new Set();
+async function reach(file) {
+  if (seen.has(file)) return;
+  seen.add(file);
+  let source;
+  try {
+    source = await readFile(file, "utf8");
+  } catch {
+    return;
+  }
+  if (/from ["']node:/.test(source)) {
+    console.error(`Convex-bundled module imports a Node built-in: ${file}`);
+    failed = true;
+  }
+  for (const [, path] of source.matchAll(/(?:from|import)\s*["'](\.\.?\/[^"']+)["']/g)) {
+    const base = join(dirname(file), path.replace(/\.js$/, ""));
+    for (const candidate of [`${base}.ts`, `${base}.tsx`, join(base, "index.ts")])
+      await reach(candidate);
+  }
+}
+for (const entry of convexEntries) await reach(entry);
 if (failed) process.exit(1);
 console.log("Architecture boundaries OK");

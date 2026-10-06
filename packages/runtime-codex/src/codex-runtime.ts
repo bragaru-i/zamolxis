@@ -17,7 +17,6 @@ import {
   boundText,
   classifyCommandRisk,
   insideWorkspace,
-  knownCommit,
   maxRisk,
   RESTART_CONTINUATION,
   RESTART_INTERRUPTED_CODE,
@@ -30,6 +29,7 @@ import {
   USAGE_COUNTERS,
   type UsageCounter,
 } from "@zamolxis/runtime-core";
+import { knownCommit } from "@zamolxis/runtime-core/known-commits";
 import { agentNote, describeItem, fitPayload, readPaths, redactedText } from "./activity";
 import {
   AppServerClient,
