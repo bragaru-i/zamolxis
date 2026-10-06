@@ -71,8 +71,15 @@ planned capability as shipped.
   and selected Product/repository in a separate sheet; only **Open Work Session and start
   planning** creates work, idempotently. Role runtimes, models, effort and instructions remain
   selectable in Settings → Agents.
-- **Owner-friendly UI:** choices use a styled bottom-sheet `Picker` instead of native selects
-  (iOS); an idle Session reads **Idle** (not a yellow "Waiting") and has **Close session**
+- **Agents at a glance:** Home shows **Working now**: every Builder, Verifier, Repair run and
+  in-flight Supervisor turn across Sessions (`runs.listActive`), each with runtime, model, current
+  activity, elapsed time, tokens so far and cost when a provider reported one; tapping opens the
+  Session or Run detail, Stop stops a run. Session task cards use the same agent rows. Cost is
+  still never reported by Codex or Claude (see Usage).
+- **Owner-friendly UI:** choices use a styled `Picker` (a popover list on wide screens, a bottom
+  drawer on phones) and dialogs are centered on wide screens and drawers with a grab handle on
+  phones; message link chips wrap, so a long Session title can no longer widen the page on iOS
+  (fixed 2026-10-06); an idle Session reads **Idle** (not a yellow "Waiting") and has **Close session**
   (`sessions.close`: only when nothing runs; unfinished Tasks are cancelled; a follow-up reopens
   it); statuses, link labels, the deterministic summary and failure messages use plain language;
   Orchestrator and Supervisor prompts ask for non-technical replies and forbid claiming to
@@ -116,6 +123,14 @@ planned capability as shipped.
 - **Setup repair (#69):** rerunning setup offers Check and repair, repositories,
   pairing again; `--repair` is non-interactive; the device credential lives in the
   login Keychain (migrated on the owner's Mac on 2026-10-06).
+
+## Preview harness
+
+`ZAMOLXIS_PREVIEW=1 pnpm --filter @zamolxis/web dev` runs the real web app against in-memory
+fixtures (`apps/web/preview/`, scenarios `owner`, `empty`, `attention`, `busy` via `?scenario=`)
+with no sign-in or deployment, so UI changes can be checked in a browser or driven by Playwright
+on phone and laptop viewports before shipping (see `docs/agent-runbook.md`). It is dev-only: the
+module aliases exist only when the variable is set.
 
 ## Gaps blocking Alpha
 
