@@ -33,8 +33,9 @@ export interface ClaudeCliProcessOptions extends ClaudeLaunch {
 }
 
 // The owner's Claude subscription login is used, never an API key: these variables would
-// make the CLI bill an API account (or a gateway) instead, so they never reach the child.
-const STRIPPED_ENV = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"] as const;
+// make the CLI bill an API account instead, so they never reach the child. A base URL is
+// dropped too, so the owner's login is never sent to a gateway or proxy.
+const STRIPPED_ENV = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"] as const;
 /** The child environment: the Node's own, without API credentials. */
 export function claudeEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const copy = { ...env };

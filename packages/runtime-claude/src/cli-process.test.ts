@@ -32,7 +32,13 @@ function launch(options: { maxFrameBytes?: number } = {}) {
 describe("claudeEnv", () => {
   it("removes API credentials so the CLI uses the owner's Claude login", () => {
     expect(
-      claudeEnv({ PATH: "/bin", ANTHROPIC_API_KEY: "sk-x", ANTHROPIC_AUTH_TOKEN: "t", HOME: "/h" }),
+      claudeEnv({
+        PATH: "/bin",
+        ANTHROPIC_API_KEY: "sk-x",
+        ANTHROPIC_AUTH_TOKEN: "t",
+        ANTHROPIC_BASE_URL: "https://gateway.example",
+        HOME: "/h",
+      }),
     ).toEqual({ PATH: "/bin", HOME: "/h" });
   });
 });

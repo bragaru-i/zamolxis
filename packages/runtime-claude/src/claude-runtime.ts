@@ -1,3 +1,19 @@
+// Compliance (Anthropic terms, code.claude.com/docs/en/legal-and-compliance). These rules
+// override convenience; keep them when changing this package:
+// - Only the unmodified, installed `claude` CLI runs, with the owner's own Claude Code
+//   login and default config location (HOME / ~/.claude). Billing is the owner's own Claude
+//   subscription. No Agent SDK (it requires API-key auth) and no other Anthropic package.
+// - Credentials and session/OAuth tokens are never read, copied, parsed, stored, logged or
+//   forwarded (no ~/.claude/.credentials*, Keychain, CLAUDE_CODE_OAUTH_TOKEN, setup-token);
+//   tests never copy a login into a temporary config dir. Resume only checks that a
+//   session's transcript file exists; it never reads transcript contents.
+// - ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN (and ANTHROPIC_BASE_URL) are removed from the
+//   child environment (`claudeEnv` in cli-process.ts); no base URL or proxy is set; the CLI
+//   never runs with --dangerously-skip-permissions, bypassPermissions or --bare.
+// - User/project settings files and MCP servers are not loaded (--setting-sources "",
+//   --strict-mcp-config): they are not execution grants. The login itself is unaffected.
+// - Pro/Max plan limits assume ordinary individual use; heavy parallel or always-on use
+//   can hit them.
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
