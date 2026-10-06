@@ -1,6 +1,6 @@
+import { authTables } from "@convex-dev/auth/server";
 import { describe, expect, it } from "vitest";
 import schema from "./schema";
-import { authTables } from "@convex-dev/auth/server";
 
 describe("control-plane schema acceptance", () => {
   it("keeps filesystem locations separate from logical repositories and runs", () => {

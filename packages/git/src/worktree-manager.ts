@@ -144,3 +144,11 @@ export function commitCandidate(path: string): string {
   }
   return inspectRepository(path).headSha;
 }
+
+/** Files added or modified between two commits, relative to the repository root. */
+export function addedOrModifiedFiles(path: string, from: string, to: string): string[] {
+  if (from === to) return [];
+  return git(path, ["diff", "--name-only", "-z", "--no-renames", "--diff-filter=AM", from, to])
+    .split("\0")
+    .filter(Boolean);
+}

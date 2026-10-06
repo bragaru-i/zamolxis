@@ -543,6 +543,38 @@ function build(name: string) {
     ],
   };
 
+  // Proof images: an image the Builder's change added (a logo) and two screenshots it saved.
+  const svg = (body: string) =>
+    `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">${body}</svg>`)}`;
+  const proofImages: Row[] = [
+    {
+      _id: "a1",
+      runId: "r1",
+      name: "apps/web/app/icon.svg",
+      source: "changed",
+      url: svg(
+        '<rect width="120" height="120" rx="26" fill="#173a66"/><path d="M30 44l15 12 15-22 15 22 15-12-6 34H36z" fill="#e7b74a"/><text x="60" y="100" text-anchor="middle" font-family="sans-serif" font-size="22" font-weight="700" fill="#fff">Z</text>',
+      ),
+    },
+    {
+      _id: "a2",
+      runId: "r1",
+      name: "home-light.png",
+      source: "proof",
+      url: svg(
+        '<rect width="120" height="120" fill="#f3f5f9"/><rect x="10" y="12" width="100" height="14" rx="4" fill="#173a66"/><rect x="10" y="34" width="70" height="8" rx="3" fill="#c9d3e0"/><rect x="10" y="48" width="90" height="40" rx="6" fill="#fff" stroke="#c9d3e0"/>',
+      ),
+    },
+    {
+      _id: "a3",
+      runId: "r1",
+      name: "home-dark.png",
+      source: "proof",
+      url: svg(
+        '<rect width="120" height="120" fill="#111a26"/><rect x="10" y="12" width="100" height="14" rx="4" fill="#e7b74a"/><rect x="10" y="34" width="70" height="8" rx="3" fill="#2c3a4d"/><rect x="10" y="48" width="90" height="40" rx="6" fill="#1b2635" stroke="#2c3a4d"/>',
+      ),
+    },
+  ];
   const link = (row: Row): Row => ({ _id: `l${Math.random().toString(36).slice(2, 8)}`, ...row });
   // Chats on Home, newest activity first. Messages name their chat.
   const conversations: Row[] = empty
@@ -936,6 +968,8 @@ function build(name: string) {
           return sessions.find((row) => row._id === args.workSessionId) ?? null;
         case "supervisor:messages":
           return messages[args.workSessionId as string] ?? [];
+        case "proof:listForSession":
+          return args.workSessionId === "s1" ? proofImages : [];
         case "tasks:listBySession":
           return tasks[args.workSessionId as string] ?? [];
         case "runs:listBySession":

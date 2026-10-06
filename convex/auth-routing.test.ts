@@ -2,6 +2,7 @@ import { convexTest } from "convex-test";
 import { afterEach, expect, it, vi } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
+
 const modules = {
   "./_generated/server.ts": () => import("./_generated/server"),
   "./auth.ts": () => import("./auth"),
