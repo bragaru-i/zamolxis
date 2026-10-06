@@ -47,10 +47,21 @@ export function readOnlyRole(role: AgentRole | undefined): boolean {
   return role === "verifier" || role === "supervisor";
 }
 
-/** Tools a read-only run may use: reading files and Claude Code's read-only shell commands. */
-export const READ_ONLY_TOOLS = ["Read", "Bash"] as const;
+/**
+ * Tools a read-only run may use: reading and searching files, and the shell commands
+ * Claude Code itself classifies as read-only (anything else is denied by `dontAsk`).
+ */
+export const READ_ONLY_TOOLS = ["Read", "Glob", "Grep", "Bash"] as const;
 /** Tools a Builder or Repair run may use. No web, MCP, sub-agent, scheduling or skill tools. */
-export const WRITE_TOOLS = ["Bash", "Read", "Edit", "Write", "NotebookEdit"] as const;
+export const WRITE_TOOLS = [
+  "Bash",
+  "Read",
+  "Glob",
+  "Grep",
+  "Edit",
+  "Write",
+  "NotebookEdit",
+] as const;
 /**
  * Builder/Repair settings: commands run in Claude Code's OS sandbox (writes confined to the
  * workspace, network asks) without a prompt each; anything that leaves it (network, writes

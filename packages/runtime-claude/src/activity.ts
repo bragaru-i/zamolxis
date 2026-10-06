@@ -59,6 +59,16 @@ export function describeTool(
   }
   if (FILE_TOOLS.has(name) && path)
     return { tool: name, summary: safeSummary(`${name} ${shown(path, cwd).path}`, SUBJECT_LIMIT) };
+  // Searches show their pattern only; matches are tool output and never copied.
+  const pattern = str(input.pattern);
+  if ((name === "Grep" || name === "Glob") && pattern)
+    return {
+      tool: name,
+      summary: safeSummary(
+        `${name === "Grep" ? "Search" : "Find files"} ${pattern}`,
+        SUBJECT_LIMIT,
+      ),
+    };
   return {
     tool: safeSummary(name, 64) || "tool",
     summary: safeSummary(name, SUBJECT_LIMIT) || "Tool",

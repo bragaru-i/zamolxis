@@ -271,7 +271,7 @@ describe("ClaudeRuntime launch", () => {
     );
     expect(args[args.indexOf("--permission-prompt-tool") + 1]).toBe("stdio");
     expect(args[args.indexOf("--permission-mode") + 1]).toBe("acceptEdits");
-    expect(args[args.indexOf("--tools") + 1]).toBe("Bash,Read,Edit,Write,NotebookEdit");
+    expect(args[args.indexOf("--tools") + 1]).toBe("Bash,Read,Glob,Grep,Edit,Write,NotebookEdit");
     expect(JSON.parse(String(args[args.indexOf("--settings") + 1]))).toEqual({
       sandbox: { enabled: true, autoAllowBashIfSandboxed: true },
     });
@@ -297,7 +297,7 @@ describe("ClaudeRuntime launch", () => {
       const started = await runtime.start(input({ role }));
       const args = current().launch.args;
       expect(args[args.indexOf("--permission-mode") + 1]).toBe("dontAsk");
-      expect(args[args.indexOf("--tools") + 1]).toBe("Read,Bash");
+      expect(args[args.indexOf("--tools") + 1]).toBe("Read,Glob,Grep,Bash");
       expect(args).not.toContain("--settings");
       expect(args.includes("--no-session-persistence")).toBe(role === "supervisor");
       current().ask("write-1", "Write", { file_path: `${CWD}/a.txt`, content: "x" });
@@ -338,6 +338,8 @@ describe("ClaudeRuntime events", () => {
       input: { file_path: `${CWD}/src/a.ts` },
     });
     cli.toolResult("t1");
+    cli.assistant({ type: "tool_use", id: "g1", name: "Grep", input: { pattern: "total" } });
+    cli.toolResult("g1");
     cli.assistant({
       type: "tool_use",
       id: "t2",
@@ -364,6 +366,8 @@ describe("ClaudeRuntime events", () => {
       ["run.message", { text: "Reading first. token=***" }],
       ["tool.started", { tool: "Read", summary: "Read src/a.ts", reads: ["src/a.ts"] }],
       ["tool.completed", { tool: "Read", summary: "Read src/a.ts", success: true }],
+      ["tool.started", { tool: "Grep", summary: "Search total" }],
+      ["tool.completed", { tool: "Grep", summary: "Search total", success: true }],
       ["tool.started", { tool: "Edit", summary: "Edit src/a.ts" }],
       ["tool.completed", { tool: "Edit", summary: "Edit src/a.ts", success: true }],
       ["files.changed", { paths: ["src/a.ts"] }],
