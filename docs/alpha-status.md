@@ -71,9 +71,11 @@ planned capability as shipped.
    self-contained parallel tasks, or asks a clarifying question; unparseable output is
    treated as an answer and never starts builders. While it works the message shows
    its live activity, elapsed time and tokens (reported at most every 2 s), and it can
-   be stopped until it decides ("Stopped before answering"). Still missing: it is not
-   a backend agent run and its full event stream is not shown; `packages/supervisor`
-   is unused; stopping a real Codex Supervisor is untested. Incident 2026-10-06:
+   be stopped until it decides ("Stopped before answering"). Real Codex acceptance
+   (2026-10-06): a question is answered with no tasks or runs, and a long
+   investigation is stopped mid-turn with the repository unchanged. Still missing: it
+   is not a backend agent run and its full event stream is not shown;
+   `packages/supervisor` is unused. Incident 2026-10-06:
    #73's reply redaction turned plan task keys into `***`, so every real plan was
    rejected for about 40 minutes until #74 (the Supervisor reply is now redacted per
    field after parsing).
@@ -107,9 +109,8 @@ planned capability as shipped.
 
 ## Next steps, in order
 
-1. Real-Codex validation of Supervisor answers and of stopping a Supervisor.
-2. Trace recording on the Node (traces/traceSteps are still empty).
-3. Real-device validation: iPhone, launchd across reboot, stop against Codex.
+1. Trace recording on the Node (traces/traceSteps are still empty).
+2. Real-device validation: iPhone, launchd across reboot, stop against Codex.
 
 ## Operations on the owner's Mac
 
