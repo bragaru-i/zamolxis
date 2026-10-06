@@ -1,8 +1,11 @@
 import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { chmodSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 
 /**
- * Where the Node keeps its device credential. The real implementation is the macOS
- * login Keychain; tests inject an in-memory store so they never need a Keychain.
+ * Where the Node keeps its device credential. Production uses the macOS login
+ * Keychain or a private local file on Linux; tests inject an in-memory store.
  */
 export interface CredentialStore {
   read(account: string): string | undefined;
@@ -116,6 +119,65 @@ export class KeychainCredentialStore implements CredentialStore {
   }
 }
 
+/**
+ * Linux fallback for hosts without the macOS Keychain. The file and its parent are
+ * private to the current Unix user (0600/0700), symlinks are refused and updates are
+ * atomic. This has the same trust boundary as the Node process itself; operators who
+ * need encrypted-at-rest storage can protect the home volume or replace this adapter.
+ */
+export class FileCredentialStore implements CredentialStore {
+  constructor(private readonly path: string) {}
+
+  private readAll(): Record<string, string> {
+    const stat = lstatSync(this.path, { throwIfNoEntry: false });
+    if (!stat) return {};
+    if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0)
+      throw new Error("LOCAL_CREDENTIAL_STORE_MUST_BE_PRIVATE");
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(this.path, "utf8"));
+    } catch {
+      throw new Error("LOCAL_CREDENTIAL_STORE_MALFORMED");
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+      throw new Error("LOCAL_CREDENTIAL_STORE_MALFORMED");
+    const items = parsed as Record<string, unknown>;
+    for (const [name, secret] of Object.entries(items)) {
+      account(name);
+      if (!isDeviceCredential(secret)) throw new Error("LOCAL_CREDENTIAL_STORE_MALFORMED");
+    }
+    return items as Record<string, string>;
+  }
+
+  private save(items: Record<string, string>) {
+    const directory = dirname(this.path);
+    const directoryStat = lstatSync(directory, { throwIfNoEntry: false });
+    if (directoryStat?.isSymbolicLink() || (directoryStat && !directoryStat.isDirectory()))
+      throw new Error("UNSAFE_CREDENTIAL_DIRECTORY");
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    chmodSync(directory, 0o700);
+    const temporary = `${this.path}.${randomBytes(8).toString("hex")}.tmp`;
+    writeFileSync(temporary, `${JSON.stringify(items, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+    renameSync(temporary, this.path);
+    chmodSync(this.path, 0o600);
+  }
+
+  read(name: string) {
+    return this.readAll()[account(name)];
+  }
+  write(name: string, secret: string) {
+    if (!isDeviceCredential(secret)) throw new Error("INVALID_DEVICE_CREDENTIAL");
+    this.save({ ...this.readAll(), [account(name)]: secret });
+  }
+  remove(name: string) {
+    const items = this.readAll();
+    const key = account(name);
+    if (!(key in items)) return;
+    delete items[key];
+    this.save(items);
+  }
+}
+
 export class MemoryCredentialStore implements CredentialStore {
   readonly items = new Map<string, string>();
   read(name: string) {
@@ -132,7 +194,7 @@ export class MemoryCredentialStore implements CredentialStore {
 
 /**
  * The credential the Node authenticates with: a legacy plaintext value from
- * config.json (until setup migrates it) or the Keychain item for this workstation.
+ * config.json (until setup migrates it) or the local store item for this workstation.
  */
 export function loadDeviceCredential(
   config: { workstationId?: string; credential?: string },
@@ -146,7 +208,7 @@ export function loadDeviceCredential(
   const secret = store.read(config.workstationId);
   if (!secret)
     throw new Error(
-      "DEVICE_CREDENTIAL_MISSING: no device credential in the login Keychain; run pnpm zamolxis setup and choose Pair again",
+      "DEVICE_CREDENTIAL_MISSING: no device credential in the local credential store; run pnpm zamolxis setup and choose Pair again",
     );
   return secret;
 }

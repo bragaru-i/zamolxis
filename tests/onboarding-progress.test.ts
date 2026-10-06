@@ -97,7 +97,7 @@ describe("onboarding progress", () => {
       pair: "needs_you",
       repositories: "upcoming",
       service: "upcoming",
-      codex: "upcoming",
+      runtime: "upcoming",
       session: "upcoming",
     });
     expect(detail(progress, "pair")).toContain("pnpm zamolxis setup");
@@ -120,7 +120,7 @@ describe("onboarding progress", () => {
       pair: "done",
       repositories: "in_progress",
       service: "in_progress",
-      codex: "upcoming",
+      runtime: "upcoming",
     });
     expect(detail(progress, "service")).toContain("first heartbeat");
 
@@ -147,10 +147,10 @@ describe("onboarding progress", () => {
       pair: "done",
       repositories: "done",
       service: "done",
-      codex: "done",
+      runtime: "done",
       session: "needs_you",
     });
-    expect(detail(progress, "codex")).toContain("codex-cli 0.160.0");
+    expect(detail(progress, "runtime")).toContain("codex-cli 0.160.0");
     // The Mac stops reporting: the client switches to the stale state at this time.
     const service = progress.steps.find((step) => step.id === "service");
     expect(service?.staleAfter).toBeGreaterThan(Date.now());
@@ -196,12 +196,12 @@ describe("onboarding progress", () => {
     expect(detail(progress, "service")).toBe(
       "Studio is offline. Open Terminal on your Mac and run `pnpm zamolxis setup --repair`.",
     );
-    // Codex was reported by the last heartbeat; it stays as reported.
-    expect(states(progress).codex).toBe("done");
+    // The runtime reported by the last heartbeat stays available while the Mac is offline.
+    expect(states(progress).runtime).toBe("done");
     expect(states(progress).session).toBe("upcoming");
   });
 
-  it("reports Codex that the Mac does not advertise", async () => {
+  it("accepts any runnable agent runtime and reports when none is advertised", async () => {
     const { t, user, userId, node } = await fixture();
     const workstationId = await approvedMac(t, userId);
     await activate(t, workstationId);
@@ -213,11 +213,19 @@ describe("onboarding progress", () => {
     await node.mutation(api.node.heartbeat, {
       workstationId,
       instanceId: "instance-1",
-      runtimeCapabilities: [{ runtime: "fake", capabilities: ["start"] }],
+      runtimeCapabilities: [{ runtime: "claude", version: "claude 1.0", capabilities: ["start"] }],
     });
     const progress = await progressOf(user);
-    expect(states(progress)).toMatchObject({ service: "done", codex: "failed" });
-    expect(detail(progress, "codex")).toContain("codex login");
+    expect(states(progress)).toMatchObject({ service: "done", runtime: "done" });
+    expect(detail(progress, "runtime")).toContain("claude 1.0");
+    await node.mutation(api.node.heartbeat, {
+      workstationId,
+      instanceId: "instance-1",
+      runtimeCapabilities: [],
+    });
+    const unavailable = await progressOf(user);
+    expect(states(unavailable)).toMatchObject({ service: "done", runtime: "failed" });
+    expect(detail(unavailable, "runtime")).toContain("Codex or Claude Code");
   });
 
   it("asks for repositories when the running Mac has none, and flags missing ones", async () => {

@@ -13,9 +13,10 @@ shipped or a tested implementation as proven in production.
 
 - **Onboarding (#45):** `pnpm zamolxis setup` checks prerequisites, asks for the app
   address with an explicit protocol choice (HTTPS only), lists repositories as a
-  checklist (case-insensitive macOS paths are canonicalized with
-  `realpathSync.native`), pairs through a one-time QR code, installs the launchd
-  service `app.zamolxis.node` and waits for the heartbeat.
+  checklist (paths are canonicalized with `realpathSync.native`), pairs through a
+  one-time QR code, installs `app.zamolxis.node` through launchd on macOS or user
+  systemd on Linux and waits for the heartbeat. Codex is optional during setup; the
+  Node advertises only authenticated runtimes that are actually present.
 - **Identity (#47):** Google sign-in through Convex Auth, database-controlled access
   (`users.accessStatus`), Node identity separate from human identity and revocable.
 - **Execution:** text command → SHA-bound repository context → plan validated by the

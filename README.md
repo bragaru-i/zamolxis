@@ -243,7 +243,8 @@ authenticated owner approves a five-minute single-use QR; device tokens and
 revocation protect outbound Node access. See [Google login and access setup](docs/google-auth-access.md), including the
 `google-auth-setup.mjs` helper for separate dev/prod credentials and deployment.
 
-On a Mac with Node >=22, pnpm, Git, Codex CLI and an existing Codex login:
+On macOS or Linux with Node >=22, pnpm and Git (Codex or Claude Code is needed only
+before running agent work):
 
 ```sh
 ./scripts/setup.sh
@@ -257,18 +258,20 @@ The wizard selects repositories and, for each GitHub repository without its own 
 on this Mac, offers the accounts signed in to the GitHub CLI, "Add a dedicated token
 for this repository" or "Decide later"; a chosen account is verified to push the
 repository (setup stops otherwise). Only the host and login are stored in Zamolxis
-config; account credentials stay in the GitHub CLI store and tokens in the login
-Keychain. After pairing, setup reports each repository's GitHub access and offers a
+config; account credentials stay in the GitHub CLI store and tokens in the local
+credential store. After pairing, setup reports each repository's GitHub access and offers a
 token for those that cannot publish. It validates a managed root outside canonical
-checkouts, pairs the Node, stores its device credential in the macOS login Keychain
-(service `app.zamolxis.node`) and installs its launchd service. Running setup again
-offers Check and repair (default: Keychain migration of an older plaintext
+checkouts and pairs the Node. macOS uses the login Keychain and launchd; Linux uses
+private 0600 files under `${XDG_CONFIG_HOME:-~/.config}/zamolxis` and a user systemd
+service. Both use service name `app.zamolxis.node`. Running setup again
+offers Check and repair (default: local-store migration of an older plaintext
 credential, credential refresh with re-pairing when revoked, service reinstall when
 it points elsewhere, heartbeat), Add or remove repositories, Pair again and Exit.
 Renaming a Mac and removing a repository from Zamolxis are not supported by the
-backend yet; removal only drops the local grant. Native execution uses
-a temporary auth-only Codex profile; user plugins/MCP/config are not copied.
-No inbound Mac server is required. See [Alpha setup](docs/alpha-onboarding.md) for
+backend yet; removal only drops the local grant. When Codex is available, native execution uses
+a temporary auth-only profile; user plugins/MCP/config are not copied. Setup still
+completes without a runtime and reports what must be installed before work can run.
+No inbound workstation server is required. See [Alpha setup](docs/alpha-onboarding.md) for
 public HTTPS/Google login and device-signing deployment requirements.
 
 Canonical checkouts are never runtime workspaces. Planning, implementation,

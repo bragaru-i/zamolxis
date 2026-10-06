@@ -1,23 +1,26 @@
 # Alpha onboarding implementation and acceptance
 
-From a checkout, run one command on Mac:
+From a checkout, run one command on macOS or Linux:
 
 ```sh
 ./scripts/setup.sh
 ```
 
 With dependencies already installed, `pnpm zamolxis setup` starts the same wizard.
-It checks Node >=22, pnpm, Git, Codex CLI and existing Codex authentication;
-asks for the public app address and Mac name; discovers/selects Git repositories;
+It checks Node >=22, pnpm and Git, then reports any authenticated Codex or Claude Code
+runtime without requiring one during setup; asks for the public app address and
+workstation name; discovers/selects Git repositories;
 selects a managed root outside canonical repositories; shows a five-minute QR;
 waits for authenticated approval on iPhone; activates a device credential;
-registers products/repositories; installs a per-user launchd service; and waits
-for a fresh heartbeat and runtime registration. No Convex URL, token or ID is
+registers products/repositories; installs a per-user launchd (macOS) or systemd
+(Linux) service; and waits for a fresh heartbeat. No Convex URL, token or ID is
 copied by the user. The public app's bootstrap endpoint provides the backend URL.
 
 The versioned local config is an atomic 0600 file in a 0700 directory under
-`~/Library/Application Support/Zamolxis`. It contains filesystem grants and the
-workstation id, not the device credential. The credential is a generic password in
+`~/Library/Application Support/Zamolxis` on macOS or
+`${XDG_CONFIG_HOME:-~/.config}/zamolxis` on Linux. It contains filesystem grants and
+the workstation id, not the device credential. On macOS the credential is a generic
+password in
 the macOS login Keychain (service `app.zamolxis.node`, account = workstation id;
 `pairing-<id>` while a pairing is in progress so an interrupted setup resumes with
 the same credential). Setup writes it by piping `add-generic-password … -w <secret>`
@@ -28,6 +31,9 @@ dialog, as with every `security`-created item; it is still encrypted at rest, lo
 with the login Keychain and no longer copied along with config.json. The launchd
 agent runs in the user's GUI session and reads the login Keychain while it is
 unlocked; if it cannot, it exits with `KEYCHAIN_UNAVAILABLE` (see `node-error.log`).
+On Linux, device credentials and per-repository GitHub tokens use separate atomic
+0600 JSON files in the same 0700 config directory; symlinks and permissive modes are
+refused. The systemd user service is enabled immediately and logs to the user journal.
 
 QR contains only the separate single-use approval code; polling and device
 credentials are never placed in that URL. Device tokens expire after fifteen
@@ -87,15 +93,16 @@ the owner-scoped query `onboarding:progress` from stored state only, never assum
 | Pair your Mac | a non-revoked Mac has an activated device credential or has sent a heartbeat | no Mac: needs you ("run `pnpm zamolxis setup`, scan the QR code"); approved but not activated: in progress |
 | Choose repositories | the Mac has at least one available repository location | locations all removed, or none registered while the Mac runs: needs you; locations missing/invalid: failed; registered but not yet checked by the Node: in progress |
 | Start Zamolxis on your Mac | heartbeat within the last 45 s | no heartbeat yet: in progress; heartbeat older than 45 s: failed ("offline — run `pnpm zamolxis setup --repair`") |
-| Codex ready | the Mac's last heartbeat reported Codex available (with its version) | failed ("run `codex login`, then `pnpm zamolxis setup --repair`") |
+| Agent runtime ready | the workstation's last heartbeat reported an authenticated runtime with start capability | failed (install and sign in to Codex or Claude Code, then restart the service) |
 | Start your first session | a session exists | needs you once every step above is done |
 
 The Mac considered is the furthest along (online first, then most recent heartbeat,
 then newest). A query result does not age by itself, so the "online" step carries the
 time after which the app shows it as offline without a new heartbeat. The backend
 cannot see launchd itself: the service counts as running once a heartbeat arrives.
-The Node does not start without a Codex login, so a missing login usually shows as no
-heartbeat rather than as a Codex failure. Pending QR requests are not linked to an
+The Node starts and pairs without Codex. Until an authenticated Codex or Claude Code
+runtime is available it reports no runtime capabilities, so work cannot dispatch.
+Pending QR requests are not linked to an
 owner until approved, so "scan the QR code" is not tracked before approval.
 
 `pnpm zamolxis setup --repair` runs Check and repair without prompts (for scripts);

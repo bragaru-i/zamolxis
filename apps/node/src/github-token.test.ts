@@ -130,7 +130,7 @@ describe("GitHub tokens on the Mac", () => {
     expect(url.pathname).toBe("/settings/personal-access-tokens/new");
     expect(url.searchParams.get("target_name")).toBe("bragaru-i");
     expect(h.logs.join("\n")).toContain('"Only select repositories" → bragaru-i/zamolxis');
-    expect(h.logs.join("\n")).toContain("never sent to the Zamolxis app");
+    expect(h.logs.join("\n")).toContain("never sent to Zamolxis or exposed to agents");
     expect(h.checked).toEqual([TOKEN]);
     expect(h.tokens.read(ZAMOLXIS)).toBe(TOKEN);
     expect(h.reports.at(-1)).toMatchObject({ repositoryId: "r1", access: { status: "ok" } });

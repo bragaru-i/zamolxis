@@ -18,6 +18,7 @@ import { checkbox, confirm, input, password, select } from "@inquirer/prompts";
 import { inspectRepository } from "@zamolxis/git";
 import {
   checkPublishing,
+  FileRepositoryTokenStore,
   type GhAccountTokens,
   type GitHubAccess,
   type GitHubClient,
@@ -35,8 +36,10 @@ import { ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
 import QRCode from "qrcode";
 import { claudeSignedIn, findClaude } from "./claude";
+import { codexSignedIn, findCodex } from "./codex";
 import {
   type CredentialStore,
+  FileCredentialStore,
   isDeviceCredential,
   KeychainCredentialStore,
   loadDeviceCredential,
@@ -74,7 +77,14 @@ export interface RepositoryConfig {
   repositoryId?: string;
   publishingIdentity?: PublishingIdentity;
 }
-export const configDirectory = () => join(homedir(), "Library", "Application Support", "Zamolxis");
+export const configDirectory = (
+  platform = process.platform,
+  home = homedir(),
+  xdgConfigHome = process.env.XDG_CONFIG_HOME,
+) =>
+  platform === "darwin"
+    ? join(home, "Library", "Application Support", "Zamolxis")
+    : join(xdgConfigHome || join(home, ".config"), "zamolxis");
 export const configPath = () => join(configDirectory(), "config.json");
 export function validateConfig(config: NodeConfig) {
   if (
@@ -139,21 +149,23 @@ export function prerequisites() {
   for (const [tool, args] of [
     ["pnpm", ["--version"]],
     ["git", ["--version"]],
-    ["codex", ["--version"]],
-    ["codex", ["login", "status"]],
   ] as const) {
     try {
       execFileSync(tool, [...args], { stdio: "pipe", timeout: 10_000 });
     } catch {
-      throw new Error(
-        args[0] === "login"
-          ? "Run codex login, then rerun setup"
-          : `Install ${tool}, then rerun setup`,
-      );
+      throw new Error(`Install ${tool}, then rerun setup`);
     }
-    console.log(`✓ ${tool}${args[0] === "login" ? " authenticated" : ""}`);
+    console.log(`✓ ${tool}`);
   }
-  // Optional second runtime: the owner's Claude Code login (subscription), never an API key.
+  const codex = findCodex();
+  if (codex && codexSignedIn(codex.executable)) console.log(`✓ Codex ${codex.version}`);
+  else
+    console.log(
+      codex
+        ? "– Codex is installed but not signed in (optional: run codex login)"
+        : "– Codex not found (optional runtime)",
+    );
+  // Optional runtime: the owner's Claude Code login (subscription), never an API key.
   const claude = findClaude();
   if (claude && claudeSignedIn(claude.executable))
     console.log(`✓ Claude Code ${claude.version} (optional runtime)`);
@@ -335,6 +347,101 @@ export function launchdService(path = configPath()): ServiceManager {
       return match ? Number(match[1]) : undefined;
     },
   };
+}
+
+const systemdEscape = (value: string) =>
+  `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("$", "\\$").replaceAll("%", "%%")}"`;
+export const systemdServicePath = (home = homedir(), xdgConfigHome = process.env.XDG_CONFIG_HOME) =>
+  join(xdgConfigHome || join(home, ".config"), "systemd", "user", `${SERVICE_LABEL}.service`);
+export function serviceUnit(
+  path = configPath(),
+  runtime = {
+    node: process.execPath,
+    tsx: fileURLToPath(import.meta.resolve("tsx/cli")),
+    daemon: daemonPath(),
+    PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+  },
+) {
+  const command = [runtime.node, runtime.tsx, runtime.daemon, "--config", path]
+    .map(systemdEscape)
+    .join(" ");
+  return `[Unit]\nDescription=Zamolxis Node\n\n[Service]\nType=simple\nExecStart=${command}\nEnvironment=${systemdEscape(`PATH=${runtime.PATH}`)}\nRestart=always\nRestartSec=15\n\n[Install]\nWantedBy=default.target\n`;
+}
+export function inspectServiceUnit(
+  actual: string | undefined,
+  expected: string,
+  expectedDaemon = daemonPath(),
+): ServicePlistState {
+  if (actual === undefined) return { status: "missing" };
+  if (actual === expected) return { status: "current" };
+  const daemon = actual
+    .split("\n")
+    .find((line) => line.startsWith("ExecStart="))
+    ?.match(/"([^"\n]*daemon\.ts)"/)?.[1]
+    ?.replaceAll('\\"', '"')
+    .replaceAll("\\\\", "\\");
+  return daemon && daemon !== expectedDaemon
+    ? { status: "other-checkout", daemon }
+    : { status: "outdated" };
+}
+export function systemdService(
+  path = configPath(),
+  systemd: {
+    unitPath: string;
+    run(args: string[]): string;
+    definition?: string;
+  } = {
+    unitPath: systemdServicePath(),
+    run: (args) =>
+      execFileSync("systemctl", ["--user", ...args], { encoding: "utf8", stdio: "pipe" }).trim(),
+  },
+): ServiceManager {
+  const { unitPath, run } = systemd;
+  const definition = systemd.definition ?? serviceUnit(path);
+  const readUnit = () => {
+    const stat = lstatSync(unitPath, { throwIfNoEntry: false });
+    if (!stat) return undefined;
+    if (stat.isSymbolicLink() || !stat.isFile()) throw new Error("UNSAFE_SERVICE_FILE");
+    return readFileSync(unitPath, "utf8");
+  };
+  const active = () => {
+    try {
+      return run(["is-active", SERVICE_LABEL]) === "active";
+    } catch {
+      return false;
+    }
+  };
+  return {
+    inspect: () => ({
+      plist: inspectServiceUnit(readUnit(), definition),
+      loaded: active(),
+    }),
+    install() {
+      mkdirSync(dirname(unitPath), { recursive: true, mode: 0o700 });
+      readUnit();
+      writeFileSync(unitPath, definition, { mode: 0o600 });
+      chmodSync(unitPath, 0o600);
+      run(["daemon-reload"]);
+      run(["enable", "--now", SERVICE_LABEL]);
+    },
+    restart: () => {
+      run(["restart", SERVICE_LABEL]);
+    },
+    pid() {
+      try {
+        const pid = Number(run(["show", "--property", "MainPID", "--value", SERVICE_LABEL]));
+        return pid > 0 ? pid : undefined;
+      } catch {
+        return undefined;
+      }
+    },
+  };
+}
+
+export function serviceManager(path = configPath(), platform = process.platform): ServiceManager {
+  if (platform === "darwin") return launchdService(path);
+  if (platform === "linux") return systemdService(path);
+  throw new Error(`UNSUPPORTED_SERVICE_PLATFORM: ${platform}`);
 }
 
 const sleepSync = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -587,11 +694,15 @@ export function repositoryCandidates() {
 }
 export function defaultEnvironment(): SetupEnvironment {
   const path = configPath();
+  const directory = configDirectory();
+  const mac = process.platform === "darwin";
   return {
     io: terminalIo,
-    store: new KeychainCredentialStore(),
+    store: mac
+      ? new KeychainCredentialStore()
+      : new FileCredentialStore(join(directory, "credentials.json")),
     connect: convexControlPlane,
-    service: launchdService(path),
+    service: serviceManager(path),
     configPath: path,
     pause,
     discover: () => discoverRepositories(repositoryCandidates()),
@@ -600,7 +711,9 @@ export function defaultEnvironment(): SetupEnvironment {
     verifyGithubAccount,
     secret: () => randomBytes(32).toString("hex"),
     github: {
-      tokens: new KeychainRepositoryTokenStore(),
+      tokens: mac
+        ? new KeychainRepositoryTokenStore()
+        : new FileRepositoryTokenStore(join(directory, "github-tokens.json")),
       ghTokens: ghCliAccountTokens,
       client: new RestGitHubClient(),
       openUrl: openInBrowser,
@@ -647,7 +760,7 @@ export function classifyCredentialError(error: unknown): CredentialProblem | und
   return undefined;
 }
 const PROBLEM_MESSAGE: Record<CredentialProblem, string> = {
-  missing: "No device credential for this Mac was found in the login Keychain.",
+  missing: "No device credential for this workstation was found in its local credential store.",
   rejected:
     "Zamolxis no longer accepts this Mac's device credential: the Mac was removed or revoked in Settings, or the credential belongs to an older pairing.",
   "access-denied":
@@ -896,7 +1009,7 @@ async function pairDevice(config: NodeConfig, env: SetupEnvironment, client: Con
   delete config.pendingPairing;
   delete config.credential;
   save();
-  env.io.log("✓ Paired; device credential saved in the login Keychain");
+  env.io.log("✓ Paired; device credential saved in the local credential store");
 }
 /** Forgets this Mac's pairing locally so the next step pairs it again. */
 export function forgetPairing(config: NodeConfig, env: SetupEnvironment) {
@@ -943,7 +1056,9 @@ async function confirmServiceStable(env: SetupEnvironment, previousPid: number |
     }
   }
   throw new Error(
-    "The Node service stops right after it starts. See ~/Library/Application Support/Zamolxis/node-error.log (a locked login Keychain or a rejected credential are the usual causes), then rerun pnpm zamolxis setup --repair",
+    process.platform === "darwin"
+      ? "The Node service stops right after it starts. See ~/Library/Application Support/Zamolxis/node-error.log (a locked login Keychain or a rejected credential are the usual causes), then rerun pnpm zamolxis setup --repair"
+      : "The Node service stops right after it starts. Run journalctl --user -u app.zamolxis.node.service, then rerun pnpm zamolxis setup --repair",
   );
 }
 /** The entry this Mac had before pairing again, and its credential if still at hand. */
@@ -1028,7 +1143,7 @@ async function removeRepositories(
 }
 /** Health of a freshly (re)started Node: a heartbeat from a process other than `before`. */
 export function newProcessHeartbeat(health: NodeHealth, before: NodeHealth | undefined) {
-  if (!health.online || !health.runtimeAvailable) return false;
+  if (!health.online) return false;
   // Control planes before the exact check only report online.
   if (health.instanceId === undefined) return true;
   if (!health.instanceId || health.instanceId === before?.instanceId) return false;
@@ -1059,7 +1174,7 @@ export async function checkAndRepair(
   let previous = options.previous;
   io.log("✓ Configuration is valid");
   if (migratePlaintextCredential(config, env.store, save)) {
-    io.log("✓ Moved the device credential from config.json into the login Keychain");
+    io.log("✓ Moved the device credential from config.json into the local credential store");
     restart = true;
   }
   const client = env.connect(config.convexUrl);
@@ -1133,9 +1248,12 @@ export async function checkAndRepair(
   let last: NodeHealth | undefined;
   for (let attempt = 0; attempt < 20; attempt++) {
     last = await client.health(workstationId);
-    if (restarted ? newProcessHeartbeat(last, before) : last.online && last.runtimeAvailable) {
+    if (restarted ? newProcessHeartbeat(last, before) : last.online) {
+      const runtime = last.runtimeAvailable
+        ? "agent runtime available"
+        : "no agent runtime available yet (install and sign in to Codex or Claude Code, then restart the service)";
       io.log(
-        `✓ Node online${restarted ? " (heartbeat from the restarted service)" : ""}; Codex available; 3 builders + 1 verifier\nOpen ${config.appUrl} on iPhone`,
+        `✓ Node online${restarted ? " (heartbeat from the restarted service)" : ""}; ${runtime}; 3 builders + 1 verifier\nOpen ${config.appUrl} on iPhone`,
       );
       await githubStep(config, env, options.interactive, client, workstationId);
       return;
