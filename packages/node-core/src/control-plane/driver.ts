@@ -73,6 +73,8 @@ export type ExecutionCommand = {
       readonly payload: { runId: string; approvalId: string; decision: "approve" | "reject" };
     }
   | { readonly type: "workspace.cleanup"; readonly payload: { workspaceId: string } }
+  // Stops the Supervisor planning a text command; a no-op once that planning finished.
+  | { readonly type: "supervisor.stop"; readonly payload: { textCommandId: string } }
   // A command this Node cannot parse fails on its own instead of blocking the queue.
   | { readonly type: "invalid"; readonly payload: { code: string } }
 );
@@ -119,6 +121,87 @@ function boundedSummary(value: unknown): string | undefined {
 }
 export function supervisorRunId(textCommandId: string): string {
   return `supervisor:${textCommandId}`;
+}
+/** Bounded, owner-visible progress of a Supervisor that is still working. */
+export interface SupervisorProgress {
+  readonly textCommandId: string;
+  // What the Supervisor is doing now, one line of at most ACTIVITY_LIMIT characters.
+  readonly activity?: string;
+  // Usage reported by the provider so far.
+  readonly usage?: SupervisorUsage;
+}
+export const ACTIVITY_LIMIT = 200;
+export const PROGRESS_INTERVAL_MS = 2000;
+/** One line describing a Supervisor event, or undefined when the event is not an activity. */
+export function supervisorActivity(event: NormalizedRunEventDto): string | undefined {
+  let text: string | undefined;
+  if (event.type === "run.activity") text = event.payload.label;
+  else if (event.type === "tool.started") text = event.payload.summary || event.payload.tool;
+  if (typeof text !== "string") return undefined;
+  const line = text.replace(/\s+/g, " ").trim();
+  if (!line) return undefined;
+  return line.length > ACTIVITY_LIMIT ? `${line.slice(0, ACTIVITY_LIMIT - 1)}…` : line;
+}
+// Reports progress when it changes, at most once per interval; the latest change in a
+// throttled window is sent when the window ends. Failures never affect the Supervisor.
+class ProgressReporter {
+  #sentKey: string | undefined;
+  #sentAt = Number.NEGATIVE_INFINITY;
+  #pending: SupervisorProgress | undefined;
+  #timer: ReturnType<typeof setTimeout> | undefined;
+  #chain: Promise<void> = Promise.resolve();
+  #closed = false;
+  constructor(
+    private readonly send: (progress: SupervisorProgress) => Promise<void> | undefined,
+    private readonly now: () => number,
+    private readonly interval: number,
+  ) {}
+  update(progress: SupervisorProgress): void {
+    if (this.#closed) return;
+    const key = JSON.stringify(progress);
+    if (key === this.#sentKey) {
+      this.#pending = undefined;
+      return;
+    }
+    const wait = this.#sentAt + this.interval - this.now();
+    if (wait <= 0) {
+      this.#emit(progress, key);
+      return;
+    }
+    this.#pending = progress;
+    this.#timer ??= setTimeout(() => {
+      this.#timer = undefined;
+      const pending = this.#pending;
+      if (pending && !this.#closed) this.#emit(pending, JSON.stringify(pending));
+    }, wait);
+  }
+  #emit(progress: SupervisorProgress, key: string): void {
+    this.#sentKey = key;
+    this.#sentAt = this.now();
+    this.#pending = undefined;
+    if (this.#timer) clearTimeout(this.#timer);
+    this.#timer = undefined;
+    this.#chain = this.#chain
+      .then(() => this.send(progress))
+      .catch(() => undefined)
+      .then(() => undefined);
+  }
+  // Drops anything not yet sent (the outcome supersedes it) and waits for sent reports.
+  async close(): Promise<void> {
+    this.#closed = true;
+    if (this.#timer) clearTimeout(this.#timer);
+    this.#timer = undefined;
+    await this.#chain;
+  }
+}
+// A text command being planned in this process, so a stop can reach its Supervisor.
+interface Planning {
+  stop: boolean;
+  active?: { readonly runtime: AgentRuntime; readonly nativeSessionId: string } | undefined;
+}
+export interface ControlPlaneDriverOptions {
+  readonly now?: () => number;
+  readonly progressIntervalMs?: number;
 }
 export type Delivery =
   | {
@@ -173,6 +256,8 @@ export interface ControlPlaneTransport {
   acknowledge(commandId: string): Promise<void>;
   deliver(delivery: Delivery): Promise<void>;
   reconcile(runId: string, observation?: "active" | "missing"): Promise<void>;
+  // Best effort and not persisted: progress is superseded by the plan outcome.
+  reportProgress?(progress: SupervisorProgress): Promise<void>;
 }
 export class ControlPlaneDriver {
   #busy = false;
@@ -185,6 +270,8 @@ export class ControlPlaneDriver {
   // delivered per run so later commands resume the stream.
   readonly #streaming = new Map<string, Promise<void>>();
   readonly #cursors = new Map<string, number>();
+  // Text commands whose repository.plan executes in this process.
+  readonly #planning = new Map<string, Planning>();
   #flushing: Promise<void> | undefined;
   #discovery: RepositoryDiscovery | undefined;
   setRepositoryDiscovery(discovery: RepositoryDiscovery): void {
@@ -197,6 +284,7 @@ export class ControlPlaneDriver {
     private readonly manager: RuntimeManager,
     private readonly transport: ControlPlaneTransport,
     private readonly workstationId: string,
+    private readonly options: ControlPlaneDriverOptions = {},
   ) {}
   async tick(): Promise<void> {
     if (this.#busy) throw new Error("DRIVER_BUSY");
@@ -243,6 +331,12 @@ export class ControlPlaneDriver {
         if (this.#executing.has(command.commandId)) continue;
         if (command.type === "runtime.stop" && this.#streaming.has(command.payload.runId))
           await this.execute(command);
+        // A stop for a Supervisor that already finished is left to tick() as a no-op.
+        else if (
+          command.type === "supervisor.stop" &&
+          this.#planning.has(command.payload.textCommandId)
+        )
+          await this.execute(command);
         else if (command.type === "runtime.send" || command.type === "runtime.approval") {
           if (this.#streaming.has(command.payload.runId)) await this.execute(command);
           else if (this.store.getRuntimeSession(command.payload.runId)?.nativeSessionId)
@@ -260,6 +354,12 @@ export class ControlPlaneDriver {
   async execute(command: ExecutionCommand): Promise<void> {
     if (this.#executing.has(command.commandId)) return;
     this.#executing.add(command.commandId);
+    // Registered before claiming, so a stop sent once the plan is claimed always finds it.
+    const planning =
+      command.type === "repository.plan" && !this.#planning.has(command.payload.textCommandId)
+        ? command.payload.textCommandId
+        : undefined;
+    if (planning) this.#planning.set(planning, { stop: false });
     try {
       if (!continuesRun(command)) return await this.#execute(command, false);
       const { runId } = command.payload;
@@ -275,6 +375,7 @@ export class ControlPlaneDriver {
         if (this.#streaming.get(runId) === owner) this.#streaming.delete(runId);
       }
     } finally {
+      if (planning) this.#planning.delete(planning);
       this.#executing.delete(command.commandId);
     }
   }
@@ -450,6 +551,17 @@ export class ControlPlaneDriver {
             streamFailure = error;
             throw error;
           }
+        }
+      } else if (command.type === "supervisor.stop") {
+        // Not planning here (finished, or interrupted and failed on its own): nothing to stop.
+        const planning = this.#planning.get(command.payload.textCommandId);
+        if (planning) {
+          planning.stop = true;
+          // Without an active session the Supervisor stops before it starts.
+          if (planning.active)
+            await planning.active.runtime.stop({
+              nativeSessionId: planning.active.nativeSessionId,
+            });
         }
       } else if (command.type === "workspace.cleanup") {
         // The backend authorizes the cleanup policy; the Node still refuses dirty worktrees.
@@ -650,6 +762,13 @@ export class ControlPlaneDriver {
     const runtime = this.runtimes.get(runtimeId);
     let nativeSessionId: string | undefined;
     let settled = false;
+    const planning = this.#planning.get(payload.textCommandId) ?? { stop: false };
+    if (planning.stop) throw new Error("SUPERVISOR_STOPPED");
+    const progress = new ProgressReporter(
+      (report) => this.transport.reportProgress?.(report),
+      this.options.now ?? Date.now,
+      this.options.progressIntervalMs ?? PROGRESS_INTERVAL_MS,
+    );
     try {
       const session = await this.manager.start({
         runId,
@@ -663,8 +782,20 @@ export class ControlPlaneDriver {
           : {}),
       });
       nativeSessionId = session.nativeSessionId;
+      planning.active = { runtime, nativeSessionId };
+      // A stop that arrived while the session was starting.
+      if (planning.stop) await runtime.stop({ nativeSessionId });
       let summary: string | undefined;
+      let activity: string | undefined;
       const usage: SupervisorUsage = {};
+      const report = () =>
+        progress.update({
+          textCommandId: payload.textCommandId,
+          ...(activity ? { activity } : {}),
+          ...(Object.keys(usage).length ? { usage: { ...usage } } : {}),
+        });
+      // Marks the start, so the owner sees how long the Supervisor has been working.
+      report();
       for await (const event of this.#follow(runtime, nativeSessionId, runId, workspaceId)) {
         // The Supervisor is read-only and Node-local: nobody can approve its requests.
         if (event.type === "approval.requested")
@@ -688,18 +819,24 @@ export class ControlPlaneDriver {
           }
         }
         if (event.type === "run.completed") summary = boundedSummary(event.payload.summary);
+        const next = supervisorActivity(event);
+        if (next) activity = next;
+        if (next || event.type === "run.usage") report();
       }
       const final = await this.manager.observe(runId);
       settled = TERMINAL.includes(final.state);
+      // A Supervisor that finished before the stop reached it keeps its answer.
       if (final.state === "completed") return { ...(summary ? { summary } : {}), usage };
       throw new Error(
-        final.state === "stopped"
+        planning.stop || final.state === "stopped"
           ? "SUPERVISOR_STOPPED"
           : final.state === "failed"
             ? "SUPERVISOR_FAILED"
             : "SUPERVISOR_INCOMPLETE",
       );
     } finally {
+      planning.active = undefined;
+      await progress.close();
       // The Supervisor never keeps the planning workspace: stop it if it is still
       // active (it cannot ask for input) and release its lease.
       if (!settled && nativeSessionId) {
@@ -732,6 +869,19 @@ export class ControlPlaneDriver {
             commandId: command.commandId,
             code: "SUPERVISOR_INTERRUPTED",
           } satisfies Delivery,
+          createdAt: Date.now(),
+        },
+      ]);
+      await this.flush();
+      return;
+    }
+    if (command.type === "supervisor.stop" && command.status === "running") {
+      // The plan it targeted was interrupted too and fails on its own: nothing to stop.
+      this.store.completeCommandWithEvents(command.commandId, [
+        {
+          eventId: `delivery:${command.commandId}:000`,
+          type: "control-plane.delivery",
+          payload: { kind: "command.complete", commandId: command.commandId } satisfies Delivery,
           createdAt: Date.now(),
         },
       ]);

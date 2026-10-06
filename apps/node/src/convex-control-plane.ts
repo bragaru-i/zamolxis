@@ -3,6 +3,7 @@ import type {
   ConversationMessage,
   Delivery,
   ExecutionCommand,
+  SupervisorProgress,
   SupervisorSelection,
 } from "@zamolxis/node-core";
 import { makeFunctionReference, type FunctionReference } from "convex/server";
@@ -174,6 +175,12 @@ export function parseExecutionCommand(value: unknown): ExecutionCommand {
       payload: { runId, approvalId: field(payload, "approvalId", 256), decision: payload.decision },
     };
   }
+  if (command.type === "supervisor.stop") {
+    const textCommandId = field(payload, "textCommandId");
+    if (command.targetType !== "textCommand" || command.targetId !== textCommandId)
+      throw new Error("INVALID_COMMAND_TARGET");
+    return { ...common, type: "supervisor.stop", payload: { textCommandId } };
+  }
   if (command.type === "workspace.cleanup") {
     const workspaceId = field(payload, "workspaceId");
     if (command.targetType !== "workspace" || command.targetId !== workspaceId)
@@ -242,6 +249,21 @@ export class ConvexControlPlaneTransport implements ControlPlaneTransport {
   }
   async reconcile(runId: string, observation: "active" | "missing" = "missing"): Promise<void> {
     await this.mutation("reconcile", { runId, observation });
+  }
+  async reportProgress(progress: SupervisorProgress): Promise<void> {
+    await this.client.mutation(
+      makeFunctionReference<"mutation", Record<string, Value>, unknown>(
+        "supervisor:reportProgress",
+      ),
+      {
+        workstationId: this.workstationId,
+        textCommandId: progress.textCommandId,
+        ...(progress.activity ? { activity: progress.activity } : {}),
+        ...(progress.usage && Object.keys(progress.usage).length
+          ? { usage: { ...progress.usage } }
+          : {}),
+      },
+    );
   }
   async deliver(delivery: Delivery): Promise<void> {
     if (delivery.kind === "command.failed") {
