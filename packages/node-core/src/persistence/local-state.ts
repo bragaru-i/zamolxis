@@ -147,7 +147,18 @@ const migrations = [
         run_id TEXT NOT NULL, instance_id TEXT NOT NULL, acquired_at INTEGER NOT NULL, renewed_at INTEGER NOT NULL);`,
   },
   { version: 4, sql: "ALTER TABLE runtime_sessions ADD COLUMN instruction_digest TEXT;" },
+  // How many times a run was resumed after a Node restart (continuations are bounded).
+  {
+    version: 5,
+    sql: "ALTER TABLE runtime_sessions ADD COLUMN recoveries INTEGER NOT NULL DEFAULT 0;",
+  },
 ] as const;
+/** A run event the Node recorded in its durable outbox (delivered or still pending). */
+export interface RecordedRunEvent {
+  readonly sequence: number;
+  readonly type: string;
+  readonly payload: Record<string, unknown>;
+}
 
 function stable(value: unknown): string {
   const normalize = (item: unknown): unknown =>
@@ -471,6 +482,64 @@ export class LocalStateStore {
         ? {}
         : { instructionDigest: String(row.instruction_digest) }),
     };
+  }
+
+  /**
+   * Runs this Node had not seen finish (Supervisor planning runs excluded): after a
+   * restart their native sessions must be resumed or reported lost.
+   */
+  listUnfinishedRuntimeSessions(): StoredRuntimeSession[] {
+    const rows = this.#db
+      .prepare(
+        "SELECT run_id FROM runtime_sessions WHERE status IN ('starting','running','waiting') AND run_id NOT LIKE 'supervisor:%' ORDER BY updated_at LIMIT 101",
+      )
+      .all() as Array<{ run_id: string }>;
+    if (rows.length > 100) throw new Error("RUN_RECOVERY_LIMIT_EXCEEDED");
+    return rows
+      .map((row) => this.getRuntimeSession(row.run_id))
+      .filter((item): item is StoredRuntimeSession => item !== undefined);
+  }
+
+  /** Counts a resume attempt for a run and returns how many there have been. */
+  recordRecovery(runId: string): number {
+    const row = this.#db
+      .prepare(
+        "UPDATE runtime_sessions SET recoveries = recoveries + 1, updated_at = ? WHERE run_id = ? RETURNING recoveries",
+      )
+      .get(Date.now(), runId) as { recoveries: number } | undefined;
+    if (!row) throw new Error("RECONCILIATION_REQUIRED");
+    return Number(row.recoveries);
+  }
+
+  /**
+   * The run events this Node durably recorded for a run, ordered by sequence: what the
+   * control plane has seen or will see once the outbox drains.
+   */
+  listRecordedRunEvents(runId: string): RecordedRunEvent[] {
+    const rows = this.#db
+      .prepare(`SELECT payload_json FROM event_outbox
+        WHERE type = 'control-plane.delivery'
+          AND json_extract(payload_json, '$.kind') = 'run.events'
+          AND json_extract(payload_json, '$.runId') = ?`)
+      .all(runId) as Array<{ payload_json: string }>;
+    const bySequence = new Map<number, RecordedRunEvent>();
+    for (const row of rows) {
+      const events = (JSON.parse(row.payload_json) as { events?: unknown }).events;
+      if (!Array.isArray(events)) continue;
+      for (const event of events as Array<Record<string, unknown>>) {
+        const sequence = event.sequence;
+        if (typeof sequence !== "number" || !Number.isSafeInteger(sequence)) continue;
+        bySequence.set(sequence, {
+          sequence,
+          type: String(event.type),
+          payload:
+            event.payload && typeof event.payload === "object"
+              ? (event.payload as Record<string, unknown>)
+              : {},
+        });
+      }
+    }
+    return [...bySequence.values()].sort((a, b) => a.sequence - b.sequence);
   }
 
   reserveRuntimeSession(session: StoredRuntimeSession): boolean {

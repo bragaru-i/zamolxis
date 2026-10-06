@@ -147,3 +147,48 @@ export function checkStep(
     },
   };
 }
+
+/** A resume of the Run's native session after a Node restart (one step per attempt). */
+export function recoveryStep(
+  runId: string,
+  attempt: number,
+  at: number,
+  outcome:
+    | { readonly policy: "continue" | "fail" | "stop"; readonly state: string }
+    | { readonly settled: string }
+    | { readonly error: unknown },
+): TraceStepInput {
+  const base = {
+    stepId: `run:${runId}:recovery:${attempt}`,
+    kind: "runtime",
+    startedAt: at,
+    finishedAt: Math.max(at, Date.now()),
+    references: { runId },
+  } as const;
+  if ("error" in outcome)
+    return {
+      ...base,
+      label: "Could not resume after a Node restart",
+      status: "failed",
+      detail: `${errorCode(outcome.error)}; the run keeps its workspace until it is reconciled`,
+    };
+  if ("settled" in outcome)
+    return {
+      ...base,
+      label: "Recorded the outcome after a Node restart",
+      status: "passed",
+      detail: `The runtime had already reported ${outcome.settled}`,
+    };
+  const detail =
+    outcome.policy === "continue"
+      ? "An interrupted turn continues on the same native session"
+      : outcome.policy === "stop"
+        ? "A stop was requested: an interrupted turn is reported stopped"
+        : "An interrupted turn is reported failed (continuation limit reached)";
+  return {
+    ...base,
+    label: "Resumed after a Node restart",
+    status: "passed",
+    detail: `${detail}; runtime state ${outcome.state}`,
+  };
+}
