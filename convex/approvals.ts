@@ -58,6 +58,7 @@ export const resolve = mutation({
   args: {
     approvalId: v.id("approvals"),
     decision: v.union(v.literal("approved"), v.literal("rejected")),
+    scope: v.optional(v.union(v.literal("once"), v.literal("run"))),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -65,6 +66,19 @@ export const resolve = mutation({
     await ownSession(ctx, approval.workSessionId);
     const user = await requireUser(ctx);
     if (approval.ownerId !== user._id) fail("FORBIDDEN");
+    const scope = args.scope ?? "once";
+    const request =
+      approval.request && typeof approval.request === "object"
+        ? (approval.request as Record<string, unknown>)
+        : {};
+    if (
+      scope === "run" &&
+      (args.decision !== "approved" ||
+        request.allowForSession !== true ||
+        approval.action !== "command" ||
+        !["low", "medium"].includes(approval.risk))
+    )
+      fail("INVALID_ARGUMENT");
     if (approval.status === args.decision) return null;
     if (approval.status !== "pending") fail("INVALID_STATE");
     if (approval.runId && approval.runtimeApprovalId) {
@@ -81,7 +95,12 @@ export const resolve = mutation({
         {
           runId: run._id,
           approvalId: approval.runtimeApprovalId,
-          decision: args.decision === "approved" ? "approve" : "reject",
+          decision:
+            args.decision === "rejected"
+              ? "reject"
+              : scope === "run"
+                ? "approve_session"
+                : "approve",
         },
         `approval:${approval._id}`,
       );
@@ -135,6 +154,10 @@ export async function applyApprovalEvent(
     const kind = pick(KINDS, payload.kind);
     const risk = pick(RISKS, payload.risk);
     const summary = boundedText(payload.summary, 2000);
+    const allowForSession =
+      payload.allowForSession === true &&
+      kind === "command" &&
+      (risk === "low" || risk === "medium");
     if (await runtimeApproval(ctx, run, approvalId)) fail("COMMAND_CONFLICT");
     const session = await load(ctx, "workSessions", run.workSessionId);
     await ctx.db.insert("approvals", {
@@ -144,7 +167,7 @@ export async function applyApprovalEvent(
       workstationId: run.workstationId,
       action: kind,
       risk,
-      request: { approvalId, kind, summary },
+      request: { approvalId, kind, summary, ...(allowForSession ? { allowForSession: true } : {}) },
       runtimeApprovalId: approvalId,
       status: "pending",
       requestedAt: Date.now(),

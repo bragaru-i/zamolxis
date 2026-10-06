@@ -60,7 +60,7 @@ class LiveRuntime extends FakeRuntime {
   override async resolveApproval(input: {
     nativeSessionId: string;
     approvalId: string;
-    decision: "approve" | "reject";
+    decision: "approve" | "approve_session" | "reject";
   }) {
     await super.resolveApproval(input);
     this.#signal();

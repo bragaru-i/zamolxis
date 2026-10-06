@@ -121,7 +121,11 @@ export type ExecutionCommand = {
   | { readonly type: "runtime.send"; readonly payload: { runId: string; message: string } }
   | {
       readonly type: "runtime.approval";
-      readonly payload: { runId: string; approvalId: string; decision: "approve" | "reject" };
+      readonly payload: {
+        runId: string;
+        approvalId: string;
+        decision: "approve" | "approve_session" | "reject";
+      };
     }
   | {
       readonly type: "workspace.cleanup";

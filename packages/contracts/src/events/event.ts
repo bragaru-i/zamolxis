@@ -13,7 +13,7 @@ interface EventBase<T extends string, P> {
 
 export type ApprovalKind = "command" | "fileChange" | "tool" | "other";
 export type ApprovalRisk = "low" | "medium" | "high" | "critical";
-export type ApprovalDecision = "approve" | "reject";
+export type ApprovalDecision = "approve" | "approve_session" | "reject";
 // Why a runtime approval was settled: by the user, or rejected by the Node on timeout,
 // stop/terminal state, or because the runtime withdrew the request.
 export type ApprovalResolutionReason = "user" | "timeout" | "stopped" | "withdrawn";
@@ -61,7 +61,14 @@ export type NormalizedRunEventDto =
   // The runtime holds an operation until a human approves or rejects it.
   | EventBase<
       "approval.requested",
-      { approvalId: string; kind: ApprovalKind; summary: string; risk: ApprovalRisk }
+      {
+        approvalId: string;
+        kind: ApprovalKind;
+        summary: string;
+        risk: ApprovalRisk;
+        /** The runtime can remember this low/medium approval for the current run. */
+        allowForSession?: boolean;
+      }
     >
   | EventBase<
       "approval.resolved",

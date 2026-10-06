@@ -212,7 +212,11 @@ export function parseExecutionCommand(value: unknown): ExecutionCommand {
     const runId = field(payload, "runId");
     if (command.targetType !== "run" || command.targetId !== runId)
       throw new Error("INVALID_COMMAND_TARGET");
-    if (payload.decision !== "approve" && payload.decision !== "reject")
+    if (
+      payload.decision !== "approve" &&
+      payload.decision !== "approve_session" &&
+      payload.decision !== "reject"
+    )
       throw new Error("INVALID_COMMAND");
     return {
       ...common,
