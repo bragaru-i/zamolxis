@@ -49,6 +49,13 @@ export const messages = query({
           repositoryId: row.repositoryId,
           planned: row.planDigest !== undefined,
           planTaskCount: row.planDigest ? (JSON.parse(row.planDigest) as unknown[]).length : 0,
+          ...(row.decision === "propose" && row.planDigest
+            ? {
+                proposedTasks: (JSON.parse(row.planDigest) as ProposedTask[]).map(
+                  ({ key, title, description }) => ({ key, title, description }),
+                ),
+              }
+            : {}),
           planStatus: plan?.status ?? "pending",
           ...(plan?.error ? { planError: plan.error } : {}),
           ...(row.decision ? { decision: row.decision } : {}),
@@ -269,6 +276,23 @@ const ACTIVITY_LIMIT = 200;
 // Progress writes closer together than this are dropped (the Node sends every 2 s at most).
 const PROGRESS_MIN_INTERVAL_MS = 500;
 const IN_FLIGHT = ["claimed", "acknowledged"];
+
+// The model may recommend delegation, but only the owner's words authorize it.
+// Keep this deliberately conservative: exploratory questions such as "how would
+// you fix this?" must stay conversational.
+function explicitlyRequestsWork(text: string) {
+  const normalized = text.trim();
+  if (normalized.startsWith("{")) return true; // Structured API plan submission.
+  return (
+    /^(?:please\s+)?(?:open|start|create|implement|fix|change|update|add|remove|build|refactor|repair|execute|apply|ship|continue|do)\b/i.test(
+      normalized,
+    ) ||
+    /^(?:can|could|would|will)\s+you\s+(?:please\s+)?(?:open|start|create|implement|fix|change|update|add|remove|build|refactor|repair|execute|apply|ship|continue|do)\b/i.test(
+      normalized,
+    ) ||
+    /\b(?:do it|go ahead|open this work|start the work)\b/i.test(normalized)
+  );
+}
 const usageArgs = v.object({
   modelActual: v.optional(v.string()),
   inputTokens: v.optional(v.number()),
@@ -427,6 +451,68 @@ const planTask = v.object({
   verificationScripts: v.array(v.string()),
   requiredModalities: v.array(v.string()),
 });
+type ProposedTask = typeof planTask.type;
+
+async function openTasks(
+  ctx: MutationCtx,
+  session: Doc<"workSessions">,
+  workspace: Doc<"workspaces">,
+  contextSha: string,
+  contextDigest: string,
+  tasks: ProposedTask[],
+) {
+  if (session.totalTaskCount + tasks.length > 100) fail("LIMIT_EXCEEDED");
+  const ids = new Map<string, Id<"tasks">>();
+  for (const proposed of tasks) {
+    const taskId = await ctx.db.insert("tasks", {
+      workSessionId: session._id,
+      title: proposed.title,
+      description: proposed.description,
+      kind: "implementation",
+      status: proposed.dependencies.length ? "blocked" : "ready",
+      phase: proposed.dependencies.length ? "blocked" : "building",
+      runtimePolicyMode: "auto",
+      priority: 1,
+      verificationScripts: proposed.verificationScripts,
+      requiredModalities: proposed.requiredModalities,
+      repairAttempts: 0,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    ids.set(proposed.key, taskId);
+    for (const key of proposed.dependencies)
+      await ctx.db.insert("taskDependencies", {
+        workSessionId: session._id,
+        taskId,
+        dependsOnTaskId: ids.get(key)!,
+        type: "success",
+      });
+    if (!proposed.dependencies.length) {
+      const nextWorkspaceId = await allocateWorkspace(ctx, {
+        workSessionId: session._id,
+        taskId,
+        repositoryLocationId: workspace.repositoryLocationId,
+        baseRef: contextSha,
+        kind: "worktree",
+        fresh: true,
+      });
+      await ctx.db.patch("tasks", taskId, { nextWorkspaceId });
+    }
+  }
+  const now = Date.now();
+  await ctx.db.patch("workSessions", session._id, {
+    status: "running",
+    ...(["completed", "failed"].includes(session.status)
+      ? { reopenedAt: now, completedAt: undefined }
+      : {}),
+    totalTaskCount: session.totalTaskCount + tasks.length,
+    contextSummary: `Repository context ${contextSha} (${contextDigest})`,
+    currentPlanSummary: tasks.map((task) => task.title).join("; "),
+    updatedAt: now,
+    lastActivityAt: now,
+  });
+}
+
 export const acceptPlan = mutation({
   args: {
     workstationId: v.id("workstations"),
@@ -435,21 +521,38 @@ export const acceptPlan = mutation({
     contextDigest: v.string(),
     tasks: v.array(planTask),
     // Optional for compatibility: older Nodes send only a plan.
-    decision: v.optional(v.union(v.literal("answer"), v.literal("plan"), v.literal("ask"))),
+    decision: v.optional(
+      v.union(
+        v.literal("answer"),
+        v.literal("plan"),
+        v.literal("propose"),
+        v.literal("delegate"),
+        v.literal("ask"),
+      ),
+    ),
     reply: v.optional(v.string()),
     usage: v.optional(usageArgs),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
     await requireNode(ctx, args.workstationId);
-    const decision = args.decision ?? "plan";
+    const requestedDecision = args.decision ?? "plan";
     if (args.reply !== undefined && (!args.reply.trim() || args.reply.length > REPLY_LIMIT))
       fail("INVALID_ARGUMENT");
-    if (decision !== "plan" && (args.tasks.length > 0 || args.reply === undefined))
-      fail("INVALID_ARGUMENT");
+    const hasTasks =
+      requestedDecision === "plan" ||
+      requestedDecision === "propose" ||
+      requestedDecision === "delegate";
+    if (!hasTasks && (args.tasks.length > 0 || args.reply === undefined)) fail("INVALID_ARGUMENT");
+    if (hasTasks && args.tasks.length === 0) fail("INVALID_PLAN");
     const usage = args.usage ?? {};
     assertUsage(usage);
     const command = await load(ctx, "textCommands", args.textCommandId);
+    const decision =
+      (requestedDecision === "plan" || requestedDecision === "delegate") &&
+      !explicitlyRequestsWork(command.text)
+        ? "propose"
+        : requestedDecision;
     const workspace = await load(ctx, "workspaces", command.planningWorkspaceId!);
     if (
       workspace.workstationId !== args.workstationId ||
@@ -459,7 +562,7 @@ export const acceptPlan = mutation({
       !/^[a-f0-9]{64}$/.test(args.contextDigest)
     )
       fail("STALE_REPOSITORY_CONTEXT");
-    if (decision === "plan") validatePlan(args.tasks);
+    if (hasTasks) validatePlan(args.tasks);
     const planDigest = JSON.stringify(args.tasks);
     if (command.planDigest) {
       if (
@@ -474,44 +577,6 @@ export const acceptPlan = mutation({
     }
     const session = await load(ctx, "workSessions", command.workSessionId);
     if (["completed", "cancelled", "failed"].includes(session.status)) fail("INVALID_STATE");
-    if (session.totalTaskCount + args.tasks.length > 100) fail("LIMIT_EXCEEDED");
-    const ids = new Map<string, import("./_generated/dataModel").Id<"tasks">>();
-    for (const proposed of args.tasks) {
-      const taskId = await ctx.db.insert("tasks", {
-        workSessionId: session._id,
-        title: proposed.title,
-        description: proposed.description,
-        kind: "implementation",
-        status: proposed.dependencies.length ? "blocked" : "ready",
-        phase: proposed.dependencies.length ? "blocked" : "building",
-        runtimePolicyMode: "auto",
-        priority: 1,
-        verificationScripts: proposed.verificationScripts,
-        requiredModalities: proposed.requiredModalities,
-        repairAttempts: 0,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      });
-      ids.set(proposed.key, taskId);
-      for (const key of proposed.dependencies)
-        await ctx.db.insert("taskDependencies", {
-          workSessionId: session._id,
-          taskId,
-          dependsOnTaskId: ids.get(key)!,
-          type: "success",
-        });
-      if (!proposed.dependencies.length) {
-        const nextWorkspaceId = await allocateWorkspace(ctx, {
-          workSessionId: session._id,
-          taskId,
-          repositoryLocationId: workspace.repositoryLocationId,
-          baseRef: args.contextSha,
-          kind: "worktree",
-          fresh: true,
-        });
-        await ctx.db.patch("tasks", taskId, { nextWorkspaceId });
-      }
-    }
     await ctx.db.patch("textCommands", command._id, {
       planDigest,
       contextSha: args.contextSha,
@@ -521,18 +586,11 @@ export const acceptPlan = mutation({
       ...usage,
     });
     const now = Date.now();
-    if (decision === "plan") {
-      await ctx.db.patch("workSessions", session._id, {
-        status: "running",
-        totalTaskCount: session.totalTaskCount + args.tasks.length,
-        contextSummary: `Repository context ${args.contextSha} (${args.contextDigest})`,
-        currentPlanSummary: args.tasks.map((task) => task.title).join("; "),
-        updatedAt: now,
-        lastActivityAt: now,
-      });
+    if (decision === "plan" || decision === "delegate") {
+      await openTasks(ctx, session, workspace, args.contextSha, args.contextDigest, args.tasks);
       return null;
     }
-    // Answer or question: no new work. Idle the Session unless earlier work is active.
+    // Answer, question or proposal: no new work. Idle the Session unless earlier work is active.
     const tasks = await ctx.db
       .query("tasks")
       .withIndex("by_session", (q) => q.eq("workSessionId", session._id))
@@ -552,6 +610,34 @@ export const acceptPlan = mutation({
       updatedAt: now,
       lastActivityAt: now,
     });
+    return null;
+  },
+});
+
+/** Owner-only explicit transition from a conversational proposal to executable work. */
+export const openProposal = mutation({
+  args: { textCommandId: v.id("textCommands") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const owner = await requireUser(ctx);
+    const command = await load(ctx, "textCommands", args.textCommandId);
+    if (command.ownerId !== owner._id) fail("FORBIDDEN");
+    if (command.decision === "delegate" || command.decision === "plan") return null;
+    if (
+      command.decision !== "propose" ||
+      !command.planDigest ||
+      !command.contextSha ||
+      !command.planningWorkspaceId
+    )
+      fail("INVALID_STATE");
+    const tasks = JSON.parse(command.planDigest) as ProposedTask[];
+    validatePlan(tasks);
+    const session = await load(ctx, "workSessions", command.workSessionId);
+    if (session.status === "cancelled") fail("INVALID_STATE");
+    const workspace = await load(ctx, "workspaces", command.planningWorkspaceId);
+    if (!command.contextDigest) fail("INVALID_STATE");
+    await openTasks(ctx, session, workspace, command.contextSha, command.contextDigest, tasks);
+    await ctx.db.patch("textCommands", command._id, { decision: "delegate" });
     return null;
   },
 });

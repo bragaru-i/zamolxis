@@ -32,7 +32,11 @@ interface DeviceRuntimes {
 }
 
 export const ROLES: Array<{ role: Role; label: string; help: string }> = [
-  { role: "supervisor", label: "Supervisor", help: "Answers, plans or asks you a question." },
+  {
+    role: "supervisor",
+    label: "Supervisor",
+    help: "Your conversational project lead. It answers, summarizes and proposes work; execution starts only when you explicitly delegate.",
+  },
   { role: "builder", label: "Builder", help: "Implements each task." },
   { role: "verifier", label: "Verifier", help: "Checks each result independently." },
   { role: "repair", label: "Repair", help: "Fixes results that failed verification." },
@@ -188,8 +192,13 @@ export function AgentsSettings({
   const scopeRows = productId ? scoped : global;
   const scopeName = products?.find((product) => product._id === productId)?.name ?? "All products";
   return (
-    <section className="z-stack" aria-label="Agents">
-      <h3 className="z-section-title">Agents</h3>
+    <section className="z-stack" aria-label="Orchestration">
+      <h3 className="z-section-title">Orchestration</h3>
+      <p className="z-small z-muted">
+        Ask the Supervisor about the project without opening work. When you explicitly delegate,
+        Builders implement, the Verifier checks the exact result, Repair handles failed checks and
+        Integration prepares trusted changes.
+      </p>
       <p className="z-xsmall z-muted">
         Changes apply to new runs. Running and past runs keep the settings they started with.
       </p>

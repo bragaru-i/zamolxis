@@ -756,7 +756,7 @@ it("runs text intent through discovery, native Builder, independent Verifier, de
           summary:
             input.role === "supervisor"
               ? JSON.stringify({
-                  decision: "plan",
+                  decision: "delegate",
                   reply: "One task: create outcome.txt.",
                   tasks: [
                     {
@@ -802,7 +802,7 @@ it("runs text intent through discovery, native Builder, independent Verifier, de
     planTaskCount: 1,
     planStatus: "completed",
     repositoryId: f.repositoryId,
-    decision: "plan",
+    decision: "delegate",
   });
   expect(messages[0]?.reply).toEqual(expect.any(String));
   const { user: other } = await seedHuman(f.t, "mallory");
@@ -814,7 +814,7 @@ it("runs text intent through discovery, native Builder, independent Verifier, de
     textCommandId: messages[0]?._id as never,
   })) as { kind: string; label: string }[];
   expect(planLog[0]?.kind).toBe("discovery");
-  expect(planLog.at(-1)).toMatchObject({ kind: "supervisor", label: "Planned 1 task" });
+  expect(planLog.at(-1)).toMatchObject({ kind: "supervisor", label: "Opened 1 task" });
   await expect(
     other.query(api.supervisor.log, { textCommandId: messages[0]?._id as never }),
   ).rejects.toThrow();

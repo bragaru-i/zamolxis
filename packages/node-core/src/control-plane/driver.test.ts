@@ -240,7 +240,7 @@ describe("repository.plan through a Supervisor run", { timeout: 30_000 }, () => 
     const f = fixture(() =>
       answer(
         `I will do this:\n\`\`\`json\n${JSON.stringify({
-          decision: "plan",
+          decision: "delegate",
           reply: "Two independent tasks.",
           tasks: [
             { key: "a", title: "A", description: "Do A", verificationScripts: ["test:unit"] },
@@ -252,7 +252,7 @@ describe("repository.plan through a Supervisor run", { timeout: 30_000 }, () => 
     await f.plan("Implement A and B");
     const delivery = f.deliveries[0];
     if (delivery?.kind !== "repository.plan") throw new Error("Missing plan");
-    expect(delivery.decision).toBe("plan");
+    expect(delivery.decision).toBe("delegate");
     expect(delivery.reply).toBe("Two independent tasks.");
     expect(delivery.tasks).toEqual([
       {
@@ -300,7 +300,7 @@ describe("repository.plan through a Supervisor run", { timeout: 30_000 }, () => 
     await f.plan(JSON.stringify({ tasks }));
     expect(f.runtime.started).toEqual([]);
     expect(f.deliveries[0]).toMatchObject({
-      decision: "plan",
+      decision: "delegate",
       reply: "Planned 1 task from the provided plan.",
       tasks,
     });
@@ -667,7 +667,7 @@ describe("Supervisor activity log", { timeout: 30_000 }, () => {
       { type: "message", text: "Schema read; checking the API next." },
       { type: "approval", kind: "command", summary: "Run: curl https://example.com", risk: "high" },
       ...json({
-        decision: "plan",
+        decision: "delegate",
         reply: "Two tasks.",
         tasks: [
           { key: "a", title: "Add field", description: "d" },
@@ -678,7 +678,7 @@ describe("Supervisor activity log", { timeout: 30_000 }, () => {
     const { id, textCommandId } = await f.plan("Add a field", {
       supervisor: { runtime: "fake", model: "m-1", reasoningEffort: "high" },
     });
-    expect(f.deliveries[0]).toMatchObject({ kind: "repository.plan", decision: "plan" });
+    expect(f.deliveries[0]).toMatchObject({ kind: "repository.plan", decision: "delegate" });
     expect(f.logs).toHaveLength(1);
     const [log] = f.logs;
     expect(log?.textCommandId).toBe(textCommandId);
@@ -692,7 +692,7 @@ describe("Supervisor activity log", { timeout: 30_000 }, () => {
       ["tool", "pnpm missing · exit code 1", "failed"],
       ["message", "Note", "passed"],
       ["approval", "Approval request refused", "failed"],
-      ["supervisor", "Planned 2 tasks", "passed"],
+      ["supervisor", "Opened 2 tasks", "passed"],
     ]);
     expect(steps[0]?.references).toEqual({ sha: f.head });
     expect(steps[1]?.detail).toBe(

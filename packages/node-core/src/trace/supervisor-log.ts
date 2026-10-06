@@ -308,15 +308,15 @@ export class SupervisorLog {
   /** What the Node did with the Supervisor's reply. */
   decided(
     decision: {
-      readonly decision: "answer" | "plan" | "ask";
+      readonly decision: "answer" | "propose" | "delegate" | "ask";
       readonly tasks: readonly { readonly title: string }[];
     },
     note?: string,
   ): void {
     const at = this.now();
     const label =
-      decision.decision === "plan"
-        ? `Planned ${count(decision.tasks.length, "task")}`
+      decision.decision === "propose" || decision.decision === "delegate"
+        ? `${decision.decision === "delegate" ? "Opened" : "Proposed"} ${count(decision.tasks.length, "task")}`
         : decision.decision === "ask"
           ? "Asked a clarifying question"
           : "Answered";

@@ -25,11 +25,14 @@ context digest **before** producing a plan. Backend validation bounds plan size,
 requires unique task keys and topologically ordered dependencies, and rejects
 arbitrary shell commands in check specifications. Each message runs a read-only
 Supervisor agent on the Node (runtime/model from the Supervisor profile). It decides
-to **answer** in chat (no tasks), **plan** self-contained tasks that run in parallel
-where independent, or **ask** a clarifying question. Output that is not a valid
-decision is shown as an answer and never starts builders. A message that is itself
-a structured text plan skips the Supervisor. The Supervisor proposes; the backend
-validates the plan, and an LLM never authorizes commands or trust.
+to **answer** in chat (no tasks), **propose** a task breakdown without opening work,
+**delegate** self-contained tasks only when the user explicitly asks to execute, or
+**ask** a clarifying question. A proposal remains a conversation artifact until its
+owner selects "Open this work". Output that is not a valid decision is shown as an
+answer and never starts Builders; legacy `plan` output is downgraded to a proposal.
+A message that is itself a structured text plan is explicit delegation and skips the
+Supervisor. The Supervisor proposes; the backend validates and authorizes every
+transition, and an LLM never authorizes commands or trust.
 
 Ready independent Tasks dispatch concurrently, subject to transactional Node and
 profile capacity. Downstream worktrees inherit trusted prerequisite commits;
@@ -207,14 +210,18 @@ manifest supports standalone use; authenticated offline operation is not provide
 ## Web app
 
 The web app is phone-first and follows `docs/ui-ux-design-system.md`; shared tokens and
-components live in `packages/ui`. It opens on a list of your Sessions; the open Session is
-kept in the URL (`?session=<id>`), so refresh and back navigation keep it. A Session shows
+components live in `packages/ui`. The current Alpha opens on a list of your Sessions and its
+home composer creates a Session before the Supervisor decides. The target architecture replaces
+that entry point with a durable top-level Orchestrator chat: status questions summarize and link
+existing work without creating a Session, while explicit execution routes to a new or existing
+Session. This global routing layer is not shipped yet. An open Session is kept in the URL
+(`?session=<id>`), so refresh and back navigation keep it. A Session shows
 your messages, the planning outcome for each, Task cards with their Runs (status, live
 activity label, reported token totals) and a Stop control per active Run and per Session.
-The composer stays pinned to the bottom; in an ended Session, sending starts a new Session.
+The Session composer stays pinned to the bottom; in an ended Session, sending starts a new Session.
 Mac status, removal of a Mac and sign-out are in Settings.
 
-Supervisor replies (answers, plans, questions) and each agent's final reply appear in
+Supervisor replies (answers, proposals, delegated work, questions) and each agent's final reply appear in
 the conversation, rendered as safe Markdown. Not yet: steering a running agent,
 stopping the Supervisor, run activity detail, agent profile and usage screens.
 
@@ -257,10 +264,10 @@ then proves a new Repair SHA and workspace, retained failed trust, two independe
 Verifier workspaces and final integration. It uses fixture control-plane identities,
 not deployed Google/device authentication.
 
-Public phone -> Google/Convex Auth -> pairing -> deployed Convex -> launchd E2E remains untested
-without an operator-configured deployment. Native process resumption after Node
-restart, a native approval bridge, richer verification modalities and automatic
-publishing are not implemented. Repository scripts execute
+Public phone -> Google/Convex Auth -> pairing -> deployed Convex -> launchd E2E still needs
+real-iPhone and second-account validation. Native process resumption after Node restart, the
+native approval bridge and explicit pull-request publishing are implemented; richer verification
+modalities and combining several independent task branches into one PR remain limited. Repository scripts execute
 with local Node authority and must be trusted by the repository owner; Alpha is
 not a sandbox for hostile repository code. Node reconciliation preserves ambiguous
 leases instead of silently starting a second process.
