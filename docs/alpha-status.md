@@ -1,9 +1,13 @@
 # Alpha status and handoff
 
-Status as of 2026-10-06, main through #89. Alpha is **not finished**:
-issues #45, #47, #48 and #49 are open. This file is the handoff for any agent picking
-up the work; update it when a gap closes or a new one is found. Never describe a
-planned capability as shipped.
+Status as of 2026-10-06, main through #112 (plus #105 and #110). The engineering Alpha is built and
+deployed as a **private Alpha candidate**: the core Supervisor -> Builder ->
+Verifier -> trust -> integration loop and its web/mobile control plane are shipped.
+Alpha completion still requires the operational proof listed below. The owner has
+explicitly deferred real-iPhone, second-Google-account and multiple-workstation
+validation. This file is the handoff for any agent picking up the work; update it
+when a gap closes or a new one is found. Never describe a planned capability as
+shipped or a tested implementation as proven in production.
 
 ## What works end to end
 
@@ -133,7 +137,7 @@ planned capability as shipped.
   reasoning efforts in the heartbeat; `agentProfiles:models` returns them per runtime for
   the owner's Macs. Settings → Agents offers them as a Model picker whose effort choices follow
   the chosen model; until a Mac reports models it falls back to a text field.
-- **Claude runtime (branch `feat/claude-runtime`, not yet on main or the Mac Node):**
+- **Claude runtime (#95, on main and the owner's Mac Node):**
   `packages/runtime-claude` drives the installed `claude` CLI (Claude Code) over its
   `-p` stream-json protocol in the same managed worktrees as Codex; it is labelled
   "Claude" in the web app. Auth and billing: the owner's own Claude Code login
@@ -155,8 +159,8 @@ planned capability as shipped.
   treated as interrupted (the transcript is not read); real Repair and an approved
   real permission request are covered by controlled tests only; cost is not recorded
   (the CLI's cost figure is an estimate, not the subscription's billing).
-- **Per-repository GitHub publishing (branch `feat/repo-github-tokens`, PR #98, not yet
-  on main or the Mac Node; combines #96's per-repository gh account):** "Open pull
+- **Per-repository GitHub publishing (#98, on main; combines #96's per-repository gh
+  account):** "Open pull
   request" resolves the credential per repository in this order: its own GitHub token
   from the Mac's login Keychain (`app.zamolxis.github-token`, account
   `github.com/<owner>/<repo>`), else the gh account chosen for it in setup
@@ -179,6 +183,11 @@ planned capability as shipped.
   only at push time (`PUBLISH_PUSH_FAILED`); repository hooks see the git environment
   during the push; non-GitHub remotes still push with their own Git credentials; the
   gh-account status check runs `gh auth token` about once a minute per repository.
+  The automated local end-to-end path passes, but opening a PR through the deployed
+  production path has not yet succeeded; recent attempts ended in
+  `PUBLISH_PUSH_FAILED`, so production publishing remains unproven. #105 (merged) treats a
+  retry whose branch is already at the exact trusted SHA as published and recovers its PR
+  even when closed or merged; a successful production PR after it is still the proof.
 - **Run detail (#68):** tapping a run opens result, grouped live activity, changes
   (files, base → head, branch) and verification (evidence, trust decision, repairs).
 - **Setup repair (#69):** rerunning setup offers Check and repair, repositories,
@@ -193,7 +202,7 @@ with no sign-in or deployment, so UI changes can be checked in a browser or driv
 on phone and laptop viewports before shipping (see `docs/agent-runbook.md`). It is dev-only: the
 module aliases exist only when the variable is set.
 
-## Gaps blocking Alpha
+## Remaining Alpha validation and known limits
 
 1. **Supervisor (#49), shipped as answer/propose/delegate/ask.** Every message runs a read-only
    Supervisor agent on the Node (`packages/node-core/src/capabilities/supervisor.ts`,
@@ -286,8 +295,7 @@ module aliases exist only when the variable is set.
    changing global `gh` state; PR #98 adds a per-repository token that takes
    precedence (see above). On the owner's explicit "Open pull request", the Node pushes
    the trusted integration commit as `zamolxis/<task>-<sha7>` (no force, hooks
-   respected, never the default branch) and opens a PR (on main with `gh`, or a compare
-   link when no account was configured; with #98 always through the REST API, failing
+   respected, never the default branch) and opens a PR through the REST API, failing
    with `PUBLISH_GITHUB_NOT_CONNECTED` when the repository has neither credential).
    Nothing merges automatically. Missing: changing/reconnecting the account from web
    Settings and combining several task branches into one PR; base
@@ -299,14 +307,26 @@ module aliases exist only when the variable is set.
 8. **Validation.** Done: a Mac reboot on 2026-10-06 — the launchd Node started at
    login, read its credential from the login Keychain and resumed heartbeats with no
    errors once the network was up (a few `HEARTBEAT_FAILED`/`NODE_CONTROL_FAILED` lines
-   right after boot are expected); stop against real Codex (#76). Not yet: real iPhone
-   (keyboard with the pinned composer, home-screen mode), deployed Google sign-in with
-   a second account.
+   right after boot are expected); stop against real Codex (#76). Final current-main
+   acceptance passed at exact SHA `85c1f32`: `pnpm check` and all five authenticated
+   real-Codex groups (intent loop, Supervisor, Orchestrator, approval reject/approve
+   and restart/resume) passed, with canonical HEAD and status unchanged. The only
+   non-deferred Alpha gate still required is one successful production PR through
+   Zamolxis. The owner has deferred these other validations: real iPhone (keyboard
+   with the pinned composer, home-screen and offline modes), deployed Google sign-in
+   with a second account, and routing across a second registered workstation. The
+   control plane supports multiple workstation records, but production currently
+   demonstrates only one real Mac.
 
 ## Next steps, in order
 
-1. External ticket links (GitHub/Linear) need a connector first.
-2. Real-device validation: iPhone and a second Google account.
+1. Make the configured repository publishing identity pass the production push and
+   open one real PR entirely through Zamolxis.
+2. Reconcile or close the remaining Alpha tracking issues against shipped behavior.
+3. Owner-deferred validation: real iPhone/PWA/offline behavior, a second Google
+   account and a second workstation.
+4. External ticket links (GitHub/Linear) need a connector first and are not part of
+   the implemented Alpha candidate.
 
 ## Operations on the owner's Mac
 
