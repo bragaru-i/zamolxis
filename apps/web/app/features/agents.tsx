@@ -53,7 +53,7 @@ export const ROLES: Array<{ role: Role; label: string; job: string; help: string
     role: "orchestrator",
     label: "Orchestrator",
     job: "Chats with you",
-    help: "Writes replies in the home conversation from current Sessions, approvals and runs. It only talks: work starts in a Session when you ask for it or open a proposal. Without a connected Mac, Zamolxis answers without a model.",
+    help: "Writes replies in the home conversation from current Sessions, approvals and runs. It only talks: work starts in a Session when you ask for it or open a proposal. Without a connected computer, Zamolxis answers without a model.",
   },
   {
     role: "supervisor",
@@ -105,8 +105,18 @@ export function runtimeLabel(runtime: string | undefined): string {
 function effortLabel(effort: string): string {
   return effort === "xhigh" ? "Extra high" : effort[0]?.toUpperCase() + effort.slice(1);
 }
-/** The backend's built-in runtime when no enabled profile applies. */
+/**
+ * The backend's last-resort runtime when no enabled profile applies and nothing is known
+ * about the owner's computers; `agentProfiles.defaultRuntime` reports the real default
+ * (Codex when a computer offers it, else what a computer offers).
+ */
 export const DEFAULT_RUNTIME = "codex";
+
+/** The runtime every role uses in a scope, or "" when roles differ ("Mixed"). */
+export function sharedRuntime(runtimes: Iterable<string>): string {
+  const distinct = new Set(runtimes);
+  return distinct.size === 1 ? ([...distinct][0] ?? "") : "";
+}
 
 /** The profile a scope owns for a role: its enabled one, else the most recently edited. */
 export function scopeProfile(role: Role, rows: Profile[]): Profile | undefined {
@@ -128,7 +138,7 @@ export function effectiveProfile(
   return { source: "default" };
 }
 
-/** Runtimes reported by the user's Macs, plus the current value so it stays selectable. */
+/** Runtimes reported by the user's computers, plus the current value so it stays selectable. */
 export function runtimeChoices(devices: DeviceRuntimes[] | undefined, current?: string) {
   const choices = new Set<string>();
   for (const device of devices ?? []) {
@@ -252,7 +262,13 @@ export function AgentsSettings({
   const [scope, setScope] = useState(initialScope);
   const [editing, setEditing] = useState<Role | undefined>(initialRole);
   const [saved, setSaved] = useState(false);
+  const [switching, setSwitching] = useState(false);
+  const [notice, setNotice] = useState<{ tone: "success" | "danger"; text: string }>();
+  const setEveryRole = useMutation(api.agentProfiles.setRuntimeForAllRoles);
   const products = useQuery(api.supervisor.products, active ? {} : "skip") as Product[] | undefined;
+  const fallback =
+    (useQuery(api.agentProfiles.defaultRuntime, active ? {} : "skip") as string | undefined) ??
+    DEFAULT_RUNTIME;
   const global = useQuery(api.agentProfiles.list, active ? {} : "skip") as Profile[] | undefined;
   const productId = scope ? (scope as Id<"products">) : undefined;
   const scoped = useQuery(api.agentProfiles.list, active && productId ? { productId } : "skip") as
@@ -274,7 +290,7 @@ export function AgentsSettings({
       <StatusBadge status="completed" label="Custom" />
     );
   const summary = (shown: Profile | undefined) =>
-    `${shown ? describeProfile(shown) : `${runtimeLabel(DEFAULT_RUNTIME)} · default model`}${
+    `${shown ? describeProfile(shown) : `${runtimeLabel(fallback)} · default model`}${
       shown?.maxConcurrency ? ` · up to ${shown.maxConcurrency} at once` : ""
     }`;
   const loading = global === undefined || scopeRows === undefined;
@@ -291,6 +307,7 @@ export function AgentsSettings({
         existing={own}
         prefill={own ?? shown}
         runtimes={runtimeChoices(devices, (own ?? shown)?.runtime)}
+        fallback={fallback}
         onDone={() => (compact ? setSaved(true) : setEditing(undefined))}
       />
     );
@@ -366,6 +383,39 @@ export function AgentsSettings({
           back to All products.
         </p>
       )}
+      {!loading && (
+        <Picker
+          label="Agent for every role"
+          value={sharedRuntime(ROLES.map(({ role }) => roleState(role).shown?.runtime ?? fallback))}
+          disabled={switching}
+          options={[
+            ...(sharedRuntime(ROLES.map(({ role }) => roleState(role).shown?.runtime ?? fallback))
+              ? []
+              : [{ value: "", label: "Mixed", description: "Roles use different agents." }]),
+            ...runtimeChoices(devices, fallback).map((choice) => ({
+              value: choice,
+              label: runtimeLabel(choice),
+            })),
+          ]}
+          onChange={async (value) => {
+            if (!value) return;
+            setSwitching(true);
+            setNotice(undefined);
+            try {
+              await setEveryRole({ ...(productId ? { productId } : {}), runtime: value });
+              setNotice({
+                tone: "success",
+                text: `Every role uses ${runtimeLabel(value)} for ${scopeName} from the next run. Models are back to each agent's default.`,
+              });
+            } catch (error) {
+              setNotice({ tone: "danger", text: explainProfileError(error) });
+            } finally {
+              setSwitching(false);
+            }
+          }}
+        />
+      )}
+      {notice && <Notice tone={notice.tone}>{notice.text}</Notice>}
       {loading ? (
         <p className="z-muted z-small" role="status">
           Loading agents…
@@ -440,6 +490,7 @@ export function ProfileEditor({
   existing,
   prefill,
   runtimes,
+  fallback = DEFAULT_RUNTIME,
   onDone,
 }: {
   role: Role;
@@ -449,6 +500,8 @@ export function ProfileEditor({
   existing: Profile | undefined;
   prefill: Profile | undefined;
   runtimes: string[];
+  /** The runtime roles use without a profile; preselected for a new profile. */
+  fallback?: string;
   onDone: () => void;
 }) {
   const upsert = useMutation(api.agentProfiles.upsert);
@@ -462,14 +515,16 @@ export function ProfileEditor({
   const [concurrency, setConcurrency] = useState(
     existing?.maxConcurrency !== undefined ? String(existing.maxConcurrency) : "",
   );
-  const [runtime, setRuntime] = useState(prefill?.runtime ?? runtimes[0] ?? DEFAULT_RUNTIME);
+  const [runtime, setRuntime] = useState(
+    prefill?.runtime ?? (runtimes.includes(fallback) ? fallback : runtimes[0]) ?? fallback,
+  );
   const [model, setModel] = useState(prefill?.model ?? "");
   const [effort, setEffort] = useState(prefill?.reasoningEffort ?? "");
   const [instructions, setInstructions] = useState(prefill?.instructions ?? "");
   const [enabled, setEnabled] = useState(existing?.enabled ?? true);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState("");
-  // The models this runtime reports on the owner's Macs; empty until a Mac reports them.
+  // The models this runtime reports on the owner's computers; empty until a computer reports them.
   const catalogs = useQuery(api.agentProfiles.models, {}) as RuntimeModels[] | undefined;
   const catalog = catalogs?.find((item) => item.runtime === runtime)?.models ?? [];
   const chosen = catalog.find((item) => item.id === model);
@@ -485,9 +540,9 @@ export function ProfileEditor({
       label: item.displayName,
       ...(item.description ? { description: item.description } : {}),
     })),
-    // A saved model the Macs no longer report stays visible instead of silently changing.
+    // A saved model the computers no longer report stays visible instead of silently changing.
     ...(model && !chosen
-      ? [{ value: model, label: model, description: "Not reported by your Mac right now." }]
+      ? [{ value: model, label: model, description: "Not reported by your computer right now." }]
       : []),
   ];
   const offered = (chosen ?? (model ? undefined : defaultModel))?.efforts;
@@ -577,7 +632,7 @@ export function ProfileEditor({
             onChange={(event) => setModel(event.target.value)}
           />
           <span className="z-xsmall z-muted">
-            Your Mac lists the available models once it is online with the latest Zamolxis.
+            Your computer lists the available models once it is online with the latest Zamolxis.
           </span>
         </label>
       )}

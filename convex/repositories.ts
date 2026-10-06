@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { type MutationCtx, mutation, query } from "./_generated/server";
 import { bounded, fail, load, requireNode, requireUser } from "./lib/access";
+import { canonicalRepository } from "./lib/repositories";
 import { githubAccess } from "./schema";
 export const create = mutation({
   args: {
@@ -33,10 +34,11 @@ export const listByProduct = query({
     const owner = await requireUser(ctx);
     const product = await load(ctx, "products", args.productId);
     if (product.ownerId !== owner._id) fail("FORBIDDEN");
-    return ctx.db
+    const rows = await ctx.db
       .query("repositories")
       .withIndex("by_product", (q) => q.eq("productId", args.productId))
       .take(bounded(args.limit ?? 50));
+    return rows.filter((row) => !row.mergedIntoId);
   },
 });
 
@@ -53,7 +55,7 @@ const ACTIVE_RUNS = [
 ] as const;
 const ACTIVE_WORKSPACES = ["requested", "provisioning", "in_use", "integrating"] as const;
 
-async function locationBusy(ctx: MutationCtx, location: Doc<"repositoryLocations">) {
+export async function locationBusy(ctx: MutationCtx, location: Doc<"repositoryLocations">) {
   for (const status of ACTIVE_WORKSPACES) {
     const workspaces = await ctx.db
       .query("workspaces")
@@ -87,7 +89,7 @@ async function locationBusy(ctx: MutationCtx, location: Doc<"repositoryLocations
 async function removeLocation(ctx: MutationCtx, location: Doc<"repositoryLocations">) {
   if (location.status === "removed") return;
   if (await locationBusy(ctx, location))
-    fail("LOCATION_BUSY", "Work is still running in this repository on this Mac");
+    fail("LOCATION_BUSY", "Work is still running in this repository on this computer");
   const now = Date.now();
   await ctx.db.patch("repositoryLocations", location._id, {
     status: "removed",
@@ -96,7 +98,7 @@ async function removeLocation(ctx: MutationCtx, location: Doc<"repositoryLocatio
   });
 }
 
-// Repositories one of the owner's Macs may work on, for Settings.
+// Repositories one of the owner's computers may work on, for Settings.
 export const listLocations = query({
   args: { workstationId: v.id("workstations") },
   returns: v.array(
@@ -140,7 +142,7 @@ export const listLocations = query({
   },
 });
 
-// The owner removes a repository from one Mac in Settings.
+// The owner removes a repository from one computer in Settings.
 export const removeLocationForOwner = mutation({
   args: { repositoryLocationId: v.id("repositoryLocations") },
   returns: v.null(),
@@ -155,14 +157,14 @@ export const removeLocationForOwner = mutation({
 });
 
 // The Node removes its own location (`pnpm zamolxis setup`, Add or remove repositories).
-// Idempotent: a repository this Mac never registered, or already removed, is "absent".
+// Idempotent: a repository this computer never registered, or already removed, is "absent".
 export const removeOwnLocation = mutation({
   args: { workstationId: v.id("workstations"), repositoryId: v.id("repositories") },
   returns: v.union(v.literal("removed"), v.literal("absent")),
   handler: async (ctx, args) => {
     const device = await requireNode(ctx, args.workstationId);
-    const repository = await ctx.db.get("repositories", args.repositoryId);
-    if (!repository || repository.ownerId !== device.ownerId) fail("FORBIDDEN");
+    const repository = await canonicalRepository(ctx, args.repositoryId);
+    if (repository.ownerId !== device.ownerId) fail("FORBIDDEN");
     const location = await ctx.db
       .query("repositoryLocations")
       .withIndex("by_repository_workstation", (q) =>

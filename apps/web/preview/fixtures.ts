@@ -467,7 +467,7 @@ function build(name: string) {
         planStatus: "completed",
         decision: "ask",
         reply:
-          "The behavioral check needs a running Node. Should I retry once the Mac is online, or mark the task as done without it?",
+          "The behavioral check needs a running Node. Should I retry once the computer is online, or mark the task as done without it?",
       },
     ],
     s4: [
@@ -927,9 +927,9 @@ function build(name: string) {
                   { id: "access", title: "Get access", state: "done", detail: "Access granted." },
                   {
                     id: "pair",
-                    title: "Pair a Mac",
+                    title: "Pair a computer",
                     state: "needs_you",
-                    detail: "Run `pnpm zamolxis setup` on your Mac.",
+                    detail: "Run `pnpm zamolxis setup` on your computer.",
                   },
                   {
                     id: "repo",
@@ -1007,6 +1007,8 @@ function build(name: string) {
         }
         case "agentProfiles:list":
           return args.productId ? [] : profiles;
+        case "agentProfiles:defaultRuntime":
+          return "codex";
         case "agentProfiles:models":
           return empty
             ? []
@@ -1207,6 +1209,36 @@ function build(name: string) {
         case "approvals:resolve":
           approvals.splice(0, approvals.length);
           return null;
+        case "agentProfiles:setRuntimeForAllRoles": {
+          if (args.productId) return null;
+          for (const role of [
+            "orchestrator",
+            "supervisor",
+            "builder",
+            "verifier",
+            "repair",
+            "integration",
+          ]) {
+            const own = profiles.find((row) => row.role === role && row.enabled);
+            if (own) {
+              if (own.runtime !== args.runtime) {
+                own.model = undefined;
+                own.reasoningEffort = undefined;
+              }
+              own.runtime = args.runtime;
+              own.updatedAt = Date.now();
+            } else
+              profiles.push({
+                _id: `a${role}${Date.now()}`,
+                name: `${role[0]?.toUpperCase()}${role.slice(1)} · All products`,
+                role,
+                runtime: args.runtime,
+                enabled: true,
+                updatedAt: Date.now(),
+              });
+          }
+          return null;
+        }
         case "orchestrator:openProposal": {
           const row = orchestrator.find((candidate) => candidate._id === args.messageId);
           if (row) row.proposalSessionId = "s2";

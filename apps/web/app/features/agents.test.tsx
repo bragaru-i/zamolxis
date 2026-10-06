@@ -33,6 +33,7 @@ import {
   runtimeChoices,
   runtimeLabel,
   scopeProfile,
+  sharedRuntime,
   upsertArgs,
 } from "./agents";
 
@@ -78,7 +79,7 @@ describe("profile resolution", () => {
     expect(scopeProfile("repair", [on])).toBeUndefined();
   });
 
-  it("offers runtimes reported by active Macs plus the current one", () => {
+  it("offers runtimes reported by active computers plus the current one", () => {
     expect(runtimeChoices(undefined)).toEqual(["codex"]);
     expect(
       runtimeChoices(
@@ -91,7 +92,7 @@ describe("profile resolution", () => {
     ).toEqual(["claude", "codex"]);
   });
 
-  it("offers Claude when a Mac reports it, labelled Claude", () => {
+  it("offers Claude when a computer reports it, labelled Claude", () => {
     const choices = runtimeChoices([
       {
         status: "online",
@@ -222,6 +223,38 @@ describe("profile resolution", () => {
 });
 
 describe("AgentsSettings", () => {
+  it("shows the computers' default agent and offers one agent for every role", () => {
+    state.data = {
+      "supervisor:products": [],
+      "agentProfiles:list": [],
+      "agentProfiles:defaultRuntime": "claude",
+    };
+    const html = renderToStaticMarkup(
+      createElement(AgentsSettings, {
+        active: true,
+        devices: [{ status: "online", runtimes: [{ runtime: "claude", status: "available" }] }],
+      }),
+    );
+    expect(html).toContain("Claude · default model");
+    expect(html).not.toContain("Codex · default model");
+    expect(html).toContain("Agent for every role");
+    expect(html).not.toContain("Mixed");
+    expect(sharedRuntime(["claude", "claude"])).toBe("claude");
+    expect(sharedRuntime(["claude", "codex"])).toBe("");
+    expect(sharedRuntime([])).toBe("");
+  });
+
+  it("says Mixed when roles use different agents", () => {
+    state.data = {
+      "supervisor:products": [],
+      "agentProfiles:list": [profile({ runtime: "claude" })],
+    };
+    const html = renderToStaticMarkup(createElement(AgentsSettings, { active: true, devices: [] }));
+    expect(html).toContain("Mixed");
+    expect(html).toContain("Claude · default model");
+    expect(html).toContain("Codex · default model");
+  });
+
   it("does not query while Settings is closed", () => {
     const html = renderToStaticMarkup(
       createElement(AgentsSettings, { active: false, devices: undefined }),
@@ -282,7 +315,7 @@ describe("AgentsSettings", () => {
 });
 
 describe("ProfileEditor", () => {
-  it("offers the models the Mac reports with only their efforts", () => {
+  it("offers the models the computer reports with only their efforts", () => {
     state.data = {
       "agentProfiles:models": [
         {
@@ -322,7 +355,7 @@ describe("ProfileEditor", () => {
     expect(html).not.toContain('placeholder="Default model"');
   });
 
-  it("keeps a text field until a Mac reports models", () => {
+  it("keeps a text field until a computer reports models", () => {
     state.data = {};
     const html = renderToStaticMarkup(
       createElement(ProfileEditor, {
@@ -337,7 +370,7 @@ describe("ProfileEditor", () => {
       }),
     );
     expect(html).toContain('placeholder="Default model"');
-    expect(html).toContain("Your Mac lists the available models");
+    expect(html).toContain("Your computer lists the available models");
   });
 
   it("prefills the current values and keeps unknown efforts selectable", () => {

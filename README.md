@@ -118,7 +118,7 @@ removed). The Node reports only the status (`ok`, `expiring` within 14 days,
 `expired`, `invalid`, `no_push`, `missing`, `account_unavailable`, `unreachable`), the
 source (`token` or `gh_account`), the GitHub login and the token expiry, at most every
 30 minutes per repository and within about a minute of a credential change; Settings →
-Macs → Repositories shows it ("GitHub: publishing as bragaru-i (token, expires in 80
+Computers → Repositories shows it ("GitHub: publishing as bragaru-i (token, expires in 80
 days)" or "… (gh account)") with a "Create a token on GitHub" link when it needs one.
 Limits: the `permissions.push` check reflects the account's role, so a token whose
 Contents permission is read-only passes the check and fails at push time
@@ -133,7 +133,7 @@ does not change the Task or Session outcome. Merging stays a human decision.
 
 **Worktree retention.** Managed worktrees (planning, Builder, Verifier, Repair,
 integration) are removed by an hourly backend sweep (`convex/crons.ts`) that sends
-`workspace.cleanup` for at most 10 eligible worktrees per online Mac; Settings →
+`workspace.cleanup` for at most 10 eligible worktrees per online computer; Settings →
 Storage shows the count per Mac, what can be removed now and the last cleanup, offers
 "Clean up now" (owner-only, same rules and batch) and sets the retention window
 (1–30 days, default 3). The rules (`convex/lib/retention.ts`) are deterministic: a
@@ -290,14 +290,14 @@ links without creating work: Sessions, pending approvals, pull requests, Tasks t
 continuation follows a recent linked Session when its Product and repository match. Each routing
 decision is persisted. When a Mac is online, the Orchestrator model writes the reply from that
 summary (read-only, no repository) and may answer, ask or propose; a proposal starts nothing until
-you click **Open this work**. Without a Mac the summary itself is the answer. Settings → Agents
+you click **Open this work**. Without a computer the summary itself is the answer. Settings → Agents
 selects the runtime, model, reasoning effort and owner instructions for Orchestrator, Supervisor,
 Builder, Verifier, Repair and Integration roles. Global summaries do not link external tickets yet. An open Session is kept in the URL
 (`?session=<id>`), so refresh and back navigation keep it. A Session shows
 your messages, the planning outcome for each, Task cards with their Runs (status, live
 activity label, reported token totals) and a Stop control per active Run and per Session.
 The Session composer stays pinned to the bottom; in an ended Session, sending starts a new Session.
-Mac status, removal of a Mac and sign-out are in Settings.
+Computer status, removal of a computer and sign-out are in Settings.
 
 Supervisor replies (answers, proposals, delegated work, questions) and each agent's final reply appear in
 the conversation, rendered as safe Markdown. Not yet: steering a running agent,

@@ -46,7 +46,7 @@ function harness(
   const checked: string[] = [];
   const prompts: string[] = [];
   const tokens = new MemoryRepositoryTokenStore();
-  // GitHub CLI accounts signed in on this Mac, by login.
+  // GitHub CLI accounts signed in on this computer, by login.
   const signedIn = new Map<string, string>();
   const env: GitHubTokenEnvironment = {
     io: {
@@ -94,7 +94,7 @@ function harness(
   return { env, logs, opened, reports, checked, prompts, tokens, signedIn };
 }
 
-describe("GitHub tokens on the Mac", () => {
+describe("GitHub tokens on the computer", () => {
   it("lists only repositories with a GitHub origin", () => {
     expect(githubEntries(repositories).map((entry) => entry.github)).toEqual([
       ZAMOLXIS,
@@ -110,7 +110,7 @@ describe("GitHub tokens on the Mac", () => {
     expect(h.logs).toEqual([
       "GitHub bragaru-i/zamolxis: publishing as bragaru-i (token, expires in 80 days)",
       "GitHub wellcopy/site: not connected: no token and no GitHub account chosen for this repository yet",
-      "To add or replace a token, run pnpm zamolxis github-token in Terminal on this Mac.",
+      "To add or replace a token, run pnpm zamolxis github-token in Terminal on this computer.",
     ]);
     expect(h.reports.map(({ repositoryId, access }) => [repositoryId, access.status])).toEqual([
       ["r1", "ok"],
@@ -177,7 +177,7 @@ describe("GitHub tokens on the Mac", () => {
     const h = harness({ interactive: false });
     await manageGitHubTokens(withAccount, h.env, { repository: "zamolxis" });
     // Not signed in to gh: unavailable, and GitHub is not asked.
-    expect(h.logs[0]).toContain("isn't signed in to gh on this Mac");
+    expect(h.logs[0]).toContain("isn't signed in to gh on this computer");
     expect(h.checked).toEqual([]);
     expect(h.reports.at(-1)?.access).toMatchObject({
       status: "account_unavailable",

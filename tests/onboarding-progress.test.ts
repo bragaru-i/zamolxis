@@ -151,7 +151,7 @@ describe("onboarding progress", () => {
       session: "needs_you",
     });
     expect(detail(progress, "runtime")).toContain("codex-cli 0.160.0");
-    // The Mac stops reporting: the client switches to the stale state at this time.
+    // The computer stops reporting: the client switches to the stale state at this time.
     const service = progress.steps.find((step) => step.id === "service");
     expect(service?.staleAfter).toBeGreaterThan(Date.now());
     expect(service?.stale).toEqual({
@@ -180,7 +180,7 @@ describe("onboarding progress", () => {
     expect(states(progress).session).toBe("done");
   });
 
-  it("reports an offline Mac and tells the owner how to repair it", async () => {
+  it("reports an offline computer and tells the owner how to repair it", async () => {
     const { t, user, userId, node } = await fixture();
     const workstationId = await approvedMac(t, userId);
     await activate(t, workstationId);
@@ -194,9 +194,9 @@ describe("onboarding progress", () => {
     const progress = await progressOf(user);
     expect(states(progress).service).toBe("failed");
     expect(detail(progress, "service")).toBe(
-      "Studio is offline. Open Terminal on your Mac and run `pnpm zamolxis setup --repair`.",
+      "Studio is offline. Open Terminal on your computer and run `pnpm zamolxis setup --repair`.",
     );
-    // The runtime reported by the last heartbeat stays available while the Mac is offline.
+    // The runtime reported by the last heartbeat stays available while the computer is offline.
     expect(states(progress).runtime).toBe("done");
     expect(states(progress).session).toBe("upcoming");
   });
@@ -228,7 +228,7 @@ describe("onboarding progress", () => {
     expect(detail(unavailable, "runtime")).toContain("Codex or Claude Code");
   });
 
-  it("asks for repositories when the running Mac has none, and flags missing ones", async () => {
+  it("asks for repositories when the running computer has none, and flags missing ones", async () => {
     const { t, user, userId, node } = await fixture();
     const workstationId = await approvedMac(t, userId);
     await activate(t, workstationId);
@@ -257,7 +257,7 @@ describe("onboarding progress", () => {
     expect(states(progress).repositories).toBe("needs_you");
   });
 
-  it("only reads the signed-in owner's Macs, repositories and sessions", async () => {
+  it("only reads the signed-in owner's computers, repositories and sessions", async () => {
     const { t, user, other, userId } = await fixture();
     const workstationId = await approvedMac(t, userId);
     await activate(t, workstationId);
@@ -272,7 +272,7 @@ describe("onboarding progress", () => {
     const bob = await progressOf(other);
     expect(states(bob)).toMatchObject({ pair: "needs_you", repositories: "upcoming" });
     expect(bob.steps.some((step) => step.detail.includes("Studio"))).toBe(false);
-    // A revoked Mac no longer counts.
+    // A revoked computer no longer counts.
     await user.mutation(api.workstations.revoke, { workstationId });
     expect(states(await progressOf(user)).pair).toBe("needs_you");
     // Pending access and anonymous callers get nothing.

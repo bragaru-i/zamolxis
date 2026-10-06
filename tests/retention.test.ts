@@ -56,7 +56,7 @@ afterEach(() => {
 type T = TestConvex<typeof schema>;
 // Test fields may clear optional values (undefined), as patches do.
 type Fields<D> = { [K in keyof D]?: D[K] | undefined };
-async function base(t: T, ownerId: Id<"users">, name = "Mac", heartbeat = NOW) {
+async function base(t: T, ownerId: Id<"users">, name = "computer", heartbeat = NOW) {
   return t.run(async (ctx) => {
     const workstationId = await ctx.db.insert("workstations", {
       ownerId,
@@ -97,8 +97,8 @@ async function fixture() {
   const bob = await seedHuman(t, "bob");
   const ids = await base(t, alice.userId);
   const node = t.withIdentity({
-    subject: "device-Mac",
-    tokenIdentifier: "device-Mac",
+    subject: "device-computer",
+    tokenIdentifier: "device-computer",
     ownerSubject: "alice",
   });
   const session = (fields: Fields<Doc<"workSessions">> = {}) =>
@@ -439,7 +439,7 @@ describe("retention eligibility", () => {
 });
 
 describe("hourly sweep", () => {
-  it("requests a bounded, idempotent batch per online Mac only", async () => {
+  it("requests a bounded, idempotent batch per online computer only", async () => {
     const f = await fixture();
     const offline = await base(f.t, f.alice.userId, "Away", NOW - HOUR);
     const sessionId = await f.session();
@@ -584,7 +584,7 @@ describe("hourly sweep", () => {
 });
 
 describe("owner control", () => {
-  it("lets only the owner clean up now, on an online Mac, with the same rules", async () => {
+  it("lets only the owner clean up now, on an online computer, with the same rules", async () => {
     const f = await fixture();
     const { workspaceId } = await finishedBuilder(f);
     const young = await f.workspace(await f.session({ lastActivityAt: NOW - DAY }));
@@ -601,7 +601,13 @@ describe("owner control", () => {
     const before = await f.alice.user.query(api.workspaces.storage, {});
     expect(before.retentionDays).toBe(3);
     expect(before.macs).toEqual([
-      expect.objectContaining({ name: "Mac", managed: 2, eligible: 1, pending: 0, online: true }),
+      expect.objectContaining({
+        name: "computer",
+        managed: 2,
+        eligible: 1,
+        pending: 0,
+        online: true,
+      }),
     ]);
     expect(
       await f.alice.user.mutation(api.workspaces.cleanupNow, { workstationId: f.workstationId }),
@@ -613,7 +619,7 @@ describe("owner control", () => {
       eligible: 0,
       pending: 1,
     });
-    // Bob sees only his own (no) Macs.
+    // Bob sees only his own (no) computers.
     expect((await f.bob.user.query(api.workspaces.storage, {})).macs).toEqual([]);
     await f.patch("workstations", f.workstationId, { lastHeartbeatAt: NOW - HOUR });
     await expect(
@@ -784,7 +790,7 @@ describe("Node cleanup against a disposable repository", () => {
   });
 });
 
-it("keeps dispatching on a Mac with a long history of removed workspaces and settled runs", async () => {
+it("keeps dispatching on a computer with a long history of removed workspaces and settled runs", async () => {
   const f = await fixture();
   const sessionId = await f.session();
   const taskId = await f.task(sessionId);

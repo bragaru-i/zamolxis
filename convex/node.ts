@@ -7,6 +7,7 @@ import { applyApprovalEvent, expireRunApprovals } from "./approvals";
 import { failPublish, publishRecorded } from "./integration";
 import { bounded, fail, load, nodeRun, requireNode } from "./lib/access";
 import { decideVerification, refreshSession } from "./lib/lifecycle";
+import { canonicalRepository } from "./lib/repositories";
 import { recordCleanupFailure, recordCleanupRemoved } from "./lib/retention";
 import { refreshDependents, settleRun } from "./lib/settlement";
 import { valueKey } from "./lib/value";
@@ -22,6 +23,9 @@ export const heartbeat = mutation({
   args: {
     ...deviceArgs,
     instanceId: v.string(),
+    // Node.js `process.platform` / `process.arch`, so the app can say which kind of computer.
+    platform: v.optional(v.string()),
+    architecture: v.optional(v.string()),
     runtimeCapabilities: v.array(
       v.object({
         runtime: v.string(),
@@ -37,10 +41,14 @@ export const heartbeat = mutation({
     if (args.runtimeCapabilities.length > 32) fail("INVALID_ARGUMENT");
     for (const advertised of args.runtimeCapabilities)
       if ((advertised.models?.length ?? 0) > RUNTIME_MODEL_LIMITS.models) fail("INVALID_ARGUMENT");
+    if ((args.platform?.length ?? 0) > 32 || (args.architecture?.length ?? 0) > 32)
+      fail("INVALID_ARGUMENT");
     await ctx.db.patch("workstations", args.workstationId, {
       nodeInstanceId: args.instanceId,
       status: "online",
       lastHeartbeatAt: Date.now(),
+      ...(args.platform ? { platform: args.platform } : {}),
+      ...(args.architecture ? { architecture: args.architecture } : {}),
     });
     if (
       new Set(args.runtimeCapabilities.map((item) => item.runtime)).size !==
@@ -101,12 +109,13 @@ export const registerLocation = mutation({
   returns: v.id("repositoryLocations"),
   handler: async (ctx, args) => {
     const device = await requireNode(ctx, args.workstationId);
-    const repository = await load(ctx, "repositories", args.repositoryId);
+    // A Node set up before two entries for this remote were merged still names the old one.
+    const repository = await canonicalRepository(ctx, args.repositoryId);
     if (repository.ownerId !== device.ownerId) fail("FORBIDDEN");
     const existing = await ctx.db
       .query("repositoryLocations")
       .withIndex("by_repository_workstation", (q) =>
-        q.eq("repositoryId", args.repositoryId).eq("workstationId", args.workstationId),
+        q.eq("repositoryId", repository._id).eq("workstationId", args.workstationId),
       )
       .unique();
     const metadata = {
@@ -124,27 +133,27 @@ export const registerLocation = mutation({
       return existing._id;
     }
     return ctx.db.insert("repositoryLocations", {
-      repositoryId: args.repositoryId,
+      repositoryId: repository._id,
       workstationId: args.workstationId,
       ...metadata,
     });
   },
 });
 const DAY = 24 * 60 * 60 * 1000;
-// The Node reports a repository's GitHub publishing access on this Mac: status, credential
+// The Node reports a repository's GitHub publishing access on this computer: status, credential
 // source (its token or its gh account), login and token expiry only. Bounded and
-// owner-isolated; no credential ever leaves the Mac.
+// owner-isolated; no credential ever leaves the computer.
 export const reportGithubAccess = mutation({
   args: { ...deviceArgs, repositoryId: v.id("repositories"), access: githubAccess },
   returns: v.null(),
   handler: async (ctx, args) => {
     const device = await requireNode(ctx, args.workstationId);
-    const repository = await ctx.db.get("repositories", args.repositoryId);
-    if (!repository || repository.ownerId !== device.ownerId) fail("FORBIDDEN");
+    const repository = await canonicalRepository(ctx, args.repositoryId);
+    if (repository.ownerId !== device.ownerId) fail("FORBIDDEN");
     const location = await ctx.db
       .query("repositoryLocations")
       .withIndex("by_repository_workstation", (q) =>
-        q.eq("repositoryId", args.repositoryId).eq("workstationId", args.workstationId),
+        q.eq("repositoryId", repository._id).eq("workstationId", args.workstationId),
       )
       .unique();
     if (!location) fail("NOT_FOUND");

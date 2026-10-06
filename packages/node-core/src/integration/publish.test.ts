@@ -170,7 +170,7 @@ describe("publishing a trusted integration branch", () => {
       base: "main",
       head: f.request.branch,
     });
-    // Bodies leave the Mac redacted.
+    // Bodies leave the computer redacted.
     expect(f.opened[0]?.body).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz0123456789");
     // Retrying the same publication is safe: same commit, nothing forced, and the GitHub
     // client is asked again so it can recover an existing open, closed or merged PR.
@@ -263,7 +263,7 @@ describe("publishing a trusted integration branch", () => {
     const f = fixture();
     const workspace = f.workspaces.inspect("integration");
     const none = new MemoryRepositoryTokenStore();
-    // Not signed in to gh on this Mac: no fallback to any other account.
+    // Not signed in to gh on this computer: no fallback to any other account.
     await expect(
       publishIntegration(
         workspace,

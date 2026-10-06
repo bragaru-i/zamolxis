@@ -100,7 +100,7 @@ async function fixture(runtimeId = "fake", description = "Build a feature") {
   const { user } = await seedHuman(t, "alice");
   await user.mutation(api.profiles.ensure, {});
   const workstationId = await user.mutation(api.workstations.register, {
-    name: "Mac",
+    name: "computer",
     nodeAuthSubject: "device",
   });
   const node = t.withIdentity({

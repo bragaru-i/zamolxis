@@ -114,7 +114,7 @@ describe("runtime models", () => {
         models: [{ ...sol, isDefault: true }, alpha, mini],
       },
     ]);
-    // Owner isolation: another user sees nothing of Alice's Macs.
+    // Owner isolation: another user sees nothing of Alice's computers.
     expect(await other.query(api.agentProfiles.models, {})).toEqual([]);
     const bobs = await pair(other, "bob-mac", "bob");
     await bobs.beat([{ id: "bob-model", displayName: "Bob model" }]);
@@ -124,7 +124,7 @@ describe("runtime models", () => {
     expect((await user.query(api.agentProfiles.models, {}))[0]?.models).toHaveLength(3);
   });
 
-  it("ignores unavailable runtimes and revoked Macs", async () => {
+  it("ignores unavailable runtimes and revoked computers", async () => {
     const { user, pair } = await fixture();
     const studio = await pair(user, "studio", "alice");
     const laptop = await pair(user, "laptop", "alice");

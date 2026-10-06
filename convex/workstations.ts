@@ -61,7 +61,7 @@ export const revoke = mutation({
   },
 });
 
-// A Mac's display name: trimmed, 1..64 characters, no control characters.
+// A computer's display name: trimmed, 1..64 characters, no control characters.
 export function workstationName(value: string) {
   const name = value.trim();
   // biome-ignore lint/suspicious/noControlCharactersInRegex: rejecting control characters.
@@ -70,7 +70,7 @@ export function workstationName(value: string) {
   return name;
 }
 
-// Owner renames one of their Macs from Settings.
+// Owner renames one of their computers from Settings.
 export const rename = mutation({
   args: { workstationId: v.id("workstations"), name: v.string() },
   returns: v.null(),
@@ -78,13 +78,13 @@ export const rename = mutation({
     const owner = await requireUser(ctx);
     const device = await ctx.db.get("workstations", args.workstationId);
     if (!device || device.ownerId !== owner._id) fail("FORBIDDEN");
-    if (device.status === "revoked") fail("INVALID_STATE", "This Mac was removed");
+    if (device.status === "revoked") fail("INVALID_STATE", "This computer was removed");
     await ctx.db.patch("workstations", device._id, { name: workstationName(args.name) });
     return null;
   },
 });
 
-// The Node renames its own workstation (`pnpm zamolxis setup` → Rename this Mac).
+// The Node renames its own workstation (`pnpm zamolxis setup` → Rename this computer).
 export const renameSelf = mutation({
   args: { workstationId: v.id("workstations"), name: v.string() },
   returns: v.null(),
@@ -95,9 +95,9 @@ export const renameSelf = mutation({
   },
 });
 
-// After a Mac pairs again from the same local config, setup proves the previous entry
+// After a computer pairs again from the same local config, setup proves the previous entry
 // with its still-valid credential and retires it in favour of the new one. The token of
-// the previous entry is required, so nobody can revoke a Mac they cannot authenticate as.
+// the previous entry is required, so nobody can revoke a computer they cannot authenticate as.
 export const retireReplaced = mutation({
   args: { workstationId: v.id("workstations"), replacementId: v.id("workstations") },
   returns: v.null(),

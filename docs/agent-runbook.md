@@ -104,7 +104,7 @@ It opens GitHub's prefilled page (name, description, resource owner, 90 days,
 Contents + Pull requests: Read and write). Choose "Only select repositories" → the
 repository, generate, paste at the hidden prompt. The token is saved only after
 `GET /user` and `GET /repos/{owner}/{repo}` confirm push access. The running Node
-picks a new token up within about a minute (no restart) and Settings → Macs →
+picks a new token up within about a minute (no restart) and Settings → Computers →
 Repositories shows "publishing as <login> (token, expires in N days)" or
 "publishing as <login> (gh account)". Remove with
 `pnpm zamolxis github-token <owner/repo> --remove` (then revoke it on GitHub); the

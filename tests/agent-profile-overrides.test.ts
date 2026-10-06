@@ -84,7 +84,7 @@ describe("profile overrides", () => {
     const runId = await t.run(async (ctx) => {
       const workstationId = await ctx.db.insert("workstations", {
         ownerId: userId,
-        name: "Mac",
+        name: "computer",
         status: "online",
         registeredAt: 0,
       });
@@ -160,5 +160,127 @@ describe("profile overrides", () => {
     await user.mutation(api.agentProfiles.removeOverride, { profileId: overrideId });
     expect(await user.query(api.agentProfiles.list, { productId })).toEqual([]);
     expect(await user.query(api.agentProfiles.list, {})).toHaveLength(1);
+  });
+});
+
+describe("default runtime and one agent for every role", () => {
+  async function computer(
+    t: Awaited<ReturnType<typeof fixture>>["t"],
+    ownerId: Awaited<ReturnType<typeof fixture>>["userId"],
+    runtimes: string[],
+    online = true,
+  ) {
+    await t.run(async (ctx) => {
+      const workstationId = await ctx.db.insert("workstations", {
+        ownerId,
+        name: "Computer",
+        status: online ? "online" : "offline",
+        registeredAt: 0,
+        ...(online ? { lastHeartbeatAt: Date.now() } : {}),
+      });
+      for (const runtime of runtimes)
+        await ctx.db.insert("runtimeInstallations", {
+          workstationId,
+          runtime,
+          status: "available",
+          capabilities: ["start", "stop"],
+          detectedAt: 0,
+        });
+    });
+  }
+
+  it("defaults to Codex only where a computer offers it", async () => {
+    const { t, user, userId } = await fixture();
+    expect(await user.query(api.agentProfiles.defaultRuntime, {})).toBe("codex");
+    await computer(t, userId, ["claude"]);
+    expect(await user.query(api.agentProfiles.defaultRuntime, {})).toBe("claude");
+    // A Codex computer that is offline does not decide while a Claude computer is on.
+    await computer(t, userId, ["codex"], false);
+    expect(await user.query(api.agentProfiles.defaultRuntime, {})).toBe("claude");
+    await computer(t, userId, ["codex", "claude"]);
+    expect(await user.query(api.agentProfiles.defaultRuntime, {})).toBe("codex");
+  });
+
+  it("switches every role of a scope to one agent, resetting runtime-specific models", async () => {
+    const { t, user, userId, other } = await fixture();
+    const productId = await t.run((ctx) =>
+      ctx.db.insert("products", {
+        ownerId: userId,
+        name: "P",
+        slug: "p",
+        createdAt: 0,
+        updatedAt: 0,
+      }),
+    );
+    const builderId = await user.mutation(api.agentProfiles.upsert, {
+      role: "builder",
+      runtime: "codex",
+      model: "gpt-5.1-codex",
+      reasoningEffort: "high",
+      instructions: "Keep commits small.",
+      maxConcurrency: 2,
+      enabled: true,
+      name: "Builders",
+    });
+    const offId = await user.mutation(api.agentProfiles.upsert, {
+      role: "verifier",
+      runtime: "claude",
+      model: "claude-haiku-4-5",
+      enabled: false,
+      name: "Quiet verifier",
+    });
+    await user.mutation(api.agentProfiles.setRuntimeForAllRoles, { runtime: "claude" });
+    const rows = (await user.query(api.agentProfiles.list, {})) as Array<{
+      _id: string;
+      role: string;
+      runtime: string;
+      model?: string;
+      reasoningEffort?: string;
+      enabled: boolean;
+      name: string;
+      instructions?: string;
+      maxConcurrency?: number;
+      revision: number;
+    }>;
+    expect(rows.filter((row) => row.enabled && row.runtime === "claude")).toHaveLength(6);
+    expect(rows.find((row) => row._id === builderId)).toMatchObject({
+      runtime: "claude",
+      name: "Builders",
+      instructions: "Keep commits small.",
+      maxConcurrency: 2,
+      revision: 2,
+    });
+    expect(rows.find((row) => row._id === builderId)?.model).toBeUndefined();
+    expect(rows.find((row) => row._id === builderId)?.reasoningEffort).toBeUndefined();
+    // The disabled Claude verifier is turned on and keeps its model.
+    expect(rows.find((row) => row._id === offId)).toMatchObject({
+      enabled: true,
+      model: "claude-haiku-4-5",
+      revision: 2,
+    });
+    expect(rows.find((row) => row.role === "supervisor")?.name).toBe("Supervisor · All products");
+    // Saving again with the same runtime changes nothing.
+    await user.mutation(api.agentProfiles.setRuntimeForAllRoles, { runtime: "claude" });
+    expect(
+      ((await user.query(api.agentProfiles.list, {})) as Array<{ revision: number }>).map(
+        (row) => row.revision,
+      ),
+    ).toEqual(rows.map((row) => row.revision));
+    // A product scope gets its own overrides; another account cannot reach the product.
+    await user.mutation(api.agentProfiles.setRuntimeForAllRoles, { productId, runtime: "codex" });
+    const overrides = (await user.query(api.agentProfiles.list, { productId })) as Array<{
+      role: string;
+      runtime: string;
+      name: string;
+    }>;
+    expect(overrides).toHaveLength(6);
+    expect(overrides.every((row) => row.runtime === "codex")).toBe(true);
+    expect(overrides.find((row) => row.role === "builder")?.name).toBe("Builder · P");
+    await expect(
+      other.mutation(api.agentProfiles.setRuntimeForAllRoles, { productId, runtime: "codex" }),
+    ).rejects.toThrow("PRODUCT_MISMATCH");
+    await expect(
+      user.mutation(api.agentProfiles.setRuntimeForAllRoles, { runtime: "  " }),
+    ).rejects.toThrow("INVALID_ARGUMENT");
   });
 });

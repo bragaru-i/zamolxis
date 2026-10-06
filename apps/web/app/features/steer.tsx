@@ -43,7 +43,7 @@ export function SteerRun({ runId }: { runId: Id<"agentRuns"> }) {
         tone: "danger",
         text:
           errorCode(error) === "RUNTIME_MESSAGE_UNSUPPORTED"
-            ? "The Zamolxis Node on your Mac can't message agents yet. Update it and try again."
+            ? "The Zamolxis Node on your computer can't message agents yet. Update it and try again."
             : explainError(error, "Could not send the message. Try again."),
       });
     } finally {

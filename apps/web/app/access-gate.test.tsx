@@ -49,7 +49,7 @@ it.each(["pending", "blocked"] as const)(
         : "Wait until an admin adds you to the system",
     );
     expect(html).not.toContain("Ask Zamolxis, or tell it to start work");
-    expect(html).not.toContain("Approve this Mac");
+    expect(html).not.toContain("Approve this computer");
     expect(state.queries).toEqual(["profiles:viewer"]);
   },
 );

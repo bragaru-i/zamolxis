@@ -27,7 +27,7 @@ export interface PublishResult {
   readonly compareUrl?: string;
 }
 export interface PublishOptions {
-  // Each repository's own token, else its chosen gh account; the Mac's global Git
+  // Each repository's own token, else its chosen gh account; the computer's global Git
   // credentials and active gh account are never used.
   readonly credentials: PublishingCredentials;
   readonly github?: GitHubClient;
@@ -123,7 +123,7 @@ export async function publishIntegration(
       token,
       base,
       head: request.branch,
-      // Titles and bodies leave the Mac: redact anything that looks like a secret.
+      // Titles and bodies leave the computer: redact anything that looks like a secret.
       title: redactSecrets(request.title).slice(0, 256),
       body: redactSecrets(request.body).slice(0, 60_000),
     });

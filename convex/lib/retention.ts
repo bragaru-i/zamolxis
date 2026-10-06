@@ -11,16 +11,16 @@ export const MIN_RETENTION_DAYS = 1;
 export const MAX_RETENTION_DAYS = 30;
 /** Read-only planning worktrees are kept one day after the Supervisor decided. */
 export const PLANNING_RETENTION = DAY;
-/** Cleanup commands requested per Mac per sweep (cron or "Clean up now"). */
+/** Cleanup commands requested per computer per sweep (cron or "Clean up now"). */
 export const CLEANUP_BATCH = 10;
-/** Ready worktrees examined per Mac per sweep. */
+/** Ready worktrees examined per computer per sweep. */
 export const CLEANUP_SCAN = 100;
 export const MAX_CLEANUP_ATTEMPTS = 3;
 /** Back-off before the next attempt after the n-th failure (n = 1, 2). */
 export const CLEANUP_BACKOFF = [6 * 60 * 60 * 1000, 24 * 60 * 60 * 1000] as const;
 /** Failures that another attempt cannot fix: the Node does not know this worktree. */
 const PERMANENT = new Set(["WORKSPACE_NOT_REGISTERED", "WORKSPACE_IDENTITY_MISMATCH"]);
-/** A Mac must have reported a heartbeat this recently to receive cleanup commands. */
+/** A computer must have reported a heartbeat this recently to receive cleanup commands. */
 export const ONLINE_WITHIN = 5 * 60 * 1000;
 
 const SESSION_DONE = ["completed", "failed", "cancelled"];
@@ -227,7 +227,7 @@ export async function requestWorkspaceCleanup(
   return commandId;
 }
 
-/** A bounded, idempotent batch of cleanup requests for one online Mac. */
+/** A bounded, idempotent batch of cleanup requests for one online computer. */
 export async function scheduleCleanupBatch(
   ctx: MutationCtx,
   workstation: Doc<"workstations">,

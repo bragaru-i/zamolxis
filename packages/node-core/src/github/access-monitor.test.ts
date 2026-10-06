@@ -17,7 +17,7 @@ function harness() {
   const reports: GitHubAccess[] = [];
   let status: GitHubAccessStatus = "ok";
   let failReport = false;
-  // The gh account setup chose for r1, and the accounts signed in to gh on this Mac.
+  // The gh account setup chose for r1, and the accounts signed in to gh on this computer.
   let account: string | undefined;
   const signedIn = new Map<string, string>();
   const credentials = new PublishingCredentials({

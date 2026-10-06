@@ -30,7 +30,7 @@ async function seed() {
     const workstation = (ownerId: Id<"users">, device: string) =>
       ctx.db.insert("workstations", {
         ownerId,
-        name: "Mac",
+        name: "computer",
         status: "online",
         registeredAt: now,
         nodeAuthSubject: device,

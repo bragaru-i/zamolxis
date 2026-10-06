@@ -58,12 +58,12 @@ shipped or a tested implementation as proven in production.
   (`turn/steer`) or continues a waiting run to completion with the normal
   completion handling.
 - **Web app (#61):** conversation-first Home with a persistent desktop sidebar and a mobile
-  drawer. Identity, **New chat**, Mac connectivity, Usage and Settings remain fixed while one
+  drawer. Identity, **New chat**, computer connectivity, Usage and Settings remain fixed while one
   searchable history region scrolls **Chats** and **Work Sessions**, each grouped by day (Today,
   Yesterday, Previous 7 days, Previous 30 days, Older); open session kept in `?session=<id>`;
   your messages with their planning outcome, task cards with runs (status, activity
   label, token totals), Stop per run and per session, pinned composer, Settings sheet
-  (Macs, removal, sign-out), iOS safe areas. Shared tokens and components live in
+  (Computers, removal, sign-out), iOS safe areas. Shared tokens and components live in
   `packages/ui`.
 - **Release (#62, #64):** every push to main that passes CI deploys Convex and the
   web app automatically; `pnpm deploy:prod` is the manual path.
@@ -78,12 +78,12 @@ shipped or a tested implementation as proven in production.
   new messages; its history and any Work Session it opened are kept). Each chat has its own model
   history; another owner's chat is never readable or continuable. Home and Session conversations
   show exchanges on a chronological rail with relative timestamps.
-- **Settings:** a menu of five pages in order of use (Agents, Macs & repositories, Usage,
+- **Settings:** a menu of five pages in order of use (Agents, Computers & repositories, Usage,
   Storage, People & devices), each row showing its current state in one line (for example the
   Builder's model, which Mac is online, tokens in the last 7 days). Phones show the menu or one
   page with a back button; wide screens show the menu as a left column next to the page. Agents
   is a compact list of roles; tapping one opens its description and editor. Usage and Settings are
-  also at the top of the Home sidebar, and the Mac status in the header opens Macs directly.
+  also at the top of the Home sidebar, and the computer status in the header opens Computers directly.
 - **Proof images:** Builder, Repair and Verifier instructions ask the agent to save up to 8
   screenshots or previews (PNG, JPEG, WebP, GIF, SVG, at most 5 MB each) in `.zamolxis-proof`
   at the repository root when the result can be seen. When the run ends the Node moves that
@@ -136,7 +136,7 @@ shipped or a tested implementation as proven in production.
 - **Runtime model catalog:** the Node asks Codex app-server for its models (`model/list`,
   hidden excluded) at startup and at most every 30 minutes, and reports them with
   reasoning efforts in the heartbeat; `agentProfiles:models` returns them per runtime for
-  the owner's Macs. Settings → Agents offers them as a Model picker whose effort choices follow
+  the owner's computers. Settings → Agents offers them as a Model picker whose effort choices follow
   the chosen model; until a Mac reports models it falls back to a text field.
 - **Claude runtime (#95, on main and the owner's Mac Node):**
   `packages/runtime-claude` drives the installed `claude` CLI (Claude Code) over its
@@ -175,7 +175,7 @@ shipped or a tested implementation as proven in production.
   the signed-in gh accounts, a dedicated token (prefilled fine-grained token link,
   hidden input) or "Decide later"; `pnpm zamolxis github-token [owner/repo] [--remove]`
   manages tokens. The Node reports status/source/login/expiry (never a credential) to
-  `repositoryLocations.githubAccess`, shown in Settings → Macs → Repositories as
+  `repositoryLocations.githubAccess`, shown in Settings → Computers → Repositories as
   "publishing as <login> (token, expires in N days)" or "(gh account)". Codex, Claude
   and verification checks run without `GH_TOKEN`/`GITHUB_TOKEN`/enterprise variants.
   Tested with mocked GitHub API, an injected gh-account reader and a local bare remote
@@ -194,6 +194,32 @@ shipped or a tested implementation as proven in production.
 - **Setup repair (#69):** rerunning setup offers Check and repair, repositories,
   pairing again; `--repair` is non-interactive; the device credential lives in the
   login Keychain (migrated on the owner's Mac on 2026-10-06).
+
+- **Computers, not Macs (2026-10-06):** since #113 a Linux computer can run the Node, so the
+  app, setup and onboarding say "computer" wherever they used to say "Mac" (Settings →
+  Computers & repositories, "No computer paired yet", "Name this computer"). The Node reports
+  `process.platform`/`process.arch` in its heartbeat and the computer card shows macOS, Linux or
+  Windows next to the name. "Mac" remains only where a signed-in browser really is one
+  (People & devices) and in this documentation when it means the owner's actual Mac.
+- **One repository, one Product (2026-10-06):** a repository registered from two computers is
+  one repository and one Product however its origin remote is written (https or ssh, with or
+  without `.git`, any letter case on GitHub); entries are matched by `repositoryRemoteKey` and
+  the oldest wins. Entries created before this rule are merged on the next
+  `pnpm zamolxis setup` or `setup --repair` from either computer: locations move to the
+  survivor, the merged entry points at it (a Node still naming it lands on the survivor) and
+  its Product is archived when it has no Work Session. A duplicate with running work is left
+  alone until that work finishes. Covered by `tests/repository-identity.test.ts`; not yet
+  exercised against production data (the owner's two entries for `zamolxis` merge on the next
+  setup run).
+- **Runtime defaults (2026-10-06):** roles without an enabled profile no longer default to a
+  hardcoded Codex. `agentProfiles.defaultRuntime` picks Codex when one of the owner's
+  computers offers it, else what they offer (online computers decide while there are any), and
+  Settings → Agents, the Settings menu and the Session work map show that default. **Agent for
+  every role** in Settings → Agents switches all six roles of the scope (All products or one
+  Product) to Codex or Claude at once (`agentProfiles.setRuntimeForAllRoles`: enabled profiles
+  change runtime and lose their runtime-specific model and effort, a disabled one is turned on,
+  missing ones are created; names, instructions and limits stay). The computer card lists every
+  available runtime ("Claude Code and Codex ready").
 
 ## Preview harness
 
@@ -283,7 +309,7 @@ module aliases exist only when the variable is set.
    test covers every user-facing query/mutation (convex-test identities). Missing:
    validation with two real Google accounts on the deployed app and iPhone home-screen
    / offline checks.
-6. **Onboarding (#45), shipped.** Rename a Mac (Settings or setup), remove a
+6. **Onboarding (#45), shipped.** Rename a computer (Settings or setup), remove a
    repository from a Mac (refused while busy; sticky across Node restarts; re-granted
    from setup's repository list), "Pair again" revokes the previous entry when its
    credential is still valid, setup waits for a heartbeat from the new Node instance,

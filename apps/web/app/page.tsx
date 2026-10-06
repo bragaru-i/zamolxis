@@ -12,7 +12,8 @@ export default function HomePage() {
     return (
       <Gate>
         <p className="z-muted">
-          Control plane is not configured. Configure the public deployment before pairing a Mac.
+          Control plane is not configured. Configure the public deployment before pairing a
+          computer.
         </p>
       </Gate>
     );

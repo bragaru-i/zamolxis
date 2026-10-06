@@ -6,6 +6,7 @@ import { fail, load, ownSession, requireNode, requireUser } from "./lib/access";
 import { resolveAgentProfile } from "./lib/agentProfiles";
 import { enqueue } from "./lib/commands";
 import { explicitlyRequestsWork } from "./lib/orchestration";
+import { canonicalRepository } from "./lib/repositories";
 import {
   SUPERVISOR_LOG_LIMITS,
   supervisorLogStep,
@@ -114,7 +115,7 @@ export async function submitText(
     !/^[a-zA-Z0-9_-]{1,128}$/.test(args.idempotencyKey)
   )
     fail("INVALID_ARGUMENT");
-  const repository = await load(ctx, "repositories", args.repositoryId);
+  const repository = await canonicalRepository(ctx, args.repositoryId);
   const product = await load(ctx, "products", args.productId);
   if (
     repository.ownerId !== owner._id ||

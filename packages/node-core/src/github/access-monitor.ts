@@ -38,7 +38,7 @@ function fingerprint(credential: ResolvedCredential): string {
 
 /**
  * Keeps the control plane informed of each repository's GitHub publishing access on this
- * Mac (status, source, login, expiry; never a credential). GitHub is asked at most every
+ * computer (status, source, login, expiry; never a credential). GitHub is asked at most every
  * 30 minutes per repository, and right after the credential changes (a token added,
  * replaced or removed, or the chosen gh account signed in or out). Never throws.
  */

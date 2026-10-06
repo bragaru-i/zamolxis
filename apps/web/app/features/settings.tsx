@@ -27,11 +27,11 @@ export const SETTINGS_PAGES: Array<{ page: SettingsPage; title: string; help: st
   { page: "agents", title: "Agents", help: "Which agent and model does each job." },
   {
     page: "macs",
-    title: "Macs & repositories",
+    title: "Computers & repositories",
     help: "Where work runs and which code it can change.",
   },
   { page: "usage", title: "Usage", help: "Tokens your agents used." },
-  { page: "storage", title: "Storage", help: "How long finished work stays on your Mac." },
+  { page: "storage", title: "Storage", help: "How long finished work stays on your computer." },
   {
     page: "access",
     title: "People & devices",
@@ -41,6 +41,8 @@ export const SETTINGS_PAGES: Array<{ page: SettingsPage; title: string; help: st
 
 export interface SummaryInputs {
   profiles?: Profile[];
+  /** From `agentProfiles.defaultRuntime`; the last-resort constant until it loads. */
+  defaultRuntime?: string;
   devices?: Device[];
   usage?: UsageSummary;
   storage?: StorageSummary;
@@ -57,7 +59,7 @@ export function pageSummary(page: SettingsPage, data: SummaryInputs): string | u
         ({ role }) => effectiveProfile(role, undefined, profiles).profile,
       );
       const builder = effectiveProfile("builder", undefined, profiles).profile;
-      const doing = `Builder: ${builder ? describeProfile(builder) : `${runtimeLabel(DEFAULT_RUNTIME)} · default model`}`;
+      const doing = `Builder: ${builder ? describeProfile(builder) : `${runtimeLabel(data.defaultRuntime ?? DEFAULT_RUNTIME)} · default model`}`;
       return custom.length
         ? `${doing} · ${custom.length} of ${ROLES.length} customized`
         : `${doing} · all on defaults`;
@@ -65,12 +67,12 @@ export function pageSummary(page: SettingsPage, data: SummaryInputs): string | u
     case "macs": {
       if (!data.devices) return undefined;
       const active = data.devices.filter((device) => device.status !== "revoked");
-      if (!active.length) return "No Mac paired yet";
+      if (!active.length) return "No computer paired yet";
       const online = active.filter((device) => deviceState(device, data.now) === "online");
       const [only] = active;
       if (active.length === 1 && only)
         return `${only.name} · ${online.length ? "online" : "offline"}`;
-      return `${active.length} Macs · ${online.length} online`;
+      return `${active.length} computers · ${online.length} online`;
     }
     case "usage": {
       if (!data.usage) return undefined;
@@ -162,6 +164,9 @@ function SettingsMenu({
   const { signOut } = useAuthActions();
   const [problem, setProblem] = useState("");
   const profiles = useQuery(api.agentProfiles.list, active ? {} : "skip") as Profile[] | undefined;
+  const defaultRuntime = useQuery(api.agentProfiles.defaultRuntime, active ? {} : "skip") as
+    | string
+    | undefined;
   const usage = useQuery(api.usage.summary, active ? { period: "7d" } : "skip") as
     | UsageSummary
     | undefined;
@@ -171,6 +176,7 @@ function SettingsMenu({
   const data = {
     now,
     ...(profiles ? { profiles } : {}),
+    ...(defaultRuntime ? { defaultRuntime } : {}),
     ...(devices ? { devices } : {}),
     ...(usage ? { usage } : {}),
     ...(storage ? { storage } : {}),
@@ -244,13 +250,13 @@ function SettingsContent({
 function MacsSettings({ devices, now }: { devices: Device[] | undefined; now: number }) {
   const [message, setMessage] = useState("");
   return (
-    <section className="z-stack" aria-label="Macs">
+    <section className="z-stack" aria-label="Computers">
       <p className="z-xsmall z-muted">
-        Agents work on your Macs, only in the repositories listed here.
+        Agents work on your computers, only in the repositories listed here.
       </p>
       {devices === undefined ? (
         <p className="z-muted z-small" role="status">
-          Loading Macs…
+          Loading computers…
         </p>
       ) : devices.length ? (
         <div className="z-list">
@@ -260,7 +266,7 @@ function MacsSettings({ devices, now }: { devices: Device[] | undefined; now: nu
         </div>
       ) : (
         <p className="z-muted z-small">
-          No Mac paired yet. Run <code>pnpm zamolxis setup</code> on your Mac.
+          No computer paired yet. Run <code>pnpm zamolxis setup</code> on your computer.
         </p>
       )}
       {message && <Notice>{message}</Notice>}

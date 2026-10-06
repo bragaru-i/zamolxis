@@ -70,11 +70,11 @@ Re-running `pnpm zamolxis setup` on a configured Mac shows a menu:
   valid, to revoke the previous Mac entry (`workstations:retireReplaced`, recorded
   as `replacedBy` the new entry). If that credential is gone or no longer accepted
   (also when Check and repair had to pair again), the old entry is left as it is
-  and setup says so; remove it in Settings → Macs. If setup is interrupted before
+  and setup says so; remove it in Settings → Computers. If setup is interrupted before
   the new pairing completes, the old entry is not revoked.
 - **Exit.**
 
-In the app, **Settings → Macs** offers the same management from iPhone:
+In the app, **Settings → Computers** offers the same management from iPhone:
 **Rename** (`workstations:rename`, owner only), **Repositories** (the locations the
 Mac may work on, each with **Remove from this Mac…**, `repositories:removeLocationForOwner`,
 refused while work runs there) and **Remove this Mac…** (revoke). A location removed

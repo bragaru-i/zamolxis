@@ -31,7 +31,7 @@ async function seed() {
     const workstation = (ownerId: Id<"users">, device: string) =>
       ctx.db.insert("workstations", {
         ownerId,
-        name: "Mac",
+        name: "computer",
         status: "online",
         registeredAt: now,
         nodeAuthSubject: device,
@@ -217,7 +217,7 @@ describe("supervisor.appendLog and supervisor.log", () => {
       textCommandId,
       steps: [step("c:tool:0001")],
     });
-    // Another Mac of the same owner did not run this Supervisor.
+    // Another computer of the same owner did not run this Supervisor.
     await expect(
       f.nodeAs("alice-other-device").mutation(api.supervisor.appendLog, args(f.otherWorkstationId)),
     ).rejects.toThrow(/FORBIDDEN/);

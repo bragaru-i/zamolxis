@@ -39,7 +39,7 @@ describe("proof images", () => {
     writeFileSync(join(folder, "notes.txt"), "not an image");
     writeFileSync(join(folder, "empty.png"), "");
     writeFileSync(join(folder, "huge.png"), Buffer.alloc(PROOF_MAX_BYTES + 1));
-    // A link could point anywhere on the Mac: never followed.
+    // A link could point anywhere on the computer: never followed.
     symlinkSync(join(dir, "README.md"), join(folder, "link.png"));
     writeFileSync(
       join(dir, "logo.svg"),

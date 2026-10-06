@@ -1,7 +1,7 @@
 import { Notice, safeHref, type Tone } from "@zamolxis/ui";
 import { relativeTime } from "./time";
 
-/** A repository's GitHub publishing access as its Mac last reported it (never a secret). */
+/** A repository's GitHub publishing access as its computer last reported it (never a secret). */
 export interface GithubAccess {
   status:
     | "ok"
@@ -38,16 +38,16 @@ function source(access: GithubAccess, now: number) {
   return access.source === "gh_account" ? "(gh account)" : `(token, ${expiry(access, now)})`;
 }
 
-/** What publishing to GitHub looks like for one repository on one Mac, in plain words. */
+/** What publishing to GitHub looks like for one repository on one computer, in plain words. */
 export function describeGithubAccess(
   access: GithubAccess | undefined,
   now: number,
 ): { tone: Tone; text: string; needsToken: boolean } {
-  const fix = `On your Mac, run ${GITHUB_TOKEN_COMMAND}.`;
+  const fix = `On your computer, run ${GITHUB_TOKEN_COMMAND}.`;
   if (!access || access.status === "missing")
     return {
       tone: "warning",
-      text: `GitHub not connected, so pull requests can't be opened yet. On your Mac, run ${GITHUB_TOKEN_COMMAND} to add a token for it, or choose a signed-in GitHub account for it in pnpm zamolxis setup.`,
+      text: `GitHub not connected, so pull requests can't be opened yet. On your computer, run ${GITHUB_TOKEN_COMMAND} to add a token for it, or choose a signed-in GitHub account for it in pnpm zamolxis setup.`,
       needsToken: true,
     };
   const as = access.login ? `publishing as ${access.login}` : "connected";
@@ -68,7 +68,7 @@ export function describeGithubAccess(
     case "account_unavailable":
       return {
         tone: "danger",
-        text: `The GitHub account chosen for this repository${access.login ? ` (${access.login})` : ""} isn't signed in on your Mac. Sign it in again with gh auth login, or add a token for the repository: ${fix}`,
+        text: `The GitHub account chosen for this repository${access.login ? ` (${access.login})` : ""} isn't signed in on your computer. Sign it in again with gh auth login, or add a token for the repository: ${fix}`,
         needsToken: true,
       };
     case "expired":
@@ -91,13 +91,13 @@ export function describeGithubAccess(
     case "unreachable":
       return {
         tone: "neutral",
-        text: "Your Mac couldn't reach GitHub at its last check; it will try again.",
+        text: "Your computer couldn't reach GitHub at its last check; it will try again.",
         needsToken: false,
       };
   }
 }
 
-/** The GitHub row of a repository in Settings → Macs → Repositories. */
+/** The GitHub row of a repository in Settings → Computers → Repositories. */
 export function GithubAccessRow({
   github,
   access,
@@ -128,8 +128,8 @@ export function GithubAccessRow({
           <span className="z-xsmall z-muted">
             GitHub opens with the right permissions filled in. Under Repository access choose
             &quot;Only select repositories&quot; and pick {github.slug}. Then paste the token on
-            your Mac when <code>{GITHUB_TOKEN_COMMAND}</code> asks for it; never paste it in this
-            app. It stays on your Mac and is only used to open pull requests.
+            your computer when <code>{GITHUB_TOKEN_COMMAND}</code> asks for it; never paste it in
+            this app. It stays on your computer and is only used to open pull requests.
           </span>
         </>
       )}

@@ -1,6 +1,6 @@
 /**
  * GitHub credentials agents never receive. Publishing is done by the Node alone, with
- * each repository's own token from this Mac's Keychain; Builders, Verifiers, Repairs, the
+ * each repository's own token from this computer's Keychain; Builders, Verifiers, Repairs, the
  * Supervisor, the Orchestrator and repository checks run without any GitHub token, even
  * when the Node itself was started with one in its environment.
  */

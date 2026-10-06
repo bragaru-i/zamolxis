@@ -1,8 +1,10 @@
+import { repositoryRemoteKey } from "@zamolxis/application";
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { type MutationCtx, mutation, query } from "./_generated/server";
 import { fail, load, requireNode, requireUser } from "./lib/access";
 import { digest } from "./pairing";
+import { locationBusy } from "./repositories";
 
 async function reactivate(
   ctx: MutationCtx,
@@ -23,12 +25,85 @@ async function reactivate(
     updatedAt: Date.now(),
   });
 }
+/**
+ * Archives a Product nothing was done in once its last repository left it. A Product
+ * with Work Sessions keeps its history and stays visible.
+ */
+async function archiveEmptyProduct(ctx: MutationCtx, productId: Id<"products">) {
+  const product = await ctx.db.get("products", productId);
+  if (!product || product.archivedAt) return;
+  const session = await ctx.db
+    .query("workSessions")
+    .withIndex("by_product_activity", (q) => q.eq("productId", productId))
+    .first();
+  if (session) return;
+  const repositories = await ctx.db
+    .query("repositories")
+    .withIndex("by_product", (q) => q.eq("productId", productId))
+    .take(2);
+  if (repositories.length) return;
+  const now = Date.now();
+  await ctx.db.patch("products", productId, { archivedAt: now, updatedAt: now });
+}
+
+/**
+ * Folds a second entry for the same remote (another computer wrote the URL differently
+ * before remotes were compared by identity) into the surviving one: its locations move
+ * over, the entry points at the survivor and its Product is archived when it stayed
+ * empty. Nothing moves while work runs in the duplicate; the next registration retries.
+ */
+async function mergeRepository(
+  ctx: MutationCtx,
+  duplicate: Doc<"repositories">,
+  into: Doc<"repositories">,
+) {
+  const locations = await ctx.db
+    .query("repositoryLocations")
+    .withIndex("by_repository", (q) => q.eq("repositoryId", duplicate._id))
+    .take(65);
+  if (locations.length > 64) fail("LIMIT_EXCEEDED");
+  for (const location of locations) if (await locationBusy(ctx, location)) return false;
+  const now = Date.now();
+  for (const location of locations) {
+    const existing = await ctx.db
+      .query("repositoryLocations")
+      .withIndex("by_repository_workstation", (q) =>
+        q.eq("repositoryId", into._id).eq("workstationId", location.workstationId),
+      )
+      .unique();
+    if (!existing)
+      await ctx.db.patch("repositoryLocations", location._id, {
+        repositoryId: into._id,
+        updatedAt: now,
+      });
+    else if (location.status !== "removed")
+      await ctx.db.patch("repositoryLocations", location._id, {
+        status: "removed",
+        removedAt: now,
+        updatedAt: now,
+      });
+  }
+  const previousProduct = duplicate.productId;
+  await ctx.db.patch("repositories", duplicate._id, {
+    ...(into.productId ? { productId: into.productId } : {}),
+    mergedIntoId: into._id,
+    updatedAt: now,
+  });
+  if (previousProduct && previousProduct !== into.productId)
+    await archiveEmptyProduct(ctx, previousProduct);
+  return true;
+}
+
+// Registers the repositories a computer may work on. The same remote written differently
+// (https on one computer, ssh on another, with or without `.git`) is one repository with
+// one Product: entries are matched by `repositoryRemoteKey`, the oldest one wins, and
+// duplicates registered before this rule are merged into it.
 export const registerRepositories = mutation({
   args: {
     workstationId: v.id("workstations"),
     repositories: v.array(v.object({ name: v.string(), remoteUrl: v.string() })),
     // The owner re-granted these repositories in setup: locations removed earlier on
-    // this Mac become eligible again once the Node verifies them (#45).
+    // this computer become eligible again once the Node verifies them (#45).
     reactivate: v.optional(v.boolean()),
   },
   returns: v.array(
@@ -41,6 +116,11 @@ export const registerRepositories = mutation({
   handler: async (ctx, args) => {
     const node = await requireNode(ctx, args.workstationId);
     if (args.repositories.length > 32) fail("INVALID_ARGUMENT");
+    const owned = await ctx.db
+      .query("repositories")
+      .withIndex("by_owner", (q) => q.eq("ownerId", node.ownerId))
+      .take(101);
+    if (owned.length > 100) fail("LIMIT_EXCEEDED");
     const result = [];
     for (const item of args.repositories) {
       if (
@@ -50,50 +130,59 @@ export const registerRepositories = mutation({
         item.remoteUrl.length > 2048
       )
         fail("INVALID_ARGUMENT");
-      const previous = await ctx.db
-        .query("repositories")
-        .withIndex("by_owner_remote", (q) =>
-          q.eq("ownerId", node.ownerId).eq("remoteUrl", item.remoteUrl),
+      const key = repositoryRemoteKey(item.remoteUrl);
+      const matching = owned
+        .filter(
+          (row) =>
+            row.remoteUrl !== undefined &&
+            !row.mergedIntoId &&
+            repositoryRemoteKey(row.remoteUrl) === key,
         )
-        .unique();
+        .sort((a, b) => a.createdAt - b.createdAt);
+      const previous = matching.find((row) => row.productId) ?? matching[0];
       if (previous && args.reactivate) await reactivate(ctx, previous._id, node._id);
+      const now = Date.now();
+      let productId: Id<"products">;
       if (previous?.productId) {
         const product = await load(ctx, "products", previous.productId);
         if (product.ownerId !== node.ownerId || product.archivedAt) fail("FORBIDDEN");
-        result.push({
-          repositoryId: previous._id,
-          productId: product._id,
-          remoteUrl: item.remoteUrl,
-        });
-        continue;
+        productId = product._id;
+      } else {
+        const slug = `repo-${(await digest(key)).slice(0, 32)}`;
+        const product = await ctx.db
+          .query("products")
+          .withIndex("by_owner_slug", (q) => q.eq("ownerId", node.ownerId).eq("slug", slug))
+          .unique();
+        if (product?.archivedAt) fail("FORBIDDEN");
+        productId =
+          product?._id ??
+          (await ctx.db.insert("products", {
+            ownerId: node.ownerId,
+            name: item.name,
+            slug,
+            createdAt: now,
+            updatedAt: now,
+          }));
       }
-      const slug = `repo-${(await digest(item.remoteUrl)).slice(0, 32)}`;
-      const product = await ctx.db
-        .query("products")
-        .withIndex("by_owner_slug", (q) => q.eq("ownerId", node.ownerId).eq("slug", slug))
-        .unique();
-      const now = Date.now();
-      const productId =
-        product?._id ??
-        (await ctx.db.insert("products", {
-          ownerId: node.ownerId,
-          name: item.name,
-          slug,
-          createdAt: now,
-          updatedAt: now,
-        }));
-      if (product?.archivedAt) fail("FORBIDDEN");
-      const repositoryId =
-        previous?._id ??
-        (await ctx.db.insert("repositories", {
+      let repository = previous;
+      if (!repository) {
+        const repositoryId = await ctx.db.insert("repositories", {
           ownerId: node.ownerId,
           productId,
           ...item,
           createdAt: now,
           updatedAt: now,
-        }));
-      if (previous) await ctx.db.patch("repositories", repositoryId, { productId, updatedAt: now });
-      result.push({ repositoryId, productId, remoteUrl: item.remoteUrl });
+        });
+        repository = await load(ctx, "repositories", repositoryId);
+        owned.push(repository);
+      } else if (repository.productId !== productId) {
+        await ctx.db.patch("repositories", repository._id, { productId, updatedAt: now });
+        repository = { ...repository, productId };
+      }
+      for (const duplicate of matching)
+        if (duplicate._id !== repository._id && (await mergeRepository(ctx, duplicate, repository)))
+          duplicate.mergedIntoId = repository._id;
+      result.push({ repositoryId: repository._id, productId, remoteUrl: item.remoteUrl });
     }
     return result;
   },
@@ -111,7 +200,7 @@ export interface OnboardingStep {
   state: OnboardingState;
   detail: string;
   /**
-   * A query result does not age by itself. After this time the Mac has stopped reporting
+   * A query result does not age by itself. After this time the computer has stopped reporting
    * heartbeats and the client shows `stale` instead.
    */
   staleAfter?: number;
@@ -120,13 +209,13 @@ export interface OnboardingStep {
 const TITLES: Record<StepId, string> = {
   signin: "Sign in",
   access: "Access approved",
-  pair: "Pair your Mac",
+  pair: "Pair your computer",
   repositories: "Choose repositories",
-  service: "Start Zamolxis on your Mac",
+  service: "Start Zamolxis on your computer",
   runtime: "Agent runtime ready",
   session: "Start your first session",
 };
-const REPAIR = "Open Terminal on your Mac and run `pnpm zamolxis setup --repair`.";
+const REPAIR = "Open Terminal on your computer and run `pnpm zamolxis setup --repair`.";
 const state = v.union(
   v.literal("done"),
   v.literal("in_progress"),
@@ -169,7 +258,7 @@ export const progress = query({
     const now = Date.now();
     const online = (device: Doc<"workstations">) =>
       device.status === "online" && (device.lastHeartbeatAt ?? 0) > now - ONLINE_WINDOW_MS;
-    // The Mac that got furthest: online, then most recently heard from, then newest.
+    // The computer that got furthest: online, then most recently heard from, then newest.
     const mac = (
       await ctx.db
         .query("workstations")
@@ -192,7 +281,7 @@ export const progress = query({
         .query("repositories")
         .withIndex("by_owner", (q) => q.eq("ownerId", owner._id))
         .take(101)
-    ).filter((repository) => repository.productId).length;
+    ).filter((repository) => repository.productId && !repository.mergedIntoId).length;
     const steps = [
       step("signin", "done", "You are signed in."),
       step("access", "done", "Your account has access."),
@@ -202,7 +291,7 @@ export const progress = query({
         step(
           "pair",
           "needs_you",
-          "Run `pnpm zamolxis setup` on your Mac, then scan the QR code it shows with this phone and approve the Mac.",
+          "Run `pnpm zamolxis setup` on your computer, then scan the QR code it shows with this phone and approve the computer.",
         ),
         step("repositories", "upcoming"),
         step("service", "upcoming"),
@@ -223,7 +312,7 @@ export const progress = query({
           : step(
               "pair",
               "in_progress",
-              `You approved ${name}. Setup on your Mac is finishing pairing; keep it open.`,
+              `You approved ${name}. Setup on your computer is finishing pairing; keep it open.`,
             ),
       );
       const locations = await ctx.db
@@ -242,20 +331,20 @@ export const progress = query({
               ? step(
                   "repositories",
                   "needs_you",
-                  "No repository is enabled on this Mac. Run `pnpm zamolxis setup` on your Mac and choose Add or remove repositories.",
+                  "No repository is enabled on this computer. Run `pnpm zamolxis setup` on your computer and choose Add or remove repositories.",
                 )
               : locations.length
                 ? step(
                     "repositories",
                     "failed",
-                    `${name} could not open its repositories. Check that they still exist on the Mac, then run \`pnpm zamolxis setup --repair\`.`,
+                    `${name} could not open its repositories. Check that they still exist on the computer, then run \`pnpm zamolxis setup --repair\`.`,
                   )
                 : step(
                     "repositories",
                     "in_progress",
                     registered
                       ? `${repositories(registered)} registered. ${name} checks them when Zamolxis starts.`
-                      : "Choose at least one Git repository in setup on your Mac.",
+                      : "Choose at least one Git repository in setup on your computer.",
                   ),
       );
       const offline = { state: "failed" as const, detail: `${name} is offline. ${REPAIR}` };

@@ -81,7 +81,7 @@ describe("publishing trusted work", () => {
     expect(failed).toContain("couldn&#x27;t push the branch");
     expect(failed).toContain("Try again");
     expect(explainPublishFailure("PUBLISH_GITHUB_NOT_CONNECTED")).toContain(
-      "On your Mac, run pnpm zamolxis github-token",
+      "On your computer, run pnpm zamolxis github-token",
     );
     expect(explainPublishFailure("PUBLISH_GITHUB_NOT_CONNECTED")).toContain("pnpm zamolxis setup");
     expect(explainPublishFailure("PUBLISH_GITHUB_AUTH_REQUIRED")).toContain("gh auth login");

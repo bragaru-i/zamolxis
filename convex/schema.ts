@@ -20,7 +20,7 @@ export const runtimeModel = v.object({
   efforts: v.optional(v.array(v.string())),
   defaultEffort: v.optional(v.string()),
 });
-// What a Mac reports about one repository's GitHub publishing access (mirrors GitHubAccess
+// What a computer reports about one repository's GitHub publishing access (mirrors GitHubAccess
 // in packages/application/src/execution/github-access.ts): status, which credential
 // publishes (its own token or its chosen gh account), login and token expiry. Never a secret.
 export const githubAccess = v.object({
@@ -241,7 +241,7 @@ export default defineSchema({
     lastHeartbeatAt: v.optional(v.number()),
     registeredAt: v.number(),
     revokedAt: v.optional(v.number()),
-    // Set when this entry was revoked because the same Mac paired again (#45).
+    // Set when this entry was revoked because the same computer paired again (#45).
     replacedBy: v.optional(v.id("workstations")),
   })
     .index("by_owner", ["ownerId"])
@@ -356,6 +356,9 @@ export default defineSchema({
     provider: v.optional(v.string()),
     externalRepositoryId: v.optional(v.string()),
     defaultBranch: v.optional(v.string()),
+    // Set when this entry was folded into another one for the same remote; the survivor
+    // keeps the locations and the Product.
+    mergedIntoId: v.optional(v.id("repositories")),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -381,7 +384,7 @@ export default defineSchema({
     ),
     verifiedAt: v.optional(v.number()),
     removedAt: v.optional(v.number()),
-    // GitHub publishing access as this Mac last checked it (status only, no secret).
+    // GitHub publishing access as this computer last checked it (status only, no secret).
     githubAccess: v.optional(githubAccess),
     updatedAt: v.number(),
   })

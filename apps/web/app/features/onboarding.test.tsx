@@ -23,7 +23,7 @@ const progress = (overrides: Partial<OnboardingProgress> = {}): OnboardingProgre
   steps: [
     { id: "signin", title: "Sign in", state: "done", detail: "You are signed in." },
     { id: "access", title: "Access approved", state: "done", detail: "Your account has access." },
-    { id: "pair", title: "Pair your Mac", state: "done", detail: "Studio is paired." },
+    { id: "pair", title: "Pair your computer", state: "done", detail: "Studio is paired." },
     {
       id: "repositories",
       title: "Choose repositories",
@@ -32,14 +32,14 @@ const progress = (overrides: Partial<OnboardingProgress> = {}): OnboardingProgre
     },
     {
       id: "service",
-      title: "Start Zamolxis on your Mac",
+      title: "Start Zamolxis on your computer",
       state: "done",
       detail: "Studio is online.",
       staleAfter: NOW + 10_000,
       stale: {
         state: "failed",
         detail:
-          "Studio is offline. Open Terminal on your Mac and run `pnpm zamolxis setup --repair`.",
+          "Studio is offline. Open Terminal on your computer and run `pnpm zamolxis setup --repair`.",
       },
     },
     {
@@ -72,7 +72,7 @@ describe("onboarding checklist", () => {
     expect(html).not.toContain("`");
   });
 
-  it("marks the Mac offline once its last heartbeat is too old", () => {
+  it("marks the computer offline once its last heartbeat is too old", () => {
     expect(currentSteps(progress(), NOW).find((step) => step.id === "service")?.state).toBe("done");
     const later = currentSteps(progress(), NOW + 20_000).find((step) => step.id === "service");
     expect(later?.state).toBe("failed");
@@ -86,9 +86,9 @@ describe("onboarding checklist", () => {
     const value = progress();
     value.steps[2] = {
       id: "pair",
-      title: "Pair your Mac",
+      title: "Pair your computer",
       state: "needs_you",
-      detail: "Run `pnpm zamolxis setup` on your Mac, then scan the QR code it shows.",
+      detail: "Run `pnpm zamolxis setup` on your computer, then scan the QR code it shows.",
     };
     const html = render(value);
     expect(html).toContain("Needs you");

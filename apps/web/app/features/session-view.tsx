@@ -216,7 +216,7 @@ export function SessionView({
       <SessionApprovals sessionId={sessionId} ready={ready} />
       {confirmStop && (
         <div className="z-card z-stack" role="alertdialog" aria-label="Stop session">
-          <p>Stop all work in this session? Running agents are interrupted on your Mac.</p>
+          <p>Stop all work in this session? Running agents are interrupted on your computer.</p>
           <div className="z-row">
             <Button
               variant="danger"
@@ -369,8 +369,8 @@ export function SessionView({
           {session.status === "completed" &&
             (sortedTasks.some((task) => task.phase === "completed") ? (
               <Notice tone="success">
-                The checked changes are ready on your Mac. Open a pull request from each task when
-                you want; merging stays with you.
+                The checked changes are ready on your computer. Open a pull request from each task
+                when you want; merging stays with you.
               </Notice>
             ) : (
               <Notice tone="info">

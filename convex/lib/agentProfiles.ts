@@ -9,12 +9,72 @@ export type AgentRole =
   | "verifier"
   | "repair"
   | "integration";
+export const AGENT_ROLES: readonly AgentRole[] = [
+  "orchestrator",
+  "supervisor",
+  "builder",
+  "verifier",
+  "repair",
+  "integration",
+];
+export const ROLE_LABELS: Record<AgentRole, string> = {
+  orchestrator: "Orchestrator",
+  supervisor: "Supervisor",
+  builder: "Builder",
+  verifier: "Verifier",
+  repair: "Repair",
+  integration: "Integration",
+};
+/** The Alpha runtime when nothing is known about the owner's computers. */
+export const ALPHA_FALLBACK_RUNTIME = "codex";
+const ONLINE_WINDOW_MS = 45_000;
+
+/**
+ * The runtime a role uses without an enabled profile: Codex when one of the owner's
+ * computers offers it (the Alpha default), else the first runtime one of them offers, else
+ * Codex so the failure names something. Online computers decide while there are any, so a
+ * computer with only Claude Code gets work when it is the one that is on.
+ */
+export async function defaultRuntime(ctx: QueryCtx, ownerId: Id<"users">): Promise<string> {
+  const workstations = await ctx.db
+    .query("workstations")
+    .withIndex("by_owner", (q) => q.eq("ownerId", ownerId))
+    .take(50);
+  const now = Date.now();
+  const online = new Set<string>();
+  const anywhere = new Set<string>();
+  for (const workstation of workstations) {
+    if (workstation.status === "revoked" || workstation.revokedAt !== undefined) continue;
+    const installations = await ctx.db
+      .query("runtimeInstallations")
+      .withIndex("by_workstation", (q) => q.eq("workstationId", workstation._id))
+      .take(33);
+    if (installations.length > 32) fail("LIMIT_EXCEEDED");
+    const fresh =
+      workstation.status === "online" &&
+      (workstation.lastHeartbeatAt ?? 0) > now - ONLINE_WINDOW_MS;
+    for (const installation of installations) {
+      if (installation.status !== "available" || !installation.capabilities.includes("start"))
+        continue;
+      anywhere.add(installation.runtime);
+      if (fresh) online.add(installation.runtime);
+    }
+  }
+  const offered = online.size ? online : anywhere;
+  if (!offered.size || offered.has(ALPHA_FALLBACK_RUNTIME)) return ALPHA_FALLBACK_RUNTIME;
+  return [...offered].sort()[0] ?? ALPHA_FALLBACK_RUNTIME;
+}
+
+/**
+ * Product -> owner/global -> default. The default is `fallback` when the caller has one
+ * (a run already told which runtime it wants), else `defaultRuntime`.
+ */
 export async function resolveAgentProfile(
   ctx: QueryCtx,
   ownerId: Id<"users">,
   productId: Id<"products"> | undefined,
   role: AgentRole,
-  fallback = "codex",
+  fallback?: string,
 ) {
   const rows = await ctx.db
     .query("agentProfiles")
@@ -26,7 +86,8 @@ export async function resolveAgentProfile(
   const global = enabled.filter((row) => row.productId === undefined);
   if (product.length > 1 || global.length > 1) fail("AGENT_PROFILE_CONFLICT");
   const profile = product[0] ?? global[0];
-  return { runtime: profile?.runtime ?? fallback, profile };
+  const runtime = profile?.runtime ?? fallback ?? (await defaultRuntime(ctx, ownerId));
+  return { runtime, profile };
 }
 
 // Owner instructions on a profile (#48) are plain prompt text: bounded, secret-redacted
