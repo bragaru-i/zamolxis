@@ -89,7 +89,11 @@ export type ExecutionCommand = {
       readonly type: "runtime.approval";
       readonly payload: { runId: string; approvalId: string; decision: "approve" | "reject" };
     }
-  | { readonly type: "workspace.cleanup"; readonly payload: { workspaceId: string } }
+  | {
+      readonly type: "workspace.cleanup";
+      // deleteBranchAt: the backend allows deleting the worktree's branch at this exact commit.
+      readonly payload: { workspaceId: string; deleteBranchAt?: string };
+    }
   // Stops the Supervisor planning a text command; a no-op once that planning finished.
   | { readonly type: "supervisor.stop"; readonly payload: { textCommandId: string } }
   // A command this Node cannot parse fails on its own instead of blocking the queue.
@@ -610,11 +614,11 @@ export class ControlPlaneDriver {
         }
       } else if (command.type === "workspace.cleanup") {
         // The backend authorizes the cleanup policy; the Node still refuses dirty worktrees.
-        this.workspaces.cleanup(command.payload.workspaceId, {
-          artifactsCaptured: true,
-          integrationPending: false,
-          retentionAllows: true,
-        });
+        this.workspaces.cleanup(
+          command.payload.workspaceId,
+          { artifactsCaptured: true, integrationPending: false, retentionAllows: true },
+          command.payload.deleteBranchAt ? { deleteBranchAt: command.payload.deleteBranchAt } : {},
+        );
       } else if (command.type === "invalid") {
         throw new Error(command.payload.code);
       } else {

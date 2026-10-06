@@ -2,7 +2,9 @@ import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   createWorktree,
+  deleteManagedBranch,
   listWorktrees,
+  pruneWorktrees,
   removeWorktree,
   resolveBase,
   validateWorktree,
@@ -21,6 +23,13 @@ export interface CleanupPolicy {
   readonly artifactsCaptured: boolean;
   readonly integrationPending: boolean;
   readonly retentionAllows: boolean;
+}
+export interface CleanupOptions {
+  /** Delete the worktree's `zam/...` branch only if it still points at this commit. */
+  readonly deleteBranchAt?: string;
+}
+export interface CleanupResult {
+  readonly branchDeleted: boolean;
 }
 function safeId(id: string): string {
   if (!/^[a-zA-Z0-9_-]{1,128}$/.test(id)) throw new Error("INVALID_WORKSPACE_ID");
@@ -129,20 +138,40 @@ export class WorkspaceManager {
     return this.inspect(id);
   }
 
-  cleanup(id: string, policy: CleanupPolicy): void {
+  /**
+   * Removes a clean managed worktree (never forced), prunes stale worktree registrations and,
+   * only when the backend names the exact commit, deletes the worktree's own `zam/...` branch.
+   */
+  cleanup(id: string, policy: CleanupPolicy, options: CleanupOptions = {}): CleanupResult {
     const workspace = this.#get(id);
-    if (workspace.status === "removed") return;
+    if (workspace.status === "removed") return { branchDeleted: false };
     if (!policy.artifactsCaptured || policy.integrationPending || !policy.retentionAllows)
       throw new Error("CLEANUP_DENIED");
     // Claim the same lock used by runtime start so another Node cannot start a Run during cleanup.
     const cleanupRun = `cleanup:${id}`;
     this.store.acquireWorkspaceLease(id, cleanupRun, this.nodeInstanceId);
     try {
-      const checked = this.inspect(id);
-      if (checked.dirty) throw new Error("DIRTY_WORKSPACE_PRESERVED");
-      const location = this.repositories.verify(checked.repositoryLocationId);
-      removeWorktree(location.path, checked.path);
-      this.store.saveManagedWorkspace({ ...checked, status: "removed" });
+      const location = this.repositories.verify(workspace.repositoryLocationId);
+      let removed: ManagedWorkspace;
+      if (!existsSync(workspace.path)) {
+        // Deleted outside Zamolxis: nothing on disk to preserve, only Git's registration.
+        pruneWorktrees(location.path);
+        if (listWorktrees(location.path).some((entry) => entry.path === workspace.path))
+          throw new Error("WORKSPACE_MISSING");
+        removed = { ...workspace, status: "removed" };
+      } else {
+        const checked = this.inspect(id);
+        if (checked.dirty) throw new Error("DIRTY_WORKSPACE_PRESERVED");
+        removeWorktree(location.path, checked.path);
+        pruneWorktrees(location.path);
+        removed = { ...checked, status: "removed" };
+      }
+      this.store.saveManagedWorkspace(removed);
+      const branchDeleted =
+        options.deleteBranchAt !== undefined &&
+        removed.branch === `zam/${removed.repositoryId}/${removed.workspaceId}` &&
+        deleteManagedBranch(location.path, removed.branch, options.deleteBranchAt);
+      return { branchDeleted };
     } finally {
       this.store.releaseWorkspaceLease(id, cleanupRun, this.nodeInstanceId);
     }
