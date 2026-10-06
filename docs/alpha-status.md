@@ -140,13 +140,16 @@ planned capability as shipped.
    days, 1–30 per owner; planning worktrees after 1 day; unpublished trusted work is
    kept indefinitely), prunes Git metadata and deletes only `zam/...` branches at the
    expected SHA; Settings → Storage shows counts and "Clean up now".
-8. **Not validated end to end:** real iPhone (keyboard with the pinned composer,
-   home-screen mode), deployed OIDC/device auth, launchd service across restarts,
-   stop against a real Codex session.
+8. **Validation.** Done: a Mac reboot on 2026-10-06 — the launchd Node started at
+   login, read its credential from the login Keychain and resumed heartbeats with no
+   errors once the network was up (a few `HEARTBEAT_FAILED`/`NODE_CONTROL_FAILED` lines
+   right after boot are expected); stop against real Codex (#76). Not yet: real iPhone
+   (keyboard with the pinned composer, home-screen mode), deployed Google sign-in with
+   a second account.
 
 ## Next steps, in order
 
-1. Real-device validation: iPhone, launchd across reboot, stop against Codex.
+1. Real-device validation: iPhone and a second Google account.
 
 ## Operations on the owner's Mac
 
