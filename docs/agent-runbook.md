@@ -200,6 +200,14 @@ against a written contract. When lanes are integrated:
   Codex features Zamolxis agents never use are disabled in the Node's Codex home
   (`codex-home.ts`, `CODEX_CONFIG`); a Node restart rewrites that file.
 - Setup's service reload must wait for launchd to finish unloading (#70).
+- **Merged repository id (2026-10-07):** after the duplicate Product was archived, the Linux
+  Node crash-looped at start with `LOCATION_ALREADY_REGISTERED`: setup had rewritten the
+  repository id in `config.json` while the local SQLite record for the same checkout kept
+  the old one. Fixed in `RepositoryRegistry.register` (an id change for an unchanged
+  computer, Git directory and remote updates the record). A Node that was started before a
+  backend change keeps the old code: `journalctl --user -u app.zamolxis.node.service` showed
+  only `HEARTBEAT_FAILED`/`NODE_CONTROL_FAILED` from the moment #115 deployed until it was
+  restarted on the current checkout (`systemctl --user restart app.zamolxis.node`).
 - **Linux dev machines:** with `kernel.apparmor_restrict_unprivileged_userns = 1`
   (Ubuntu default) Codex's bubblewrap sandbox cannot create user namespaces, every
   file write and command in a Builder fails ("Failed to write file"), and the

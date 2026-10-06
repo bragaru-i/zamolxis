@@ -44,6 +44,26 @@ describe("repository registry", () => {
     store.close();
   });
 
+  it("follows a repository id change for the same checkout but refuses another computer", () => {
+    const f = fixture();
+    const store = new LocalStateStore(join(f.root, "state.db"));
+    const registry = new RepositoryRegistry(store, () => true);
+    const base = {
+      repositoryLocationId: "loc",
+      workstationId: "ubuntu",
+      path: f.path,
+      expectedIdentity: identity,
+    };
+    registry.register({ ...base, repositoryId: "duplicate-entry" });
+    // The backend merged the duplicate entry into the older one and setup rewrote the id.
+    expect(registry.register({ ...base, repositoryId: "survivor" }).repositoryId).toBe("survivor");
+    expect(store.getRepositoryLocation("loc")?.repositoryId).toBe("survivor");
+    expect(() =>
+      registry.register({ ...base, repositoryId: "survivor", workstationId: "other" }),
+    ).toThrow("LOCATION_ALREADY_REGISTERED");
+    store.close();
+  });
+
   it("rejects wrong identity, subdirectories and revoked grants", () => {
     const f = fixture();
     const store = new LocalStateStore(":memory:");
