@@ -38,6 +38,19 @@ shipped or a tested implementation as proven in production.
   refused; unanswered requests are rejected after 30 minutes, on stop and before any
   terminal event. Real Codex acceptance (2026-10-06, codex-cli 0.160.0): a held
   `curl` approval was rejected and the turn completed with HEAD unchanged.
+  **Toasts (2026-10-07):** every pending request also appears as a toast on whatever
+  screen is open (Settings, another chat, Run detail), with the same Approve / Approve
+  for run / Reject / Open session actions as the card; the open Session's own cards
+  take over for its requests; at most three toasts, older ones stay on Home; a dismissed
+  toast stays in the inbox. The stack is a manual popover, so it sits above open sheets.
+  **Approval policy (2026-10-07):** a Builder or Repair profile may say "Allow low risk"
+  or "Allow low and medium risk" (Settings → Agents → role → Approvals). The run
+  snapshots the policy; `applyApprovalEvent` records a covered command request as
+  approved by policy and answers it at once (for the rest of the run when the runtime
+  offers that). High and critical requests, file changes, tool confirmations and other
+  roles always wait for the owner. This is how Codex's "contains brace with quotes,
+  character expansion, obfuscated" requests stop interrupting: they are medium risk when
+  they stay in the workspace without network.
 - **Activity summaries:** the Codex adapter reports the real command line (wrapper
   removed, exit code or failure reason on completion), MCP `server/tool`, web
   searches and sub-agent labels; agent text, tool output and reasoning are never
