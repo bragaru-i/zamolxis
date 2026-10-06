@@ -257,6 +257,64 @@ describe("AgentsSettings", () => {
 });
 
 describe("ProfileEditor", () => {
+  it("offers the models the Mac reports with only their efforts", () => {
+    state.data = {
+      "agentProfiles:models": [
+        {
+          runtime: "codex",
+          models: [
+            {
+              id: "gpt-6.1-sol",
+              displayName: "GPT-6.1-Sol",
+              description: "Latest workhorse model.",
+              isDefault: true,
+              efforts: ["low", "medium", "high", "xhigh"],
+            },
+            { id: "gpt-6-astra", displayName: "GPT-6-Astra", efforts: ["low", "max"] },
+          ],
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(
+      createElement(ProfileEditor, {
+        role: "supervisor",
+        label: "Supervisor",
+        scopeName: "App",
+        productId: undefined,
+        existing: undefined,
+        prefill: profile({ role: "supervisor", model: "gpt-6-astra", reasoningEffort: "max" }),
+        runtimes: ["codex"],
+        onDone: () => {},
+      }),
+    );
+    expect(html).toMatch(/class="z-picker__value">GPT-6-Astra</);
+    expect(html).toContain("Currently GPT-6.1-Sol.");
+    expect(html).toContain("Latest workhorse model.");
+    // Efforts follow the chosen model, not a fixed list.
+    expect(html).toContain("Deepest thinking, slowest.");
+    expect(html).not.toContain(">Medium<");
+    expect(html).not.toContain("Max concurrent runs");
+    expect(html).not.toContain('placeholder="Default model"');
+  });
+
+  it("keeps a text field until a Mac reports models", () => {
+    state.data = {};
+    const html = renderToStaticMarkup(
+      createElement(ProfileEditor, {
+        role: "builder",
+        label: "Builder",
+        scopeName: "App",
+        productId: undefined,
+        existing: undefined,
+        prefill: undefined,
+        runtimes: ["codex"],
+        onDone: () => {},
+      }),
+    );
+    expect(html).toContain('placeholder="Default model"');
+    expect(html).toContain("Your Mac lists the available models");
+  });
+
   it("prefills the current values and keeps unknown efforts selectable", () => {
     const html = renderToStaticMarkup(
       createElement(ProfileEditor, {
