@@ -1,4 +1,4 @@
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { git, inspectRepository, type RepositorySnapshot } from "./repository-inspector";
 
 export interface WorktreeRegistration {
@@ -9,13 +9,16 @@ export interface WorktreeRegistration {
 
 export function listWorktrees(repositoryPath: string): WorktreeRegistration[] {
   const records = git(repositoryPath, ["worktree", "list", "--porcelain", "-z"]).split("\0\0");
-  return records.filter(Boolean).map((record) => {
+  return records.filter(Boolean).flatMap((record) => {
     const fields = record.split("\0");
     const path = fields.find((field) => field.startsWith("worktree "))?.slice(9);
     const headSha = fields.find((field) => field.startsWith("HEAD "))?.slice(5);
     const branch = fields.find((field) => field.startsWith("branch refs/heads/"))?.slice(18);
     if (!path || !headSha) throw new Error("INVALID_WORKTREE_RECORD");
-    return { path, headSha, ...(branch ? { branch } : {}) };
+    // Git retains registrations for missing worktrees until prune/gc. They must not make
+    // every healthy workspace fail validation merely because their old path cannot resolve.
+    if (!existsSync(path)) return [];
+    return [{ path, headSha, ...(branch ? { branch } : {}) }];
   });
 }
 

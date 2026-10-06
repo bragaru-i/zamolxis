@@ -127,6 +127,15 @@ describe("workspace lifecycle with real Git", () => {
       "DENIED",
     );
   });
+
+  it("ignores a stale registration whose worktree directory was deleted", () => {
+    const f = fixture();
+    const stale = join(f.root, "stale");
+    git(f.path, ["worktree", "add", "-b", "stale", stale]);
+    rmSync(stale, { recursive: true, force: true });
+    expect(git(f.path, ["worktree", "list", "--porcelain"])).toContain(stale);
+    expect(f.provision("healthy").status).toBe("ready");
+  });
 });
 
 describe("worktree cleanup and Git metadata (#8)", () => {
