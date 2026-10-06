@@ -1,5 +1,5 @@
-import { convexTest, type TestConvex } from "convex-test";
 import { ConvexError } from "convex/values";
+import { convexTest, type TestConvex } from "convex-test";
 import { expect, it } from "vitest";
 import { api } from "../convex/_generated/api";
 import schema from "../convex/schema";
@@ -353,6 +353,12 @@ it("keeps every user-facing function closed to a second approved account", async
   await denied("agentProfiles.removeOverride", () =>
     other.mutation(api.agentProfiles.removeOverride, { profileId: o.profileId }),
   );
+  await denied("agentProfiles.setRuntimeForAllRoles into the owner's product", () =>
+    other.mutation(api.agentProfiles.setRuntimeForAllRoles, {
+      productId: o.productId,
+      runtime: "claude",
+    }),
+  );
   await denied("workstations.rename", () =>
     other.mutation(api.workstations.rename, { workstationId: o.workstationId, name: "Mine" }),
   );
@@ -426,6 +432,7 @@ it("gives an account without access nothing at all", async () => {
     ["approvals.listPending", () => pending.query(api.approvals.listPending, {})],
     ["usage.summary", () => pending.query(api.usage.summary, { period: "7d" })],
     ["agentProfiles.list", () => pending.query(api.agentProfiles.list, {})],
+    ["agentProfiles.defaultRuntime", () => pending.query(api.agentProfiles.defaultRuntime, {})],
     ["workstations.listMine", () => pending.query(api.workstations.listMine, {})],
     ["admin.mySignIns", () => pending.query(api.admin.mySignIns, {})],
     ["runs.get", () => pending.query(api.runs.get, { runId: o.runId })],

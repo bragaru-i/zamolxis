@@ -207,6 +207,7 @@ export function stepAgent(
   role: Role,
   runs: MapRun[],
   profiles: { product?: Profile[]; global?: Profile[] },
+  fallback = DEFAULT_RUNTIME,
 ): string {
   const latest = [...runs]
     .filter((run) => (run.role ?? "builder") === role)
@@ -214,9 +215,7 @@ export function stepAgent(
   if (latest)
     return `${runtimeLabel(latest.runtime)} · ${latest.modelActual ?? latest.modelRequested ?? "default model"}`;
   const effective = effectiveProfile(role, profiles.product, profiles.global ?? []).profile;
-  return effective
-    ? describeProfile(effective)
-    : `${runtimeLabel(DEFAULT_RUNTIME)} · default model`;
+  return effective ? describeProfile(effective) : `${runtimeLabel(fallback)} · default model`;
 }
 
 const STATE_LABEL: Record<StepState, string> = {
@@ -250,6 +249,9 @@ export function WorkMap({
   const devices = useQuery(api.workstations.listMine, ready && changing ? {} : "skip") as
     | Array<{ status: string; runtimes: Array<{ runtime: string; status: string }> }>
     | undefined;
+  const fallback =
+    (useQuery(api.agentProfiles.defaultRuntime, ready ? {} : "skip") as string | undefined) ??
+    DEFAULT_RUNTIME;
   const steps = workSteps({ sessionStatus, tasks, runs });
   const now = currentStep(steps);
   const profiles = { ...(product ? { product } : {}), ...(global ? { global } : {}) };
@@ -294,7 +296,9 @@ export function WorkMap({
                     <span className="z-flow-step__role">{step.roleLabel}</span>
                   </span>
                   <span className="z-flow-step__detail">{step.detail}</span>
-                  <span className="z-flow-step__agent">{stepAgent(step.role, runs, profiles)}</span>
+                  <span className="z-flow-step__agent">
+                    {stepAgent(step.role, runs, profiles, fallback)}
+                  </span>
                 </span>
               </button>
             </li>
@@ -312,7 +316,9 @@ export function WorkMap({
             <p className="z-small">
               <strong>{STATE_LABEL[selected.state]}:</strong> {selected.detail}
             </p>
-            <p className="z-small z-muted">Done by {stepAgent(selected.role, runs, profiles)}</p>
+            <p className="z-small z-muted">
+              Done by {stepAgent(selected.role, runs, profiles, fallback)}
+            </p>
             {selected.role === "integration" ? (
               <Notice>
                 In Alpha this step runs without an agent, so there is nothing to change.

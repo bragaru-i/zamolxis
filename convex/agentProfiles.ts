@@ -1,7 +1,13 @@
 import { type Infer, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { fail, requireUser } from "./lib/access";
-import { instructionsDigest, normalizeInstructions } from "./lib/agentProfiles";
+import {
+  AGENT_ROLES,
+  instructionsDigest,
+  normalizeInstructions,
+  ROLE_LABELS,
+  defaultRuntime as resolveDefaultRuntime,
+} from "./lib/agentProfiles";
 import { runtimeModel } from "./schema";
 
 const role = v.union(
@@ -72,6 +78,74 @@ export const models = query({
             a.displayName.localeCompare(b.displayName),
         ),
       }));
+  },
+});
+
+/** The runtime every role without an enabled profile uses right now (Settings → Agents). */
+export const defaultRuntime = query({
+  args: {},
+  returns: v.string(),
+  handler: async (ctx) => {
+    const owner = await requireUser(ctx);
+    return resolveDefaultRuntime(ctx, owner._id);
+  },
+});
+
+/**
+ * One agent for every role in a scope (#7): each role's enabled profile gets the runtime
+ * (a changed runtime resets its model and effort, which belong to the old one), its latest
+ * disabled profile is turned on with it, and a role without one gets a profile. Names,
+ * instructions and limits stay. Running and past runs keep their snapshot.
+ */
+export const setRuntimeForAllRoles = mutation({
+  args: { productId: v.optional(v.id("products")), runtime: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const owner = await requireUser(ctx);
+    const runtime = args.runtime.trim();
+    if (!runtime || runtime.length > 64) fail("INVALID_ARGUMENT");
+    let scopeName = "All products";
+    if (args.productId) {
+      const product = await ctx.db.get(args.productId);
+      if (!product || product.ownerId !== owner._id || product.archivedAt) fail("PRODUCT_MISMATCH");
+      scopeName = product.name;
+    }
+    const rows = await ctx.db
+      .query("agentProfiles")
+      .withIndex("by_owner", (q) => q.eq("ownerId", owner._id))
+      .take(101);
+    if (rows.length > 100) fail("LIMIT_EXCEEDED");
+    const now = Date.now();
+    let count = rows.length;
+    for (const role of AGENT_ROLES) {
+      const own = rows.filter((row) => row.role === role && row.productId === args.productId);
+      const target =
+        own.find((row) => row.enabled) ?? [...own].sort((a, b) => b.updatedAt - a.updatedAt)[0];
+      if (target) {
+        if (target.enabled && target.runtime === runtime) continue;
+        await ctx.db.patch(target._id, {
+          runtime,
+          enabled: true,
+          ...(target.runtime === runtime ? {} : { model: undefined, reasoningEffort: undefined }),
+          revision: target.revision + 1,
+          updatedAt: now,
+        });
+        continue;
+      }
+      if (++count > 100) fail("LIMIT_EXCEEDED");
+      await ctx.db.insert("agentProfiles", {
+        ownerId: owner._id,
+        ...(args.productId ? { productId: args.productId } : {}),
+        name: `${ROLE_LABELS[role]} · ${scopeName}`,
+        role,
+        runtime,
+        enabled: true,
+        revision: 1,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+    return null;
   },
 });
 

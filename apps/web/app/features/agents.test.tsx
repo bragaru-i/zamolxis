@@ -33,6 +33,7 @@ import {
   runtimeChoices,
   runtimeLabel,
   scopeProfile,
+  sharedRuntime,
   upsertArgs,
 } from "./agents";
 
@@ -222,6 +223,38 @@ describe("profile resolution", () => {
 });
 
 describe("AgentsSettings", () => {
+  it("shows the computers' default agent and offers one agent for every role", () => {
+    state.data = {
+      "supervisor:products": [],
+      "agentProfiles:list": [],
+      "agentProfiles:defaultRuntime": "claude",
+    };
+    const html = renderToStaticMarkup(
+      createElement(AgentsSettings, {
+        active: true,
+        devices: [{ status: "online", runtimes: [{ runtime: "claude", status: "available" }] }],
+      }),
+    );
+    expect(html).toContain("Claude · default model");
+    expect(html).not.toContain("Codex · default model");
+    expect(html).toContain("Agent for every role");
+    expect(html).not.toContain("Mixed");
+    expect(sharedRuntime(["claude", "claude"])).toBe("claude");
+    expect(sharedRuntime(["claude", "codex"])).toBe("");
+    expect(sharedRuntime([])).toBe("");
+  });
+
+  it("says Mixed when roles use different agents", () => {
+    state.data = {
+      "supervisor:products": [],
+      "agentProfiles:list": [profile({ runtime: "claude" })],
+    };
+    const html = renderToStaticMarkup(createElement(AgentsSettings, { active: true, devices: [] }));
+    expect(html).toContain("Mixed");
+    expect(html).toContain("Claude · default model");
+    expect(html).toContain("Codex · default model");
+  });
+
   it("does not query while Settings is closed", () => {
     const html = renderToStaticMarkup(
       createElement(AgentsSettings, { active: false, devices: undefined }),

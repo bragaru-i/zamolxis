@@ -41,6 +41,8 @@ export const SETTINGS_PAGES: Array<{ page: SettingsPage; title: string; help: st
 
 export interface SummaryInputs {
   profiles?: Profile[];
+  /** From `agentProfiles.defaultRuntime`; the last-resort constant until it loads. */
+  defaultRuntime?: string;
   devices?: Device[];
   usage?: UsageSummary;
   storage?: StorageSummary;
@@ -57,7 +59,7 @@ export function pageSummary(page: SettingsPage, data: SummaryInputs): string | u
         ({ role }) => effectiveProfile(role, undefined, profiles).profile,
       );
       const builder = effectiveProfile("builder", undefined, profiles).profile;
-      const doing = `Builder: ${builder ? describeProfile(builder) : `${runtimeLabel(DEFAULT_RUNTIME)} · default model`}`;
+      const doing = `Builder: ${builder ? describeProfile(builder) : `${runtimeLabel(data.defaultRuntime ?? DEFAULT_RUNTIME)} · default model`}`;
       return custom.length
         ? `${doing} · ${custom.length} of ${ROLES.length} customized`
         : `${doing} · all on defaults`;
@@ -162,6 +164,9 @@ function SettingsMenu({
   const { signOut } = useAuthActions();
   const [problem, setProblem] = useState("");
   const profiles = useQuery(api.agentProfiles.list, active ? {} : "skip") as Profile[] | undefined;
+  const defaultRuntime = useQuery(api.agentProfiles.defaultRuntime, active ? {} : "skip") as
+    | string
+    | undefined;
   const usage = useQuery(api.usage.summary, active ? { period: "7d" } : "skip") as
     | UsageSummary
     | undefined;
@@ -171,6 +176,7 @@ function SettingsMenu({
   const data = {
     now,
     ...(profiles ? { profiles } : {}),
+    ...(defaultRuntime ? { defaultRuntime } : {}),
     ...(devices ? { devices } : {}),
     ...(usage ? { usage } : {}),
     ...(storage ? { storage } : {}),

@@ -2,7 +2,7 @@ import { ConvexError } from "convex/values";
 
 const MESSAGES: Record<string, string> = {
   NODE_OR_RUNTIME_OFFLINE:
-    "Your Mac is offline or Codex is unavailable. Make sure the Zamolxis Node is running, then try again.",
+    "Your Mac is offline or its agent is unavailable. Make sure the Zamolxis Node is running and Codex or Claude Code is signed in, then try again.",
   PRODUCT_MISMATCH: "This session can't take new messages. Start a new session instead.",
   LIMIT_EXCEEDED: "This session has reached its task limit. Start a new session.",
   INVALID_ARGUMENT: "That message can't be sent. Keep it under 16,000 characters.",

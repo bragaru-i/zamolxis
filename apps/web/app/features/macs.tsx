@@ -51,6 +51,8 @@ export interface MacLocation {
   githubAccess?: GithubAccess;
 }
 
+const RUNTIME_NAMES: Record<string, string> = { codex: "Codex", claude: "Claude Code" };
+
 type MacMode = "idle" | "rename" | "repositories" | "revoke";
 
 export function MacItem({
@@ -72,13 +74,12 @@ export function MacItem({
   const [problem, setProblem] = useState("");
   const nameId = useId();
   const state = deviceState(device, now);
-  const runtime = device.runtimes.find((candidate) => candidate.status === "available");
-  const runtimeName =
-    runtime?.runtime === "codex"
-      ? "Codex"
-      : runtime?.runtime === "claude"
-        ? "Claude Code"
-        : runtime?.runtime;
+  const available = device.runtimes
+    .filter((candidate) => candidate.status === "available")
+    .map((candidate) => RUNTIME_NAMES[candidate.runtime] ?? candidate.runtime)
+    .sort();
+  const runtime = available.length > 0;
+  const runtimeName = available.join(" and ");
   const choose = (next: MacMode) => {
     setProblem("");
     onMessage("");
