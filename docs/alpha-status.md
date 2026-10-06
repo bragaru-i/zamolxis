@@ -1,6 +1,6 @@
 # Alpha status and handoff
 
-Status as of 2026-10-06, main at `719a7bd` (after #57–#69). Alpha is **not finished**:
+Status as of 2026-10-06, main through #87. Alpha is **not finished**:
 issues #45, #47, #48 and #49 are open. This file is the handoff for any agent picking
 up the work; update it when a gap closes or a new one is found. Never describe a
 planned capability as shipped.
@@ -57,7 +57,10 @@ planned capability as shipped.
   `packages/ui`.
 - **Release (#62, #64):** every push to main that passes CI deploys Convex and the
   web app automatically; `pnpm deploy:prod` is the manual path.
-- **Supervisor and conversation (#66):** see gap 1 and 2 below.
+- **Supervisor and conversation (#66):** ordinary questions, status checks, explanations and
+  reviews stay conversational and create no Tasks or Agent Runs. A requested plan is shown as a
+  proposal with "Open this work"; only that owner action or explicit execution language delegates
+  work to Builders. See gap 1 and 2 below.
 - **Access administration (#67):** Settings → People (admins approve, block,
   restore, promote; blocking revokes all sign-ins) and Settings → Signed-in devices.
   First admin via the internal `admin:bootstrapAdmin` (done on prod for the owner).
@@ -73,12 +76,15 @@ planned capability as shipped.
 
 ## Gaps blocking Alpha
 
-1. **Supervisor (#49), shipped as answer/plan/ask.** Every message runs a read-only
+1. **Supervisor (#49), shipped as answer/propose/delegate/ask.** Every message runs a read-only
    Supervisor agent on the Node (`packages/node-core/src/capabilities/supervisor.ts`,
    run id `supervisor:<textCommandId>`, runtime/model from the Supervisor profile with a
    fallback to a registered runtime). It answers questions in chat, plans
-   self-contained parallel tasks, or asks a clarifying question; unparseable output is
-   treated as an answer and never starts builders. While it works the message shows
+   project conversation. It answers questions, proposes self-contained parallel tasks without
+   opening them, delegates only on explicit execution intent, or asks a clarifying question;
+   unparseable and legacy `plan` output is treated conservatively and never starts Builders.
+   A proposal becomes executable only through its owner-only "Open this work" action. While it
+   works the message shows
    its live activity, elapsed time and tokens (reported at most every 2 s), and it can
    be stopped until it decides ("Stopped before answering"). Each settled reply has "Show what I did": a
    bounded, redacted log of its steps (discovery, tool calls with files read, notes,

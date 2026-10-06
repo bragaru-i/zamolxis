@@ -1,6 +1,6 @@
 import { explainFailure } from "./errors";
 
-export type Decision = "answer" | "plan" | "ask";
+export type Decision = "answer" | "plan" | "propose" | "delegate" | "ask";
 
 /** One user message with the Supervisor outcome, as returned by `supervisor.messages`. */
 export interface ConversationMessage {
@@ -10,6 +10,7 @@ export interface ConversationMessage {
   planError?: string;
   decision?: Decision;
   reply?: string;
+  proposedTasks?: Array<{ key: string; title: string; description: string }>;
   supervisor?: { modelActual?: string; totalTokens?: number };
   /** Reported by the Mac while the Supervisor works. */
   progress?: { activity?: string; startedAt: number };
@@ -32,7 +33,8 @@ export type AssistantReply =
     }
   | { kind: "answer"; reply: string }
   | { kind: "ask"; reply: string }
-  | { kind: "plan"; reply?: string; taskCount: number }
+  | { kind: "proposal"; reply?: string; taskCount: number }
+  | { kind: "delegated"; reply?: string; taskCount: number }
   | { kind: "stopped" }
   | { kind: "error"; text: string };
 
@@ -58,8 +60,19 @@ export function assistantReply(message: ConversationMessage): AssistantReply {
   }
   if (message.decision === "answer" && reply) return { kind: "answer", reply };
   if (message.decision === "ask" && reply) return { kind: "ask", reply };
-  if (message.planned || (message.decision === "plan" && !IN_FLIGHT.includes(message.planStatus))) {
-    return { kind: "plan", taskCount: message.planTaskCount, ...(reply ? { reply } : {}) };
+  if (
+    message.decision === "propose" &&
+    message.planned &&
+    !IN_FLIGHT.includes(message.planStatus)
+  ) {
+    return { kind: "proposal", taskCount: message.planTaskCount, ...(reply ? { reply } : {}) };
+  }
+  if (
+    message.planned ||
+    (["plan", "delegate"].includes(message.decision ?? "") &&
+      !IN_FLIGHT.includes(message.planStatus))
+  ) {
+    return { kind: "delegated", taskCount: message.planTaskCount, ...(reply ? { reply } : {}) };
   }
   if (message.decision === "answer" || message.decision === "ask") {
     // A decision without text: nothing useful to show beyond completion.
@@ -105,8 +118,8 @@ export function thinkingDetail(
     : `${activity} · ${elapsedLabel(now - state.startedAt)}`;
 }
 
-export function plannedLabel(count: number): string {
-  return `Planned ${count} ${count === 1 ? "task" : "tasks"}.`;
+export function plannedLabel(count: number, opened = true): string {
+  return `${opened ? "Opened" : "Proposed"} ${count} ${count === 1 ? "task" : "tasks"}.`;
 }
 
 /** "gpt-5 · 1,234 tokens" when usage was reported; undefined otherwise. */

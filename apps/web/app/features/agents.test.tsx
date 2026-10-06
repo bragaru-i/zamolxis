@@ -228,6 +228,8 @@ describe("AgentsSettings", () => {
     expect(html).toContain("Custom");
     expect(html).toContain("codex · default model");
     expect(html).toContain("Your All products profile is off.");
+    expect(html).toContain("Orchestration");
+    expect(html).toContain("without opening work");
     expect(html).toContain("Changes apply to new runs.");
     expect(html).not.toContain("Instructions:");
     // No products yet: no scope picker.

@@ -141,7 +141,7 @@ describe("SessionView conversation", () => {
     expect(html).toContain('placeholder="Reply…"');
   });
 
-  it("shows the plan with its reply and run summaries", () => {
+  it("shows delegated work with its reply and run summaries", () => {
     const html = render(
       { status: "running" },
       [{ decision: "plan", planned: true, planTaskCount: 2, reply: "Two parts." }],
@@ -158,10 +158,28 @@ describe("SessionView conversation", () => {
       ] as never,
     );
     expect(html).toContain("Two parts.");
-    expect(html).toContain("Planned 2 tasks.");
+    expect(html).toContain("Opened 2 tasks.");
     expect(html).toContain("<strong>3 files</strong>");
     expect(html).toContain("Show more");
     expect(html).toContain('aria-expanded="false"');
+  });
+
+  it("keeps a proposal conversational until the owner opens it", () => {
+    const html = render({ status: "waiting" }, [
+      {
+        decision: "propose",
+        planned: true,
+        planTaskCount: 1,
+        reply: "I suggest one focused change.",
+        proposedTasks: [
+          { key: "diagnostics", title: "Improve diagnostics", description: "Show the failing step." },
+        ],
+      },
+    ]);
+    expect(html).toContain("Proposed 1 task. No work opened.");
+    expect(html).toContain("Improve diagnostics");
+    expect(html).toContain("Open this work");
+    expect(html).not.toContain("Builders can now run");
   });
 
   it("keeps the plain-language failure", () => {
@@ -185,12 +203,20 @@ describe("conversation helpers", () => {
   it("derives the assistant state", () => {
     expect(assistantReply({ ...base, planStatus: "pending" }).kind).toBe("thinking");
     expect(assistantReply({ ...base, planned: true, planTaskCount: 1 })).toEqual({
-      kind: "plan",
+      kind: "delegated",
       taskCount: 1,
     });
     expect(
       assistantReply({ ...base, planStatus: "acknowledged", decision: "plan", reply: "ok" }),
     ).toEqual({ kind: "thinking", reply: "ok" });
+    expect(
+      assistantReply({
+        ...base,
+        planned: true,
+        planTaskCount: 2,
+        decision: "propose",
+      }),
+    ).toEqual({ kind: "proposal", taskCount: 2 });
     expect(assistantReply({ ...base, planStatus: "failed", planError: "x" }).kind).toBe("error");
     expect(
       assistantReply({

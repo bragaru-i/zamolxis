@@ -38,7 +38,7 @@ describe("parseSupervisorDecision", () => {
   it("keeps task keys and redacts secrets in the reply and task text", () => {
     const decision = parseSupervisorDecision(
       JSON.stringify({
-        decision: "plan",
+        decision: "delegate",
         reply: "Deploy with GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz012345 set.",
         tasks: [
           {
@@ -50,7 +50,7 @@ describe("parseSupervisorDecision", () => {
       }),
       checks,
     );
-    expect(decision.decision).toBe("plan");
+    expect(decision.decision).toBe("delegate");
     expect(decision.tasks[0]?.key).toBe("outcome");
     expect(decision.reply).toBe("Deploy with GITHUB_TOKEN=*** set.");
     expect(decision.tasks[0]?.title).toBe("Use password: ***");
@@ -67,7 +67,7 @@ describe("parseSupervisorDecision", () => {
   it("defaults checks, keeps known scripts, orders dependencies and validates the plan", () => {
     const result = parseSupervisorDecision(
       JSON.stringify({
-        decision: "plan",
+        decision: "propose",
         reply: "Two changes.",
         tasks: [
           { ...task("c", ["a", "b"]), verificationScripts: ["test:unit", "missing"] },
@@ -77,7 +77,7 @@ describe("parseSupervisorDecision", () => {
       }),
       checks,
     );
-    expect(result.decision).toBe("plan");
+    expect(result.decision).toBe("propose");
     expect(result.reply).toBe("Two changes.");
     expect(result.tasks.map((t) => t.key)).toEqual(["a", "b", "c"]);
     expect(result.tasks[0]).toMatchObject({
@@ -92,10 +92,15 @@ describe("parseSupervisorDecision", () => {
   });
   it("summarizes a plan without a reply", () => {
     const result = parseSupervisorDecision(
-      JSON.stringify({ decision: "plan", tasks: [task("a")] }),
+      JSON.stringify({ decision: "propose", tasks: [task("a")] }),
       checks,
     );
-    expect(result.reply).toBe("Planned 1 task: Task a");
+    expect(result.reply).toBe("Proposed 1 task: Task a");
+  });
+  it("downgrades the legacy plan decision to a proposal", () => {
+    expect(
+      parseSupervisorDecision(JSON.stringify({ decision: "plan", tasks: [task("a")] }), checks),
+    ).toMatchObject({ decision: "propose", tasks: [{ key: "a" }] });
   });
   it("never plans from invalid output", () => {
     expect(parseSupervisorDecision("Plain prose answer.", checks)).toEqual({
@@ -115,7 +120,7 @@ describe("parseSupervisorDecision", () => {
       "not tasks",
     ]) {
       const result = parseSupervisorDecision(
-        JSON.stringify({ decision: "plan", reply: "Doing it.", tasks }),
+        JSON.stringify({ decision: "delegate", reply: "Doing it.", tasks }),
         checks,
       );
       expect(result.decision).toBe("answer");
@@ -188,7 +193,7 @@ describe("supervisorInstruction and repositoryChecks", () => {
         "User: Hello",
         "Supervisor: Hi there",
         "Why does CI fail?",
-        '"decision":"answer"|"plan"|"ask"',
+        '"decision":"answer"|"propose"|"delegate"|"ask"',
       ])
         expect(prompt).toContain(fragment);
       expect(repositoryChecks(join(dir, "missing"))).toEqual({

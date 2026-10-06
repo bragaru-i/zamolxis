@@ -554,7 +554,7 @@ export class ControlPlaneDriver {
         let usage: SupervisorUsage = {};
         if (legacy) {
           result = {
-            decision: "plan",
+            decision: "delegate",
             reply: `Planned ${legacy.length} task${legacy.length === 1 ? "" : "s"} from the provided plan.`,
             tasks: legacy,
           };

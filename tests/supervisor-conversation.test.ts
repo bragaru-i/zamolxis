@@ -294,6 +294,59 @@ it("records a clarifying question as needing input", async () => {
   );
 });
 
+it("keeps a proposal conversational until the owner explicitly opens it", async () => {
+  const f = await fixture();
+  const sessionId = await f.submit("How should we improve diagnostics?");
+  const { args } = await f.accept(
+    { decision: "propose", reply: "I suggest two focused changes." },
+    [task("diagnostics"), task("copy", ["diagnostics"])],
+  );
+  expect(await f.user.query(api.tasks.listBySession, { workSessionId: sessionId })).toEqual([]);
+  expect((await f.user.query(api.sessions.get, { workSessionId: sessionId })).status).toBe(
+    "waiting",
+  );
+  const [proposal] = await f.user.query(api.supervisor.messages, { workSessionId: sessionId });
+  expect(proposal).toMatchObject({
+    decision: "propose",
+    planned: true,
+    planTaskCount: 2,
+    proposedTasks: [
+      { key: "diagnostics", title: "Task diagnostics" },
+      { key: "copy", title: "Task copy" },
+    ],
+  });
+  await expect(
+    f.other.mutation(api.supervisor.openProposal, { textCommandId: args.textCommandId }),
+  ).rejects.toThrow("FORBIDDEN");
+  expect(
+    await f.user.mutation(api.supervisor.openProposal, { textCommandId: args.textCommandId }),
+  ).toBeNull();
+  expect(await f.user.query(api.tasks.listBySession, { workSessionId: sessionId })).toHaveLength(2);
+  const session = await f.user.query(api.sessions.get, { workSessionId: sessionId });
+  expect(session.status).toBe("running");
+  expect(session.totalTaskCount).toBe(2);
+  const [opened] = await f.user.query(api.supervisor.messages, { workSessionId: sessionId });
+  expect(opened).toMatchObject({ decision: "delegate", planTaskCount: 2 });
+  expect(opened?.proposedTasks).toBeUndefined();
+  // The explicit transition is idempotent and never duplicates Tasks.
+  await f.user.mutation(api.supervisor.openProposal, { textCommandId: args.textCommandId });
+  expect(await f.user.query(api.tasks.listBySession, { workSessionId: sessionId })).toHaveLength(2);
+});
+
+it("downgrades model delegation when the owner's message only asks a question", async () => {
+  const f = await fixture();
+  const sessionId = await f.submit("How would you fix the diagnostics?");
+  const { args } = await f.accept(
+    { decision: "delegate", reply: "I would make one focused change." },
+    [task("diagnostics")],
+  );
+  expect(await f.user.query(api.tasks.listBySession, { workSessionId: sessionId })).toEqual([]);
+  const [message] = await f.user.query(api.supervisor.messages, { workSessionId: sessionId });
+  expect(message).toMatchObject({ decision: "propose", planTaskCount: 1 });
+  // A replay is normalized the same way and remains idempotent.
+  expect(await f.node.mutation(api.supervisor.acceptPlan, args)).toBeNull();
+});
+
 it("creates tasks for an explicit plan decision and for legacy Nodes", async () => {
   const f = await fixture();
   const sessionId = await f.submit("Build two things");
@@ -307,7 +360,7 @@ it("creates tasks for an explicit plan decision and for legacy Nodes", async () 
   expect(session.totalTaskCount).toBe(2);
   await f.settlePlan(command._id);
 
-  const legacy = await f.submit("Legacy");
+  const legacy = await f.submit("Build with the legacy Node");
   const { args } = await f.accept({}, [task("only")]);
   expect(await f.user.query(api.tasks.listBySession, { workSessionId: legacy })).toHaveLength(1);
   expect((await f.user.query(api.sessions.get, { workSessionId: legacy })).status).toBe("running");

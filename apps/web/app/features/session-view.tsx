@@ -133,7 +133,8 @@ export function SessionView({
             session &&
             // An idle session waiting for the user has nothing to stop.
             !ended &&
-            (session.status !== "waiting" || (session.activeRunCount ?? 0) > 0) && (
+            (["planning", "running"].includes(session.status) ||
+              (session.activeRunCount ?? 0) > 0) && (
               <Button variant="danger" size="small" onClick={() => setConfirmStop(true)}>
                 Stop
               </Button>
@@ -352,7 +353,9 @@ function AssistantMessage({
   const state = assistantReply(message);
   const meta = usageLine(message);
   const stop = useMutation(api.supervisor.stop);
+  const openProposal = useMutation(api.supervisor.openProposal);
   const [requested, setRequested] = useState(false);
+  const [opening, setOpening] = useState(false);
   const [showLog, setShowLog] = useState(false);
   const now = useNow(state.kind === "thinking" && state.startedAt !== undefined);
   // The Supervisor's log arrives once it settled; a withdrawn message never ran one.
@@ -373,7 +376,9 @@ function AssistantMessage({
             <Thinking
               detail={thinkingDetail(
                 requested ? { ...state, stopping: true } : state,
-                message.decision === "plan" ? "Preparing tasks" : "Reading the repository",
+                ["plan", "delegate"].includes(message.decision ?? "")
+                  ? "Preparing tasks"
+                  : "Reading the repository",
                 now,
               )}
             />
@@ -401,10 +406,40 @@ function AssistantMessage({
             )}
           </div>
         </>
-      ) : state.kind === "plan" ? (
+      ) : state.kind === "proposal" ? (
         <>
           {state.reply && <Markdown>{state.reply}</Markdown>}
-          <p className="z-small z-muted">{plannedLabel(state.taskCount)}</p>
+          <p className="z-small z-muted">{plannedLabel(state.taskCount, false)} No work opened.</p>
+          {message.proposedTasks?.length ? (
+            <ol className="z-small">
+              {message.proposedTasks.map((task) => (
+                <li key={task.key}>
+                  <strong>{task.title}</strong>
+                  <div className="z-xsmall z-muted">{task.description}</div>
+                </li>
+              ))}
+            </ol>
+          ) : null}
+          <Button
+            size="small"
+            disabled={opening}
+            onClick={async () => {
+              setOpening(true);
+              try {
+                await openProposal({ textCommandId: message._id as Id<"textCommands"> });
+              } catch (error) {
+                onError(explainError(error, "Could not open this work."));
+                setOpening(false);
+              }
+            }}
+          >
+            {opening ? "Opening…" : "Open this work"}
+          </Button>
+        </>
+      ) : state.kind === "delegated" ? (
+        <>
+          {state.reply && <Markdown>{state.reply}</Markdown>}
+          <p className="z-small z-muted">{plannedLabel(state.taskCount)} Builders can now run.</p>
         </>
       ) : (
         <>
