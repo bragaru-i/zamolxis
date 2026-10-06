@@ -170,8 +170,14 @@ it("keeps explicit work as a proposal until the owner confirms it", async () => 
     messageId: first.messageId,
     productId: f.productId,
     repositoryId: f.repositoryId,
+    workstationId: f.workstationId,
   });
   expect(opened).toBeDefined();
+  // The chosen computer is the Session's computer from now on.
+  expect(await f.user.query(api.sessions.get, { workSessionId: opened })).toMatchObject({
+    workstationId: f.workstationId,
+    workstationName: "Node",
+  });
   expect(
     await f.user.mutation(api.orchestrator.openProposal, {
       messageId: first.messageId,

@@ -5,6 +5,7 @@ import { type MutationCtx, mutation, type QueryCtx, query } from "./_generated/s
 import { fail, load, ownSession, requireNode, requireUser } from "./lib/access";
 import { resolveAgentProfile } from "./lib/agentProfiles";
 import { enqueue } from "./lib/commands";
+import { deviceOnline } from "./lib/devices";
 import { explicitlyRequestsWork } from "./lib/orchestration";
 import { canonicalRepository } from "./lib/repositories";
 import {
@@ -97,6 +98,10 @@ const submitArgs = {
   text: v.string(),
   idempotencyKey: v.string(),
   sessionId: v.optional(v.id("workSessions")),
+  // "Run on": the computer a new Session must use. Without it the first online computer
+  // that has the repository and the Builder runtime is taken. Ignored for follow-ups,
+  // which stay on their Session's computer.
+  workstationId: v.optional(v.id("workstations")),
 };
 export async function submitText(
   ctx: MutationCtx,
@@ -106,6 +111,7 @@ export async function submitText(
     text: string;
     idempotencyKey: string;
     sessionId?: Id<"workSessions">;
+    workstationId?: Id<"workstations">;
   },
 ) {
   const owner = await requireUser(ctx);
@@ -135,7 +141,8 @@ export async function submitText(
       previous.text !== args.text ||
       previous.repositoryId !== repository._id ||
       previous.productId !== product._id ||
-      previous.requestedSessionId !== args.sessionId
+      previous.requestedSessionId !== args.sessionId ||
+      previous.requestedWorkstationId !== args.workstationId
     )
       fail("COMMAND_CONFLICT");
     return previous.workSessionId;
@@ -144,13 +151,24 @@ export async function submitText(
   // The Supervisor runtime is a snapshot for the Node; it is not required to be
   // installed here because older Nodes plan deterministically without it.
   const supervisor = await resolveAgentProfile(ctx, owner._id, product._id, "supervisor");
+  const existing = args.sessionId ? await ownSession(ctx, args.sessionId) : undefined;
+  // A follow-up stays on its Session's computer; a new Session takes the chosen one.
+  const wanted = existing ? (existing.workstationId ?? args.workstationId) : args.workstationId;
+  if (wanted) {
+    const device = await ctx.db.get("workstations", wanted);
+    if (!device || device.ownerId !== owner._id || device.status === "revoked")
+      fail("INVALID_ARGUMENT", "That computer is not paired with your account");
+  }
   const locations = await ctx.db
     .query("repositoryLocations")
     .withIndex("by_repository", (q) => q.eq("repositoryId", repository._id))
     .take(33);
   if (locations.length > 32) fail("LIMIT_EXCEEDED");
+  if (wanted && !locations.some((item) => item.workstationId === wanted))
+    fail("INVALID_ARGUMENT", "That computer does not have this repository");
   let location: Doc<"repositoryLocations"> | undefined;
   for (const item of locations) {
+    if (wanted && item.workstationId !== wanted) continue;
     const device = await load(ctx, "workstations", item.workstationId);
     const runtime = await ctx.db
       .query("runtimeInstallations")
@@ -160,8 +178,7 @@ export async function submitText(
       .unique();
     if (
       device.ownerId === owner._id &&
-      device.status === "online" &&
-      (device.lastHeartbeatAt ?? 0) > Date.now() - 45000 &&
+      deviceOnline(device) &&
       item.status === "available" &&
       runtime?.status === "available"
     ) {
@@ -173,7 +190,7 @@ export async function submitText(
   const now = Date.now();
   let sessionId = args.sessionId;
   if (sessionId) {
-    const session = await ownSession(ctx, sessionId);
+    const session = existing ?? (await ownSession(ctx, sessionId));
     if (session.productId !== product._id || session.status === "cancelled")
       fail("PRODUCT_MISMATCH");
     const relationship = await ctx.db
@@ -204,6 +221,7 @@ export async function submitText(
       createdAt: now,
       updatedAt: now,
       lastActivityAt: now,
+      workstationId: location.workstationId,
     });
     await ctx.db.insert("sessionRepositories", {
       workSessionId: sessionId,
@@ -251,6 +269,7 @@ export async function submitText(
     workSessionId: sessionId,
     planningWorkspaceId,
     ...(args.sessionId ? { requestedSessionId: args.sessionId } : {}),
+    ...(args.workstationId ? { requestedWorkstationId: args.workstationId } : {}),
   });
   await enqueue(
     ctx,

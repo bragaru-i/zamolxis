@@ -962,6 +962,23 @@ function build(name: string) {
           return products;
         case "repositories:listByProduct":
           return repositories;
+        case "repositories:computers":
+          return [
+            {
+              workstationId: "w1",
+              name: "Ion's MacBook Pro",
+              platform: "darwin",
+              online: true,
+              runtimes: ["claude", "codex"],
+            },
+            {
+              workstationId: "w2",
+              name: "Office Linux box",
+              platform: "linux",
+              online: false,
+              runtimes: ["codex"],
+            },
+          ];
         case "sessions:listMine":
           return args.status ? sessions.filter((row) => row.status === args.status) : sessions;
         case "sessions:get":

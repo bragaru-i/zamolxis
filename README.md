@@ -290,7 +290,11 @@ links without creating work: Sessions, pending approvals, pull requests, Tasks t
 continuation follows a recent linked Session when its Product and repository match. Each routing
 decision is persisted. When a Mac is online, the Orchestrator model writes the reply from that
 summary (read-only, no repository) and may answer, ask or propose; a proposal starts nothing until
-you click **Open this work**. Without a computer the summary itself is the answer. Settings → Agents
+you click **Open this work**. When more than one of your computers has the repository, the
+proposal review offers **Run on**: the chosen computer must be online with the Builder's agent,
+every new Session records its computer (shown as "Runs on …" in the Session header) and
+follow-ups stay there because its worktrees hold the work; without a choice the first online
+computer is taken. Without a computer the summary itself is the answer. Settings → Agents
 selects the runtime, model, reasoning effort and owner instructions for Orchestrator, Supervisor,
 Builder, Verifier, Repair and Integration roles. Global summaries do not link external tickets yet. An open Session is kept in the URL
 (`?session=<id>`), so refresh and back navigation keep it. A Session shows
