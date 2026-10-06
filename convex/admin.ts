@@ -42,6 +42,11 @@ async function deleteAuthSession(ctx: MutationCtx, sessionId: Id<"authSessions">
     .withIndex("sessionId", (q) => q.eq("sessionId", sessionId))
     .collect();
   for (const token of tokens) await ctx.db.delete("authRefreshTokens", token._id);
+  const label = await ctx.db
+    .query("signInLabels")
+    .withIndex("by_session", (q) => q.eq("sessionId", sessionId))
+    .unique();
+  if (label) await ctx.db.delete("signInLabels", label._id);
   await ctx.db.delete("authSessions", sessionId);
 }
 
@@ -226,6 +231,7 @@ export const mySignIns = query({
       expiresAt: v.number(),
       lastActiveAt: v.number(),
       current: v.boolean(),
+      label: v.union(v.string(), v.null()),
     }),
   ),
   handler: async (ctx) => {
@@ -247,8 +253,13 @@ export const mySignIns = query({
             .withIndex("sessionId", (q) => q.eq("sessionId", session._id))
             .order("desc")
             .first();
+          const label = await ctx.db
+            .query("signInLabels")
+            .withIndex("by_session", (q) => q.eq("sessionId", session._id))
+            .unique();
           return {
             sessionId: session._id,
+            label: label?.userId === user._id ? label.label : null,
             createdAt: session._creationTime,
             expiresAt: session.expirationTime,
             lastActiveAt: latest?._creationTime ?? session._creationTime,
@@ -282,5 +293,40 @@ export const signOutOtherDevices = mutation({
   handler: async (ctx) => {
     const user = await requireUser(ctx);
     return deleteAuthSessions(ctx, user._id, await currentSessionId(ctx));
+  },
+});
+
+// The signed-in browser names itself (e.g. "Safari on iPhone", derived client-side from
+// its user agent). Bounded and keyed to the caller's own auth session, so a browser can
+// only label itself; the raw user agent is never stored.
+export const labelThisDevice = mutation({
+  args: { label: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const user = await requireUser(ctx);
+    const sessionId = await currentSessionId(ctx);
+    const label = args.label.replace(/\s+/g, " ").trim();
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: rejecting control characters.
+    if (!label || label.length > 64 || /[\u0000-\u001f\u007f]/.test(label))
+      fail("INVALID_ARGUMENT", "Use a label of 1 to 64 characters");
+    const existing = await ctx.db
+      .query("signInLabels")
+      .withIndex("by_session", (q) => q.eq("sessionId", sessionId))
+      .unique();
+    if (existing?.label === label && existing.userId === user._id) return null;
+    if (existing)
+      await ctx.db.patch("signInLabels", existing._id, {
+        userId: user._id,
+        label,
+        updatedAt: Date.now(),
+      });
+    else
+      await ctx.db.insert("signInLabels", {
+        userId: user._id,
+        sessionId,
+        label,
+        updatedAt: Date.now(),
+      });
+    return null;
   },
 });

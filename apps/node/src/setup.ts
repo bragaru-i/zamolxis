@@ -323,8 +323,21 @@ export interface ControlPlane {
   registerRepositories(
     workstationId: string,
     repositories: Array<{ name: string; remoteUrl: string }>,
+    options?: { reactivate?: boolean },
   ): Promise<Array<{ repositoryId: string; remoteUrl: string }>>;
-  health(workstationId: string): Promise<{ online: boolean; runtimeAvailable: boolean }>;
+  health(workstationId: string): Promise<NodeHealth>;
+  renameSelf(workstationId: string, name: string): Promise<void>;
+  /** Stops new work for this Mac in one repository; "absent" if it was never registered. */
+  removeOwnLocation(workstationId: string, repositoryId: string): Promise<"removed" | "absent">;
+  /** Called with the previous entry's token: revokes it in favour of `replacementId`. */
+  retireReplaced(workstationId: string, replacementId: string): Promise<void>;
+}
+export interface NodeHealth {
+  online: boolean;
+  runtimeAvailable: boolean;
+  /** Absent on control planes older than the exact heartbeat check. */
+  lastHeartbeatAt?: number | null;
+  instanceId?: string | null;
 }
 export function convexControlPlane(convexUrl: string): ControlPlane {
   const client = new ConvexHttpClient(convexUrl);
@@ -344,16 +357,33 @@ export function convexControlPlane(convexUrl: string): ControlPlane {
         credential,
       })) as { token: string; workstationId: string },
     setAuth: (token) => client.setAuth(token),
-    registerRepositories: async (workstationId, repositories) =>
+    registerRepositories: async (workstationId, repositories, options) =>
       (await client.mutation(makeFunctionReference<"mutation">("onboarding:registerRepositories"), {
         workstationId,
         repositories,
+        ...(options?.reactivate ? { reactivate: true } : {}),
       })) as Array<{ repositoryId: string; remoteUrl: string }>,
     health: async (workstationId) =>
-      (await client.query(makeFunctionReference<"query">("node:health"), { workstationId })) as {
-        online: boolean;
-        runtimeAvailable: boolean;
-      },
+      (await client.query(makeFunctionReference<"query">("node:health"), {
+        workstationId,
+      })) as NodeHealth,
+    renameSelf: async (workstationId, name) => {
+      await client.mutation(makeFunctionReference<"mutation">("workstations:renameSelf"), {
+        workstationId,
+        name,
+      });
+    },
+    removeOwnLocation: async (workstationId, repositoryId) =>
+      (await client.mutation(makeFunctionReference<"mutation">("repositories:removeOwnLocation"), {
+        workstationId,
+        repositoryId,
+      })) as "removed" | "absent",
+    retireReplaced: async (workstationId, replacementId) => {
+      await client.mutation(makeFunctionReference<"mutation">("workstations:retireReplaced"), {
+        workstationId,
+        replacementId,
+      });
+    },
   };
 }
 export interface Choice<T extends string> {
@@ -466,9 +496,11 @@ export function migratePlaintextCredential(
   return true;
 }
 export type CredentialProblem = "missing" | "rejected" | "access-denied";
+const errorCode = (error: unknown) =>
+  (error as { data?: { code?: unknown } } | undefined)?.data?.code;
 /** Maps a refresh failure to something the owner can act on; other errors stay errors. */
 export function classifyCredentialError(error: unknown): CredentialProblem | undefined {
-  const code = (error as { data?: { code?: unknown } } | undefined)?.data?.code;
+  const code = errorCode(error);
   if (code === "FORBIDDEN" || code === "NOT_FOUND") return "rejected";
   if (code === "ACCESS_DENIED") return "access-denied";
   return undefined;
@@ -707,19 +739,117 @@ async function confirmServiceStable(env: SetupEnvironment, previousPid: number |
     "The Node service stops right after it starts. See ~/Library/Application Support/Zamolxis/node-error.log (a locked login Keychain or a rejected credential are the usual causes), then rerun pnpm zamolxis setup --repair",
   );
 }
+/** The entry this Mac had before pairing again, and its credential if still at hand. */
+export interface PreviousPairing {
+  workstationId: string;
+  credential?: string;
+}
+/** Captures the current pairing before it is forgotten, so it can be retired afterwards. */
+export function previousPairing(
+  config: NodeConfig,
+  store: CredentialStore,
+): PreviousPairing | undefined {
+  if (!config.workstationId) return undefined;
+  const stored = store.read(config.workstationId) ?? config.credential;
+  return {
+    workstationId: config.workstationId,
+    ...(isDeviceCredential(stored) ? { credential: stored } : {}),
+  };
+}
+const RETIRE_FALLBACK =
+  "The previous entry for this Mac was left as it is: its credential is no longer accepted, so setup cannot prove it belongs to this Mac. If it is still listed in Settings → Macs, remove it there.";
+/**
+ * Revokes the entry this Mac had before pairing again. Only the previous entry's own
+ * credential can do that; without it the entry is left alone and the owner is told.
+ */
+async function retirePrevious(
+  config: NodeConfig,
+  env: SetupEnvironment,
+  previous: PreviousPairing,
+  replacementId: string,
+) {
+  if (!previous.credential) {
+    env.io.log(RETIRE_FALLBACK);
+    return;
+  }
+  const client = env.connect(config.convexUrl);
+  try {
+    const auth = await client.refresh(previous.credential);
+    if (auth.workstationId !== previous.workstationId) throw new Error("DEVICE_IDENTITY_MISMATCH");
+    client.setAuth(auth.token);
+    await client.retireReplaced(previous.workstationId, replacementId);
+    env.io.log("✓ Revoked this Mac's previous entry");
+  } catch (error) {
+    env.io.log(
+      classifyCredentialError(error)
+        ? RETIRE_FALLBACK
+        : `Could not revoke this Mac's previous entry (${describeError(error)}). If it is still listed in Settings → Macs, remove it there.`,
+    );
+  }
+}
+const describeError = (error: unknown) =>
+  String(errorCode(error) ?? (error instanceof Error ? error.message : "unknown error"));
+/**
+ * Stops new work for this Mac in repositories the owner unchecked. Repositories with
+ * active work stay granted (returned) so the running work is not cut off.
+ */
+async function removeRepositories(
+  client: ControlPlane,
+  workstationId: string,
+  removed: NodeConfig["repositories"],
+  io: SetupIo,
+) {
+  const kept: NodeConfig["repositories"] = [];
+  for (const repository of removed) {
+    if (!repository.repositoryId) continue;
+    try {
+      await client.removeOwnLocation(workstationId, repository.repositoryId);
+      io.log(`✓ ${repository.path} no longer receives new work on this Mac`);
+    } catch (error) {
+      if (errorCode(error) === "LOCATION_BUSY") {
+        io.log(
+          `${repository.path} still has work running on this Mac; it stays granted. Remove it again once that work has finished.`,
+        );
+        kept.push(repository);
+      } else
+        io.log(
+          `Could not record the removal of ${repository.path} in Zamolxis (${describeError(error)}); remove it in Settings → Macs if it is still listed.`,
+        );
+    }
+  }
+  return kept;
+}
+/** Health of a freshly (re)started Node: a heartbeat from a process other than `before`. */
+export function newProcessHeartbeat(health: NodeHealth, before: NodeHealth | undefined) {
+  if (!health.online || !health.runtimeAvailable) return false;
+  // Control planes before the exact check only report online.
+  if (health.instanceId === undefined) return true;
+  if (!health.instanceId || health.instanceId === before?.instanceId) return false;
+  return (health.lastHeartbeatAt ?? 0) > (before?.lastHeartbeatAt ?? 0);
+}
 /**
  * Brings an existing configuration to a working state: Keychain credential,
  * accepted credential (pairing again when needed), registered repositories,
- * the service of this checkout and a fresh heartbeat.
+ * the service of this checkout and a heartbeat from the Node process it started.
  */
 export async function checkAndRepair(
   config: NodeConfig,
   env: SetupEnvironment,
-  options: { interactive: boolean; restart?: boolean },
+  options: {
+    interactive: boolean;
+    restart?: boolean;
+    /** Repositories the owner just unchecked; recorded as removed for this Mac. */
+    removed?: NodeConfig["repositories"];
+    /** The owner confirmed the repository list: removed locations become eligible again. */
+    regrant?: boolean;
+    /** The entry before "Pair again", retired once the new pairing works. */
+    previous?: PreviousPairing;
+  },
 ) {
   const { io } = env;
   const save = (value: NodeConfig) => saveConfig(value, env.configPath);
   let restart = options.restart ?? false;
+  let previous = options.previous;
   io.log("✓ Configuration is valid");
   if (migratePlaintextCredential(config, env.store, save)) {
     io.log("✓ Moved the device credential from config.json into the login Keychain");
@@ -746,12 +876,25 @@ export async function checkAndRepair(
     io.log(PROBLEM_MESSAGE[reason]);
     if (!(await io.confirm("Pair this Mac again now? (shows a new QR code)", true)))
       throw new Error("Setup stopped: the Node cannot connect until this Mac is paired again");
+    // The rejected credential cannot prove the old entry; it is reported, not revoked.
+    if (config.workstationId && !previous) previous = { workstationId: config.workstationId };
     forgetPairing(config, env);
   }
   io.log("✓ Device credential accepted");
+  if (previous && previous.workstationId !== workstationId)
+    await retirePrevious(config, env, previous, workstationId);
+  if (options.removed?.length) {
+    const kept = await removeRepositories(client, workstationId, options.removed, io);
+    if (kept.length) {
+      config.repositories = [...config.repositories, ...kept];
+      validateConfig(config);
+      save(config);
+    }
+  }
   const registered = await client.registerRepositories(
     workstationId,
     config.repositories.map(({ name, remoteUrl }) => ({ name, remoteUrl })),
+    options.regrant ? { reactivate: true } : undefined,
   );
   config.repositories = config.repositories.map((repository) => {
     const row = registered.find(({ remoteUrl }) => remoteUrl === repository.remoteUrl);
@@ -770,23 +913,31 @@ export async function checkAndRepair(
     io.log("The Node service definition is outdated; reinstalling it…");
   else if (!state.loaded) io.log("The Node service is installed but not loaded; loading it…");
   else reinstall = false;
+  const restarted = reinstall || restart;
+  // The heartbeat before the restart, so only the new process can satisfy the check.
+  const before = restarted ? await client.health(workstationId).catch(() => undefined) : undefined;
   if (reinstall) env.service.install();
   else if (restart) {
     io.log("Restarting the Node service to apply the changes…");
     env.service.restart();
   }
-  if (reinstall || restart) await confirmServiceStable(env, previousPid);
+  if (restarted) await confirmServiceStable(env, previousPid);
   io.log("✓ Node service runs this checkout's daemon");
+  let last: NodeHealth | undefined;
   for (let attempt = 0; attempt < 20; attempt++) {
-    const health = await client.health(workstationId);
-    if (health.online && health.runtimeAvailable) {
+    last = await client.health(workstationId);
+    if (restarted ? newProcessHeartbeat(last, before) : last.online && last.runtimeAvailable) {
       io.log(
-        `✓ Node online; Codex available; 3 builders + 1 verifier\nOpen ${config.appUrl} on iPhone`,
+        `✓ Node online${restarted ? " (heartbeat from the restarted service)" : ""}; Codex available; 3 builders + 1 verifier\nOpen ${config.appUrl} on iPhone`,
       );
       return;
     }
     await env.pause(1500);
   }
+  if (restarted && last?.online && last.instanceId && last.instanceId === before?.instanceId)
+    throw new Error(
+      "Only the previous Node process reported a heartbeat; the restarted service has not. Inspect node-error.log and rerun setup",
+    );
   throw new Error("Heartbeat/runtime check failed; inspect node-error.log and rerun setup");
 }
 export type MenuAction = "repair" | "repositories" | "rename" | "pair" | "exit";
@@ -794,20 +945,55 @@ export function menuChoices(): Choice<MenuAction>[] {
   return [
     { name: "Check and repair", value: "repair" },
     { name: "Add or remove repositories", value: "repositories" },
-    // No backend function renames a workstation yet.
-    { name: "Rename this Mac", value: "rename", disabled: "not supported by Zamolxis yet" },
+    { name: "Rename this Mac", value: "rename" },
     { name: "Pair again (new QR code, replaces the device credential)", value: "pair" },
     { name: "Exit", value: "exit" },
   ];
 }
-/** Changes repository grants in config.json; returns whether anything changed. */
+/** Validates a Mac name the same way the control plane does (trimmed, 1..64). */
+export function validateMacName(value: string): true | string {
+  const name = value.trim();
+  if (!name) return "Enter a name";
+  if (name.length > 64) return "Use at most 64 characters";
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: rejecting control characters.
+  if (/[\u0000-\u001f\u007f]/.test(name)) return "Use printable characters only";
+  return true;
+}
+/** Renames this Mac in Zamolxis (Node-authenticated) and in config.json. */
+export async function renameMac(config: NodeConfig, env: SetupEnvironment) {
+  const name = (
+    await env.io.input("New name for this Mac", { default: config.name, validate: validateMacName })
+  ).trim();
+  if (name === config.name) {
+    env.io.log("The name is unchanged");
+    return;
+  }
+  if (config.workstationId) {
+    migratePlaintextCredential(config, env.store, (value) => saveConfig(value, env.configPath));
+    const client = env.connect(config.convexUrl);
+    const problem = await authenticate(config, env, client);
+    if (problem)
+      throw new Error(
+        `${PROBLEM_MESSAGE[problem]} The name was not changed; run pnpm zamolxis setup and choose "Check and repair" first.`,
+      );
+    await client.renameSelf(config.workstationId, name);
+  }
+  config.name = name;
+  saveConfig(config, env.configPath);
+  env.io.log(
+    config.workstationId
+      ? `✓ This Mac is now "${name}" in Zamolxis`
+      : `✓ This Mac will be paired as "${name}"`,
+  );
+}
+/** Changes repository grants in config.json; returns the change, or undefined if none. */
 export async function editRepositories(config: NodeConfig, env: SetupEnvironment) {
   const next = await chooseRepositories(env, config.repositories);
   const added = next.filter(({ path }) => !config.repositories.some((r) => r.path === path));
   const removed = config.repositories.filter(({ path }) => !next.some((r) => r.path === path));
   if (!added.length && !removed.length) {
     env.io.log("No repository changes");
-    return false;
+    return undefined;
   }
   validateConfig({ ...config, repositories: next });
   config.repositories = next;
@@ -816,9 +1002,9 @@ export async function editRepositories(config: NodeConfig, env: SetupEnvironment
   for (const { path } of removed) env.io.log(`- ${path}`);
   if (removed.length)
     env.io.log(
-      "Removed repositories stay registered in Zamolxis with their Products; this Mac only stops working on them.",
+      "Removed repositories keep their Product and history in Zamolxis; this Mac stops receiving new work for them.",
     );
-  return true;
+  return { added, removed };
 }
 export async function runSetup(options: { repair?: boolean }, env: SetupEnvironment) {
   try {
@@ -848,20 +1034,32 @@ export async function runSetup(options: { repair?: boolean }, env: SetupEnvironm
       `This Mac is set up as "${config.name}" with ${config.repositories.length} repositories${config.workstationId ? "" : " (not paired yet)"}.`,
     );
     const action = await env.io.select("What do you want to do?", menuChoices(), "repair");
-    if (action === "exit" || action === "rename") return;
+    if (action === "exit") return;
+    if (action === "rename") return await renameMac(config, env);
     if (action === "repositories") {
-      if (!(await editRepositories(config, env))) return;
-      return await checkAndRepair(config, env, { interactive: true, restart: true });
+      const change = await editRepositories(config, env);
+      if (!change) return;
+      return await checkAndRepair(config, env, {
+        interactive: true,
+        restart: true,
+        removed: change.removed,
+        regrant: true,
+      });
     }
     if (action === "pair") {
       if (
         !(await env.io.confirm(
-          "Pair again? This Mac stops working until you approve the new QR code. Remove the old entry in Settings afterwards.",
+          "Pair again? This Mac stops working until you approve the new QR code. Its previous entry is revoked once the new pairing works.",
           false,
         ))
       )
         return;
+      const previous = previousPairing(config, env.store);
       forgetPairing(config, env);
+      return await checkAndRepair(config, env, {
+        interactive: true,
+        ...(previous ? { previous } : {}),
+      });
     }
     await checkAndRepair(config, env, { interactive: true });
   } catch (error) {

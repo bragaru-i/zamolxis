@@ -89,7 +89,12 @@ export function describeProfile(profile: Pick<Profile, "runtime" | "model" | "re
 const PROFILE_ERRORS: Record<string, string> = {
   AGENT_PROFILE_CONFLICT:
     "Another profile is already on for this role here. Turn that one off first, then try again.",
-  INVALID_ARGUMENT: "Choose a runtime before saving.",
+  INVALID_ARGUMENT:
+    "Check the profile: a name of 1 to 64 characters, a runtime, and at most 32 concurrent runs.",
+  AGENT_PROFILE_IN_USE:
+    "Runs started with this override are still active. Remove it once they have finished.",
+  INVALID_STATE:
+    "Only a product override can be removed; turn the All products profile off instead.",
   PRODUCT_MISMATCH: "This product no longer exists or was archived.",
   LIMIT_EXCEEDED: "You have reached the limit of 100 agent profiles.",
   NOT_FOUND: "This profile no longer exists. Close Settings and try again.",
@@ -100,7 +105,26 @@ export function explainProfileError(error: unknown): string {
   return (code && PROFILE_ERRORS[code]) ?? explainError(error, "Could not save the profile.");
 }
 
-/** Arguments for `agentProfiles.upsert`; empty model/effort mean the runtime default. */
+/** Mirrors the backend bounds: a trimmed name of 1..64 characters. */
+export function profileNameProblem(value: string): string | undefined {
+  const name = value.trim();
+  if (!name) return "Enter a name.";
+  if (name.length > 64) return "Use at most 64 characters.";
+  return undefined;
+}
+/** Empty means no limit; otherwise a whole number from 1 to 32. */
+export function concurrencyProblem(value: string): string | undefined {
+  const text = value.trim();
+  if (!text) return undefined;
+  if (!/^\d+$/.test(text) || Number(text) < 1 || Number(text) > 32)
+    return "Use a whole number from 1 to 32, or leave it empty for no limit.";
+  return undefined;
+}
+
+/**
+ * Arguments for `agentProfiles.upsert`; empty model/effort mean the runtime default and
+ * an empty concurrency means no limit (clearing an existing one).
+ */
 export function upsertArgs(input: {
   role: Role;
   name: string;
@@ -110,19 +134,20 @@ export function upsertArgs(input: {
   model: string;
   effort: string;
   enabled: boolean;
+  maxConcurrency: string;
 }) {
   const { existing } = input;
+  const concurrency = input.maxConcurrency.trim();
   return {
     ...(existing ? { profileId: existing._id } : {}),
     ...(input.productId ? { productId: input.productId } : {}),
-    name: existing?.name ?? input.name,
+    name: input.name.trim(),
     role: input.role,
     runtime: input.runtime,
     ...(input.model.trim() ? { model: input.model.trim() } : {}),
     ...(input.effort ? { reasoningEffort: input.effort } : {}),
     enabled: input.enabled,
-    // Keep the owner-wide concurrency limit; this editor does not change it.
-    ...(existing?.maxConcurrency !== undefined ? { maxConcurrency: existing.maxConcurrency } : {}),
+    ...(concurrency ? { maxConcurrency: Number(concurrency) } : {}),
   };
 }
 
@@ -169,6 +194,12 @@ export function AgentsSettings({
           </select>
         </label>
       )}
+      {productId && (
+        <p className="z-xsmall z-muted">
+          Roles you set here override All products for {scopeName} only. Remove an override to go
+          back to All products.
+        </p>
+      )}
       {global === undefined || scopeRows === undefined ? (
         <p className="z-muted z-small" role="status">
           Loading agents…
@@ -186,6 +217,8 @@ export function AgentsSettings({
                   <span className="z-spacer" />
                   {effective.source === "default" ? (
                     <StatusBadge status="planned" label="Default" />
+                  ) : productId && effective.source === "product" ? (
+                    <StatusBadge status="completed" label="Override" />
                   ) : (
                     <StatusBadge status="completed" label="Custom" />
                   )}
@@ -193,7 +226,9 @@ export function AgentsSettings({
                 <span className="z-xsmall z-muted">{help}</span>
                 <span className="z-small">
                   {shown ? describeProfile(shown) : `${DEFAULT_RUNTIME} · default model`}
+                  {shown?.maxConcurrency ? ` · up to ${shown.maxConcurrency} at once` : ""}
                 </span>
+                {shown && <span className="z-xsmall z-muted">{shown.name}</span>}
                 {(own && !own.enabled) || (productId && effective.source !== "product") ? (
                   <span className="z-xsmall z-muted">
                     {own && !own.enabled ? `Your ${scopeName} profile is off. ` : ""}
@@ -217,7 +252,13 @@ export function AgentsSettings({
                   />
                 ) : (
                   <Button variant="ghost" size="small" onClick={() => setEditing(role)}>
-                    {own ? "Edit" : productId ? `Set for ${scopeName}` : "Set up"}
+                    {own
+                      ? productId
+                        ? "Edit override"
+                        : "Edit"
+                      : productId
+                        ? `Override for ${scopeName}`
+                        : "Set up"}
                   </Button>
                 )}
               </div>
@@ -249,7 +290,14 @@ export function ProfileEditor({
   onDone: () => void;
 }) {
   const upsert = useMutation(api.agentProfiles.upsert);
+  const removeOverride = useMutation(api.agentProfiles.removeOverride);
   const modelId = useId();
+  const nameId = useId();
+  const concurrencyId = useId();
+  const [name, setName] = useState(existing?.name ?? `${label} · ${scopeName}`);
+  const [concurrency, setConcurrency] = useState(
+    existing?.maxConcurrency !== undefined ? String(existing.maxConcurrency) : "",
+  );
   const [runtime, setRuntime] = useState(prefill?.runtime ?? runtimes[0] ?? DEFAULT_RUNTIME);
   const [model, setModel] = useState(prefill?.model ?? "");
   const [effort, setEffort] = useState(prefill?.reasoningEffort ?? "");
@@ -257,28 +305,36 @@ export function ProfileEditor({
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState("");
   const efforts = effort && !EFFORTS.includes(effort) ? [...EFFORTS, effort] : EFFORTS;
-  const save = async (nextEnabled: boolean) => {
+  const run = async (action: () => Promise<unknown>) => {
     setBusy(true);
     setProblem("");
     try {
-      await upsert(
-        upsertArgs({
-          role,
-          name: `${label} · ${scopeName}`,
-          productId,
-          existing,
-          runtime,
-          model,
-          effort,
-          enabled: nextEnabled,
-        }),
-      );
+      await action();
       onDone();
     } catch (error) {
       setProblem(explainProfileError(error));
     } finally {
       setBusy(false);
     }
+  };
+  const save = async (nextEnabled: boolean) => {
+    const invalid = profileNameProblem(name) ?? concurrencyProblem(concurrency);
+    if (invalid) return setProblem(invalid);
+    await run(() =>
+      upsert(
+        upsertArgs({
+          role,
+          name,
+          productId,
+          existing,
+          runtime,
+          model,
+          effort,
+          enabled: nextEnabled,
+          maxConcurrency: concurrency,
+        }),
+      ),
+    );
   };
   return (
     <form
@@ -289,6 +345,15 @@ export function ProfileEditor({
         void save(enabled);
       }}
     >
+      <label className="z-field" htmlFor={nameId}>
+        Name
+        <TextInput
+          id={nameId}
+          value={name}
+          maxLength={64}
+          onChange={(event) => setName(event.target.value)}
+        />
+      </label>
       <label className="z-field">
         Runtime
         <select
@@ -334,6 +399,17 @@ export function ProfileEditor({
           ))}
         </select>
       </label>
+      <label className="z-field" htmlFor={concurrencyId}>
+        Max concurrent runs
+        <TextInput
+          id={concurrencyId}
+          value={concurrency}
+          inputMode="numeric"
+          maxLength={2}
+          placeholder="No limit"
+          onChange={(event) => setConcurrency(event.target.value)}
+        />
+      </label>
       <label className="z-check">
         <input
           type="checkbox"
@@ -350,6 +426,16 @@ export function ProfileEditor({
         {existing?.enabled && (
           <Button variant="secondary" size="small" disabled={busy} onClick={() => void save(false)}>
             Turn off
+          </Button>
+        )}
+        {existing && productId && (
+          <Button
+            variant="danger"
+            size="small"
+            disabled={busy}
+            onClick={() => void run(() => removeOverride({ profileId: existing._id }))}
+          >
+            Remove override
           </Button>
         )}
         <Button variant="ghost" size="small" disabled={busy} onClick={onDone}>

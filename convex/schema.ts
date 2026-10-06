@@ -144,6 +144,15 @@ export default defineSchema({
     .index("email", ["email"])
     .index("phone", ["phone"]),
 
+  // Bounded, non-identifying label of a browser sign-in (#47), e.g. "Safari on iPhone".
+  // Convex Auth stores no user agent; the signed-in browser reports its own label.
+  signInLabels: defineTable({
+    userId: v.id("users"),
+    sessionId: v.id("authSessions"),
+    label: v.string(),
+    updatedAt: v.number(),
+  }).index("by_session", ["sessionId"]),
+
   workstations: defineTable({
     ownerId: v.id("users"),
     name: v.string(),
@@ -157,6 +166,8 @@ export default defineSchema({
     lastHeartbeatAt: v.optional(v.number()),
     registeredAt: v.number(),
     revokedAt: v.optional(v.number()),
+    // Set when this entry was revoked because the same Mac paired again (#45).
+    replacedBy: v.optional(v.id("workstations")),
   })
     .index("by_owner", ["ownerId"])
     .index("by_owner_status", ["ownerId", "status"])
@@ -214,8 +225,12 @@ export default defineSchema({
       v.literal("missing"),
       v.literal("invalid"),
       v.literal("busy"),
+      // Removed by the owner or the Node (#45): never chosen for new work; only an
+      // explicit re-grant from setup makes it available again.
+      v.literal("removed"),
     ),
     verifiedAt: v.optional(v.number()),
+    removedAt: v.optional(v.number()),
     updatedAt: v.number(),
   })
     .index("by_repository", ["repositoryId"])

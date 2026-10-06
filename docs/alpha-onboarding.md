@@ -42,15 +42,38 @@ Re-running `pnpm zamolxis setup` on a configured Mac shows a menu:
   or revoked in Settings) explains why and offers to pair again with a new QR;
   re-registers repositories; checks that the launchd service exists, is loaded and
   runs this checkout's `daemon.ts` (reinstalls it otherwise, restarts it after a
-  credential or repository change and checks it stays up); waits for the heartbeat.
+  credential or repository change and checks it stays up). After a (re)start it
+  waits for a heartbeat from the new Node process: `node:health` reports
+  `lastHeartbeatAt` and the Node instance id (new for every process start), and
+  setup requires an instance id different from the one seen before the restart
+  with a later heartbeat. If only the old process keeps reporting, setup says so.
 - **Add or remove repositories:** the checklist with current grants checked and
-  discovered repositories unchecked; additions are registered, then the service
-  restarts. Removal only drops the local grant: no backend function removes a
-  repository, so it and its Product stay in Zamolxis.
-- **Rename this Mac:** shown as unavailable; the backend cannot rename a Mac yet.
+  discovered repositories unchecked. Unchecked repositories are recorded as removed
+  for this Mac (`repositories:removeOwnLocation`): no new work is dispatched to that
+  location. A repository with work still running there (unfinished or uncertain
+  runs, or workspaces being prepared, used or integrated) is refused with
+  `LOCATION_BUSY`; setup keeps it granted and says so. The repository, its Product
+  and history stay in Zamolxis. The checked list is confirmed as a re-grant, so a
+  location removed earlier (also one removed in Settings) becomes eligible again
+  once the restarted Node registers it. A plain Check and repair never re-grants.
+- **Rename this Mac:** asks for a name (trimmed, 1 to 64 characters), renames the
+  workstation with the Mac's own credential (`workstations:renameSelf`) and updates
+  `config.json`. No restart is needed.
 - **Pair again:** new QR, new device credential (the old Keychain item is removed).
-  Approval creates a new Mac entry; remove the old one in Settings.
+  Once the new pairing works, setup uses the previous credential, if it is still
+  valid, to revoke the previous Mac entry (`workstations:retireReplaced`, recorded
+  as `replacedBy` the new entry). If that credential is gone or no longer accepted
+  (also when Check and repair had to pair again), the old entry is left as it is
+  and setup says so; remove it in Settings → Macs. If setup is interrupted before
+  the new pairing completes, the old entry is not revoked.
 - **Exit.**
+
+In the app, **Settings → Macs** offers the same management from iPhone:
+**Rename** (`workstations:rename`, owner only), **Repositories** (the locations the
+Mac may work on, each with **Remove from this Mac…**, `repositories:removeLocationForOwner`,
+refused while work runs there) and **Remove this Mac…** (revoke). A location removed
+in Settings stays removed across Node restarts; re-add it with setup's
+"Add or remove repositories" on that Mac.
 
 `pnpm zamolxis setup --repair` runs Check and repair without prompts (for scripts);
 when the Mac must be paired again it stops and says so. `pnpm zamolxis doctor`

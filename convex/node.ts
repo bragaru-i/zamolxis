@@ -94,7 +94,8 @@ export const registerLocation = mutation({
       canonicalPath: args.canonicalPath,
       gitCommonDir: args.gitCommonDir,
       lastKnownHead: args.headSha,
-      status: "available" as const,
+      // A removed location stays removed until setup re-grants it (#45).
+      status: existing?.status === "removed" ? ("removed" as const) : ("available" as const),
       verifiedAt: Date.now(),
       updatedAt: Date.now(),
       ...(args.defaultBranch ? { defaultBranch: args.defaultBranch } : {}),
@@ -122,6 +123,7 @@ export const verifyLocation = mutation({
     await requireNode(ctx, args.workstationId);
     const location = await load(ctx, "repositoryLocations", args.repositoryLocationId);
     if (location.workstationId !== args.workstationId) fail("FORBIDDEN");
+    if (location.status === "removed") return null;
     await ctx.db.patch("repositoryLocations", location._id, {
       status: args.status,
       verifiedAt: Date.now(),
@@ -673,7 +675,13 @@ export const recoverCompletedCommand = mutation({
 
 export const health = query({
   args: deviceArgs,
-  returns: v.object({ online: v.boolean(), runtimeAvailable: v.boolean() }),
+  returns: v.object({
+    online: v.boolean(),
+    runtimeAvailable: v.boolean(),
+    // Exact heartbeat evidence: setup waits for a new instance of the Node process.
+    lastHeartbeatAt: v.union(v.number(), v.null()),
+    instanceId: v.union(v.string(), v.null()),
+  }),
   handler: async (ctx, args) => {
     const device = await requireNode(ctx, args.workstationId);
     const runtime = await ctx.db
@@ -685,6 +693,8 @@ export const health = query({
     return {
       online: device.status === "online" && (device.lastHeartbeatAt ?? 0) > Date.now() - 45_000,
       runtimeAvailable: runtime?.status === "available",
+      lastHeartbeatAt: device.lastHeartbeatAt ?? null,
+      instanceId: device.nodeInstanceId ?? null,
     };
   },
 });

@@ -1,11 +1,35 @@
 import { v } from "convex/values";
-import { mutation } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
+import { type MutationCtx, mutation } from "./_generated/server";
 import { fail, load, requireNode } from "./lib/access";
 import { digest } from "./pairing";
+
+async function reactivate(
+  ctx: MutationCtx,
+  repositoryId: Id<"repositories">,
+  workstationId: Id<"workstations">,
+) {
+  const location = await ctx.db
+    .query("repositoryLocations")
+    .withIndex("by_repository_workstation", (q) =>
+      q.eq("repositoryId", repositoryId).eq("workstationId", workstationId),
+    )
+    .unique();
+  if (location?.status !== "removed") return;
+  // "missing" until the Node registers the location again and finds it intact.
+  await ctx.db.patch("repositoryLocations", location._id, {
+    status: "missing",
+    removedAt: undefined,
+    updatedAt: Date.now(),
+  });
+}
 export const registerRepositories = mutation({
   args: {
     workstationId: v.id("workstations"),
     repositories: v.array(v.object({ name: v.string(), remoteUrl: v.string() })),
+    // The owner re-granted these repositories in setup: locations removed earlier on
+    // this Mac become eligible again once the Node verifies them (#45).
+    reactivate: v.optional(v.boolean()),
   },
   returns: v.array(
     v.object({
@@ -32,6 +56,7 @@ export const registerRepositories = mutation({
           q.eq("ownerId", node.ownerId).eq("remoteUrl", item.remoteUrl),
         )
         .unique();
+      if (previous && args.reactivate) await reactivate(ctx, previous._id, node._id);
       if (previous?.productId) {
         const product = await load(ctx, "products", previous.productId);
         if (product.ownerId !== node.ownerId || product.archivedAt) fail("FORBIDDEN");
