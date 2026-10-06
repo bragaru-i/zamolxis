@@ -10,6 +10,7 @@ import {
   ProductMark,
   StatusBadge,
   safeHref,
+  Thinking,
 } from "@zamolxis/ui";
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { type ReactNode, useEffect, useState } from "react";
@@ -176,8 +177,76 @@ interface OrchestratorMessage {
   _id: Id<"orchestratorMessages">;
   text: string;
   reply: string;
-  route: "answer" | "create" | "continue";
+  route: "answer" | "ask" | "propose" | "create" | "continue";
+  status?: "thinking" | "answered";
+  answeredBy?: "model" | "deterministic";
+  proposal?: string;
+  proposalSessionId?: Id<"workSessions">;
+  productId?: Id<"products">;
+  repositoryId?: Id<"repositories">;
+  runtime?: string;
+  modelActual?: string;
+  totalTokens?: number;
+  createdAt: number;
   links: OrchestratorLink[];
+}
+
+// After this long the Node is not waited for; the summary shown is the answer.
+const THINKING_SHOWN_MS = 10 * 60_000;
+
+function routeMeta(message: OrchestratorMessage, thinking: boolean) {
+  if (thinking) return "Summary from current state · the Orchestrator is writing a reply";
+  if (message.route === "create") return "Opened linked work";
+  if (message.route === "continue") return "Continued linked work";
+  const by =
+    message.answeredBy === "model"
+      ? ` · ${message.modelActual ?? message.runtime ?? "model"}${message.totalTokens ? ` · ${message.totalTokens.toLocaleString()} tokens` : ""}`
+      : "";
+  if (message.route === "ask") return `Asked you a question${by}`;
+  if (message.route === "propose") return `Proposed work, nothing started${by}`;
+  return `Answered without opening work${by}`;
+}
+
+function OpenProposal({
+  message,
+  onOpen,
+}: {
+  message: OrchestratorMessage;
+  onOpen: (id: Id<"workSessions">) => void;
+}) {
+  const open = useMutation(api.orchestrator.openProposal);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const { productId, repositoryId } = message;
+  if (message.proposalSessionId) return null;
+  if (!productId || !repositoryId)
+    return (
+      <p className="z-xsmall z-muted">
+        Choose a product and repository, then ask again to open this work.
+      </p>
+    );
+  return (
+    <div className="z-stack">
+      {error && <Notice tone="danger">{error}</Notice>}
+      <Button
+        size="small"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          setError("");
+          try {
+            onOpen(await open({ messageId: message._id, productId, repositoryId }));
+          } catch (failure) {
+            setError(explainError(failure, "Could not open this work. Try again."));
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        Open this work
+      </Button>
+    </div>
+  );
 }
 
 function OrchestratorConversation({
@@ -190,6 +259,9 @@ function OrchestratorConversation({
   const messages = useQuery(api.orchestrator.messages, ready ? {} : "skip") as
     | OrchestratorMessage[]
     | undefined;
+  const now = Date.now();
+  const thinking = (message: OrchestratorMessage) =>
+    message.status === "thinking" && now - message.createdAt < THINKING_SHOWN_MS;
   return (
     <section className="z-stack" aria-label="Orchestrator conversation">
       <div className="z-row z-row--between">
@@ -212,15 +284,16 @@ function OrchestratorConversation({
               <Message
                 author="assistant"
                 label="Zamolxis"
-                meta={
-                  message.route === "answer"
-                    ? "Answered without opening work"
-                    : message.route === "continue"
-                      ? "Continued linked work"
-                      : "Opened linked work"
-                }
+                meta={routeMeta(message, thinking(message))}
               >
+                {thinking(message) && <Thinking label="Writing a reply…" />}
                 <Markdown>{message.reply}</Markdown>
+                {message.route === "propose" && message.proposal && (
+                  <div className="z-stack">
+                    <Markdown>{message.proposal}</Markdown>
+                    <OpenProposal message={message} onOpen={(id) => onOpen(id)} />
+                  </div>
+                )}
                 {message.links.length > 0 && (
                   <div className="z-row">
                     {message.links.map((link) => (

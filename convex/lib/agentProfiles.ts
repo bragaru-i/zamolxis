@@ -2,7 +2,13 @@ import { redactSecrets } from "@zamolxis/runtime-core";
 import type { Id } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
 import { fail } from "./access";
-export type AgentRole = "supervisor" | "builder" | "verifier" | "repair" | "integration";
+export type AgentRole =
+  | "orchestrator"
+  | "supervisor"
+  | "builder"
+  | "verifier"
+  | "repair"
+  | "integration";
 export async function resolveAgentProfile(
   ctx: QueryCtx,
   ownerId: Id<"users">,

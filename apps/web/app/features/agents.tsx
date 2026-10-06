@@ -6,7 +6,13 @@ import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
 import { errorCode, explainError } from "./errors";
 
-export type Role = "supervisor" | "builder" | "verifier" | "repair" | "integration";
+export type Role =
+  | "orchestrator"
+  | "supervisor"
+  | "builder"
+  | "verifier"
+  | "repair"
+  | "integration";
 
 export interface Profile {
   _id: Id<"agentProfiles">;
@@ -32,6 +38,11 @@ interface DeviceRuntimes {
 }
 
 export const ROLES: Array<{ role: Role; label: string; help: string }> = [
+  {
+    role: "orchestrator",
+    label: "Orchestrator",
+    help: "Writes replies in the home conversation from current Sessions, approvals and runs. It only talks: work starts in a Session when you ask for it or open a proposal. Without a connected Mac, Zamolxis answers without a model.",
+  },
   {
     role: "supervisor",
     label: "Supervisor",

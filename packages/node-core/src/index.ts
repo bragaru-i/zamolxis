@@ -6,6 +6,7 @@ export function createNodeInfo(): NodeInfo {
 }
 export * from "./capabilities/capability-trace";
 export * from "./capabilities/repository-discovery";
+export * from "./capabilities/orchestrator";
 export * from "./capabilities/supervisor";
 export * from "./control-plane/driver";
 export * from "./persistence/local-state";

@@ -63,7 +63,7 @@ async function fixture() {
     await ctx.db.patch("repositories", repositoryId, { productId: id });
     return id;
   });
-  return { t, user, other, productId, repositoryId };
+  return { t, user, other, node, workstationId, productId, repositoryId };
 }
 
 it("answers a status question without creating hidden work", async () => {
@@ -322,4 +322,126 @@ it("links approvals, pull requests, attention Tasks, trust and active Runs in a 
     commands: (await ctx.db.query("textCommands").collect()).length,
   }));
   expect(counts).toEqual({ sessions: 1, runs: 2, commands: 0 });
+});
+
+it("hands a question to the Orchestrator model on an online Node and settles only its reply", async () => {
+  const f = await fixture();
+  await f.user.mutation(api.agentProfiles.upsert, {
+    name: "Orchestrator",
+    role: "orchestrator",
+    runtime: "codex",
+    model: "gpt-x",
+    reasoningEffort: "low",
+    instructions: "Be brief.",
+    enabled: true,
+  });
+  await f.user.mutation(api.orchestrator.submit, {
+    text: "First question",
+    idempotencyKey: "q-1",
+    productId: f.productId,
+  });
+  const { messageId } = await f.user.mutation(api.orchestrator.submit, {
+    text: "What is going on?",
+    idempotencyKey: "q-2",
+    productId: f.productId,
+  });
+  const commands = await f.t.run((ctx) =>
+    ctx.db
+      .query("commands")
+      .filter((q) => q.eq(q.field("type"), "orchestrator.answer"))
+      .collect(),
+  );
+  expect(commands).toHaveLength(2);
+  const command = commands.find((row) => row.targetId === messageId);
+  expect(command).toMatchObject({
+    workstationId: f.workstationId,
+    targetType: "orchestratorMessage",
+    idempotencyKey: `orchestrator:${messageId}`,
+    status: "pending",
+  });
+  expect(command?.payload).toMatchObject({
+    orchestratorMessageId: messageId,
+    text: "What is going on?",
+    orchestrator: {
+      runtime: "codex",
+      model: "gpt-x",
+      reasoningEffort: "low",
+      instructions: "Be brief.",
+    },
+    conversation: [
+      { role: "user", text: "First question" },
+      { role: "supervisor", text: expect.stringContaining("did not open one") },
+    ],
+  });
+  expect(command?.payload.context).toContain('Scope: Product "Product"');
+
+  const settle = {
+    workstationId: f.workstationId,
+    orchestratorMessageId: messageId,
+    decision: "answer" as const,
+    reply: "Nothing is running.",
+    usage: { modelActual: "gpt-x-2", totalTokens: 42 },
+  };
+  // Another owner's Node cannot answer for this owner.
+  const otherWorkstation = await f.other.mutation(api.workstations.register, {
+    name: "Other",
+    nodeAuthSubject: "other-device",
+  });
+  const otherNode = f.t.withIdentity({
+    subject: "other-device",
+    tokenIdentifier: "other-device",
+    ownerSubject: "bob",
+  });
+  await expect(
+    otherNode.mutation(api.orchestrator.settleAnswer, {
+      ...settle,
+      workstationId: otherWorkstation,
+    }),
+  ).rejects.toThrow("FORBIDDEN");
+  await expect(
+    f.node.mutation(api.orchestrator.settleAnswer, { ...settle, decision: "propose" }),
+  ).rejects.toThrow("INVALID_ARGUMENT");
+  await f.node.mutation(api.orchestrator.settleAnswer, settle);
+  await f.node.mutation(api.orchestrator.settleAnswer, { ...settle, reply: "Late duplicate." });
+  const messages = await f.user.query(api.orchestrator.messages, {});
+  expect(messages.at(-1)).toMatchObject({
+    status: "answered",
+    answeredBy: "model",
+    route: "answer",
+    reply: "Nothing is running.",
+    modelActual: "gpt-x-2",
+    totalTokens: 42,
+  });
+  await expect(
+    f.user.mutation(api.orchestrator.openProposal, {
+      messageId,
+      productId: f.productId,
+      repositoryId: f.repositoryId,
+    }),
+  ).rejects.toThrow("INVALID_STATE");
+});
+
+it("answers deterministically when no Node can run the Orchestrator", async () => {
+  const f = await fixture();
+  await f.t.run(async (ctx) => {
+    await ctx.db.patch("workstations", f.workstationId, { status: "offline" });
+  });
+  const { messageId } = await f.user.mutation(api.orchestrator.submit, {
+    text: "What is going on?",
+    idempotencyKey: "offline",
+  });
+  const [message] = await f.user.query(api.orchestrator.messages, {});
+  expect(message).toMatchObject({
+    _id: messageId,
+    status: "answered",
+    answeredBy: "deterministic",
+  });
+  expect(
+    await f.t.run((ctx) =>
+      ctx.db
+        .query("commands")
+        .filter((q) => q.eq(q.field("type"), "orchestrator.answer"))
+        .collect(),
+    ),
+  ).toEqual([]);
 });

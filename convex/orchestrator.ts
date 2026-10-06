@@ -1,11 +1,26 @@
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { type MutationCtx, mutation, query } from "./_generated/server";
-import { fail, load, requireUser } from "./lib/access";
+import { fail, load, requireNode, requireUser } from "./lib/access";
+import { resolveAgentProfile } from "./lib/agentProfiles";
+import { enqueue } from "./lib/commands";
 import { explicitlyRequestsWork, requestsContinuation } from "./lib/orchestration";
-import { submitText } from "./supervisor";
+import { assertUsage, submitText, usageArgs } from "./supervisor";
 
 const MAX_MESSAGES = 100;
+const HISTORY_MESSAGES = 10;
+const HISTORY_TEXT_LIMIT = 4000;
+const CONTEXT_LIMIT = 16000;
+const REPLY_LIMIT = 8000;
+const PROPOSAL_LIMIT = 4000;
+const HEARTBEAT_FRESH_MS = 45_000;
+const route = v.union(
+  v.literal("answer"),
+  v.literal("ask"),
+  v.literal("propose"),
+  v.literal("create"),
+  v.literal("continue"),
+);
 const MAX_LINKS = 24;
 const ACTIVE_RUN = new Set([
   "queued",
@@ -77,7 +92,7 @@ export const submit = mutation({
   args: submitArgs,
   returns: v.object({
     messageId: v.id("orchestratorMessages"),
-    route: v.union(v.literal("answer"), v.literal("create"), v.literal("continue")),
+    route,
     workSessionId: v.optional(v.id("workSessions")),
   }),
   handler: async (ctx, args) => {
@@ -125,6 +140,7 @@ export const submit = mutation({
     let workSessionId: Id<"workSessions"> | undefined;
     let reply: string;
     let links: LinkDraft[] = [];
+    let model: Awaited<ReturnType<typeof orchestratorTarget>> | undefined;
 
     if (opensWork) {
       if (!product || !repository) fail("WORK_CONTEXT_REQUIRED");
@@ -152,7 +168,9 @@ export const submit = mutation({
       const summary = await statusAnswer(ctx, owner._id, product?._id, text);
       reply = summary.reply;
       links = summary.links;
+      model = await orchestratorTarget(ctx, owner._id, product?._id);
     }
+    const history = model ? await conversationHistory(ctx, conversation._id) : [];
 
     const messageId = await ctx.db.insert("orchestratorMessages", {
       ownerId: owner._id,
@@ -164,6 +182,13 @@ export const submit = mutation({
       route,
       reply,
       ...(workSessionId ? { workSessionId } : {}),
+      status: model ? "thinking" : "answered",
+      ...(model
+        ? {
+            runtime: model.runtime,
+            ...(model.profile?.model ? { modelRequested: model.profile.model } : {}),
+          }
+        : { answeredBy: "deterministic" as const }),
       createdAt: now,
     });
     if (workSessionId) links = [sessionLink(await load(ctx, "workSessions", workSessionId))];
@@ -174,6 +199,30 @@ export const submit = mutation({
         ...link,
         createdAt: now,
       });
+    if (model) {
+      await enqueue(
+        ctx,
+        model.workstationId,
+        "orchestrator.answer",
+        "orchestratorMessage",
+        messageId,
+        {
+          orchestratorMessageId: messageId,
+          text,
+          context: controlPlaneContext(product?.name, reply, links),
+          conversation: history,
+          orchestrator: {
+            runtime: model.runtime,
+            ...(model.profile?.model ? { model: model.profile.model } : {}),
+            ...(model.profile?.reasoningEffort
+              ? { reasoningEffort: model.profile.reasoningEffort }
+              : {}),
+            ...(model.profile?.instructions ? { instructions: model.profile.instructions } : {}),
+          },
+        },
+        `orchestrator:${messageId}`,
+      );
+    }
     await ctx.db.patch("orchestratorConversations", conversation._id, {
       lastActivityAt: now,
       updatedAt: now,
@@ -377,4 +426,154 @@ async function workLinks(
         });
   }
   return [...links, ...prs, ...tasks, ...runs].slice(0, MAX_LINKS);
+}
+
+// The Orchestrator model runs on one of the owner's online Nodes that has the runtime of the
+// effective Orchestrator profile. Without one the deterministic answer stands.
+async function orchestratorTarget(
+  ctx: MutationCtx,
+  ownerId: Id<"users">,
+  productId: Id<"products"> | undefined,
+) {
+  const effective = await resolveAgentProfile(ctx, ownerId, productId, "orchestrator");
+  const devices = await ctx.db
+    .query("workstations")
+    .withIndex("by_owner_status", (q) => q.eq("ownerId", ownerId).eq("status", "online"))
+    .take(10);
+  for (const device of devices) {
+    if ((device.lastHeartbeatAt ?? 0) <= Date.now() - HEARTBEAT_FRESH_MS) continue;
+    const runtime = await ctx.db
+      .query("runtimeInstallations")
+      .withIndex("by_workstation_runtime", (q) =>
+        q.eq("workstationId", device._id).eq("runtime", effective.runtime),
+      )
+      .unique();
+    if (runtime?.status === "available")
+      return { workstationId: device._id, runtime: effective.runtime, profile: effective.profile };
+  }
+  return undefined;
+}
+
+async function conversationHistory(
+  ctx: MutationCtx,
+  conversationId: Id<"orchestratorConversations">,
+) {
+  const rows = await ctx.db
+    .query("orchestratorMessages")
+    .withIndex("by_conversation_time", (q) => q.eq("conversationId", conversationId))
+    .order("desc")
+    .take(HISTORY_MESSAGES);
+  return rows.reverse().flatMap((row) => [
+    { role: "user" as const, text: row.text.slice(0, HISTORY_TEXT_LIMIT) },
+    { role: "supervisor" as const, text: row.reply.slice(0, HISTORY_TEXT_LIMIT) },
+  ]);
+}
+
+// What the model may rely on: the backend's own summary and the links it will show.
+function controlPlaneContext(productName: string | undefined, reply: string, links: LinkDraft[]) {
+  return [
+    `Scope: ${productName ? `Product "${productName}"` : "all of the owner's Products"}`,
+    "Summary:",
+    reply,
+    "Linked items shown to the owner under your reply (type · label · status):",
+    ...(links.length
+      ? links.map(
+          (link) => `- ${link.targetType} · ${link.label}${link.status ? ` · ${link.status}` : ""}`,
+        )
+      : ["(none)"]),
+  ]
+    .join("\n")
+    .slice(0, CONTEXT_LIMIT);
+}
+
+async function orchestratorCommand(ctx: MutationCtx, messageId: Id<"orchestratorMessages">) {
+  return ctx.db
+    .query("commands")
+    .withIndex("by_idempotency_key", (q) => q.eq("idempotencyKey", `orchestrator:${messageId}`))
+    .unique();
+}
+
+export const settleAnswer = mutation({
+  args: {
+    workstationId: v.id("workstations"),
+    orchestratorMessageId: v.id("orchestratorMessages"),
+    decision: v.union(v.literal("answer"), v.literal("ask"), v.literal("propose")),
+    reply: v.string(),
+    proposal: v.optional(v.string()),
+    usage: v.optional(usageArgs),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const device = await requireNode(ctx, args.workstationId);
+    const message = await load(ctx, "orchestratorMessages", args.orchestratorMessageId);
+    const command = await orchestratorCommand(ctx, message._id);
+    if (!command || command.workstationId !== device._id || message.ownerId !== device.ownerId)
+      fail("FORBIDDEN");
+    if (!args.reply.trim() || args.reply.length > REPLY_LIMIT) fail("INVALID_ARGUMENT");
+    if (
+      (args.decision === "propose") !== (args.proposal !== undefined) ||
+      (args.proposal !== undefined &&
+        (!args.proposal.trim() || args.proposal.length > PROPOSAL_LIMIT))
+    )
+      fail("INVALID_ARGUMENT");
+    const usage = args.usage ?? {};
+    assertUsage(usage);
+    // A late or repeated delivery never replaces an answer already settled.
+    if (message.status !== "thinking") return null;
+    await ctx.db.patch("orchestratorMessages", message._id, {
+      status: "answered",
+      answeredBy: "model",
+      route: args.decision,
+      reply: args.reply,
+      ...(args.proposal !== undefined ? { proposal: args.proposal } : {}),
+      ...usage,
+    });
+    return null;
+  },
+});
+
+// The owner's click is what authorizes a proposal: it becomes an explicit request in a new
+// Session through the same path as any explicit work.
+export const openProposal = mutation({
+  args: {
+    messageId: v.id("orchestratorMessages"),
+    productId: v.id("products"),
+    repositoryId: v.id("repositories"),
+  },
+  returns: v.id("workSessions"),
+  handler: async (ctx, args) => {
+    const owner = await requireUser(ctx);
+    const message = await load(ctx, "orchestratorMessages", args.messageId);
+    if (message.ownerId !== owner._id) fail("FORBIDDEN");
+    if (message.proposalSessionId) return message.proposalSessionId;
+    if (message.route !== "propose" || !message.proposal) fail("INVALID_STATE");
+    const workSessionId = await submitText(ctx, {
+      productId: args.productId,
+      repositoryId: args.repositoryId,
+      text: `Open this work: ${message.proposal}`,
+      idempotencyKey: `orchprop_${message._id}`.slice(0, 128),
+    });
+    await ctx.db.patch("orchestratorMessages", message._id, { proposalSessionId: workSessionId });
+    const session = await load(ctx, "workSessions", workSessionId);
+    await ctx.db.insert("orchestratorMessageLinks", {
+      ownerId: owner._id,
+      messageId: message._id,
+      ...sessionLink(session),
+      createdAt: Date.now(),
+    });
+    return workSessionId;
+  },
+});
+
+/** The Node could not produce a model reply: the deterministic answer stands. */
+export async function settleFailedAnswer(ctx: MutationCtx, targetId: string, code: string) {
+  const id = ctx.db.normalizeId("orchestratorMessages", targetId);
+  if (!id) return;
+  const message = await ctx.db.get(id);
+  if (message?.status === "thinking")
+    await ctx.db.patch("orchestratorMessages", id, {
+      status: "answered",
+      answeredBy: "deterministic",
+      modelError: code.slice(0, 64),
+    });
 }

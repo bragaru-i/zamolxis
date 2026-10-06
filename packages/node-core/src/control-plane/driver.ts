@@ -1,7 +1,20 @@
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { PlannedTask } from "@zamolxis/application";
-import type { AgentRunId, NormalizedRunEventDto, WorkspaceId } from "@zamolxis/contracts";
+import type {
+  AgentRunId,
+  NormalizedRunEventDto,
+  WorkspaceId,
+  WorkstationId,
+} from "@zamolxis/contracts";
 import { commitCandidate, mergeDependencies } from "@zamolxis/git";
 import type { AgentRuntime, InterruptedTurnPolicy, RuntimeRegistry } from "@zamolxis/runtime-core";
+import {
+  type OrchestratorDecision,
+  orchestratorInstruction,
+  parseOrchestratorDecision,
+} from "../capabilities/orchestrator";
 import type { RepositoryDiscovery } from "../capabilities/repository-discovery";
 import {
   type ConversationMessage,
@@ -66,6 +79,17 @@ export type ExecutionCommand = {
         // Absent when an older backend sends the command.
         supervisor?: SupervisorSelection;
         conversation?: ConversationMessage[];
+      };
+    }
+  // Writes the reply of the top-level Orchestrator; it reads no repository.
+  | {
+      readonly type: "orchestrator.answer";
+      readonly payload: {
+        orchestratorMessageId: string;
+        text: string;
+        context: string;
+        conversation: ConversationMessage[];
+        orchestrator?: SupervisorSelection;
       };
     }
   | {
@@ -152,6 +176,11 @@ function boundedSummary(value: unknown): string | undefined {
 export function supervisorRunId(textCommandId: string): string {
   return `supervisor:${textCommandId}`;
 }
+export function orchestratorRunId(orchestratorMessageId: string): string {
+  return `orchestrator:${orchestratorMessageId}`;
+}
+// An Orchestrator reply that takes longer is stopped; the backend answers without it.
+export const ORCHESTRATOR_TIMEOUT_MS = 5 * 60_000;
 /** Bounded, owner-visible progress of a Supervisor that is still working. */
 export interface SupervisorProgress {
   readonly textCommandId: string;
@@ -289,6 +318,11 @@ export type Delivery =
     }
   | TraceBatch
   | SupervisorLogBatch
+  | ({
+      readonly kind: "orchestrator.answer";
+      readonly orchestratorMessageId: string;
+      readonly usage?: SupervisorUsage;
+    } & OrchestratorDecision)
   | { readonly kind: "command.failed"; readonly commandId: string; readonly code: string }
   | { readonly kind: "command.complete"; readonly commandId: string };
 /** The control plane's view of a run, returned by reconcile when it is known. */
@@ -381,6 +415,7 @@ export class ControlPlaneDriver {
   // delivered per run so later commands resume the stream.
   readonly #streaming = new Map<string, Promise<void>>();
   readonly #cursors = new Map<string, number>();
+  readonly #answers = new Set<Promise<void>>();
   // Text commands whose repository.plan executes in this process.
   readonly #planning = new Map<string, Planning>();
   // Runs this driver started or tried to recover, so a run is recovered at most once per
@@ -415,7 +450,12 @@ export class ControlPlaneDriver {
       for (const stored of this.store.listInterruptedCommands())
         if (!this.#executing.has(stored.commandId)) await this.reconcileInterrupted(stored);
       const pending = listed.filter((command) => !this.#executing.has(command.commandId));
-      for (const command of pending) if (!continuesRun(command)) await this.execute(command);
+      for (const command of pending) {
+        if (continuesRun(command)) continue;
+        // A model reply can take minutes; it never holds up provisioning or planning.
+        if (command.type === "orchestrator.answer") this.#answerInBackground(command);
+        else await this.execute(command);
+      }
       const starts = pending.filter((command) => command.type === "runtime.start");
       let builders = 0;
       let verifiers = 0;
@@ -466,9 +506,18 @@ export class ControlPlaneDriver {
       this.#controlBusy = false;
     }
   }
-  /** Resolves once every run stream owned by this driver has finished. */
+  /** Resolves once every run stream and Orchestrator reply owned by this driver has finished. */
   async idle(): Promise<void> {
-    while (this.#streaming.size) await Promise.all([...this.#streaming.values()]);
+    while (this.#streaming.size || this.#answers.size)
+      await Promise.all([...this.#streaming.values(), ...this.#answers]);
+  }
+  // Failures are retried by a later tick: the command stays pending until claimed.
+  #answerInBackground(command: ExecutionCommand): void {
+    if (this.#executing.has(command.commandId)) return;
+    const answer: Promise<void> = this.execute(command)
+      .catch(() => undefined)
+      .finally(() => this.#answers.delete(answer));
+    this.#answers.add(answer);
   }
   async execute(command: ExecutionCommand): Promise<void> {
     if (this.#executing.has(command.commandId)) return;
@@ -604,6 +653,14 @@ export class ControlPlaneDriver {
           decision: result.decision,
           reply: result.reply,
           ...(Object.keys(usage).length ? { usage } : {}),
+        });
+      } else if (command.type === "orchestrator.answer") {
+        const outcome = await this.#orchestrate(command.payload);
+        deliveries.push({
+          kind: "orchestrator.answer",
+          orchestratorMessageId: command.payload.orchestratorMessageId,
+          ...parseOrchestratorDecision(outcome.summary),
+          ...(Object.keys(outcome.usage).length ? { usage: outcome.usage } : {}),
         });
       } else if (command.type === "integration.prepare") {
         const workspace = this.workspaces.inspect(command.payload.workspaceId);
@@ -1100,6 +1157,103 @@ export class ControlPlaneDriver {
         this.workspaces.release(workspaceId, runId);
     }
   }
+  // Runs the top-level Orchestrator as a Node-local, read-only turn in an empty scratch
+  // directory: it has no repository, workspace lease or run record, and is never resumed.
+  // Approval requests are rejected and a slow reply is stopped after a bounded time.
+  async #orchestrate(payload: {
+    orchestratorMessageId: string;
+    text: string;
+    context: string;
+    conversation: ConversationMessage[];
+    orchestrator?: SupervisorSelection;
+  }): Promise<{ summary?: string; usage: SupervisorUsage }> {
+    const runId = orchestratorRunId(payload.orchestratorMessageId);
+    const runtime = this.runtimes.get(this.#supervisorRuntime(payload.orchestrator?.runtime));
+    const cwd = realpathSync(mkdtempSync(join(tmpdir(), "zamolxis-orchestrator-")));
+    let nativeSessionId: string | undefined;
+    let settled = false;
+    let timedOut = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const session = await runtime.start({
+        runId: runId as AgentRunId,
+        workstationId: this.workstationId as WorkstationId,
+        instruction: orchestratorInstruction({
+          text: payload.text,
+          context: payload.context,
+          conversation: payload.conversation,
+          ...(payload.orchestrator?.instructions
+            ? { instructions: payload.orchestrator.instructions }
+            : {}),
+        }),
+        // Read-only, reply-only handling in the runtime adapters.
+        role: "supervisor",
+        ...(payload.orchestrator?.model ? { model: payload.orchestrator.model } : {}),
+        ...(payload.orchestrator?.reasoningEffort
+          ? { reasoningEffort: payload.orchestrator.reasoningEffort }
+          : {}),
+        workspace: {
+          workspaceId: runId as WorkspaceId,
+          cwd,
+          branch: "orchestrator",
+          headSha: "orchestrator",
+        },
+      });
+      const id = session.nativeSessionId;
+      nativeSessionId = id;
+      timer = setTimeout(() => {
+        timedOut = true;
+        void runtime.stop({ nativeSessionId: id }).catch(() => undefined);
+      }, ORCHESTRATOR_TIMEOUT_MS);
+      let summary: string | undefined;
+      const usage: SupervisorUsage = {};
+      for await (const event of this.#follow(runtime, id, runId, runId)) {
+        if (event.type === "approval.requested")
+          await runtime.resolveApproval?.({
+            nativeSessionId: id,
+            approvalId: event.payload.approvalId,
+            decision: "reject",
+          });
+        if (event.type === "run.usage") {
+          const reported = event.payload;
+          if (
+            typeof reported.modelActual === "string" &&
+            reported.modelActual.length > 0 &&
+            reported.modelActual.length <= 256
+          )
+            usage.modelActual = reported.modelActual;
+          for (const counter of USAGE_COUNTERS) {
+            const value = reported[counter];
+            if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0)
+              usage[counter] = value;
+          }
+        }
+        if (event.type === "run.completed") summary = boundedSummary(event.payload.summary);
+      }
+      const final = await runtime.inspect(id);
+      settled = TERMINAL.includes(final.state);
+      if (final.state === "completed" && !timedOut)
+        return { ...(summary ? { summary } : {}), usage };
+      throw new Error(
+        timedOut
+          ? "ORCHESTRATOR_TIMEOUT"
+          : final.state === "failed"
+            ? "ORCHESTRATOR_FAILED"
+            : "ORCHESTRATOR_INCOMPLETE",
+      );
+    } finally {
+      if (timer) clearTimeout(timer);
+      this.#cursors.delete(runId);
+      if (!settled && nativeSessionId) {
+        try {
+          await runtime.stop({ nativeSessionId });
+        } catch {
+          /* The command fails either way. */
+        }
+      }
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  }
   /**
    * Finds runs a previous Node process left unfinished (a run it was following, paused or
    * whose start command was interrupted) and reattaches each once, in the background. The
@@ -1311,6 +1465,23 @@ export class ControlPlaneDriver {
             kind: "command.failed",
             commandId: command.commandId,
             code: "SUPERVISOR_INTERRUPTED",
+          } satisfies Delivery,
+          createdAt: Date.now(),
+        },
+      ]);
+      await this.flush();
+      return;
+    }
+    if (command.type === "orchestrator.answer" && command.status === "running") {
+      // Nothing local to release: the backend answers without the model.
+      this.store.completeCommandWithEvents(command.commandId, [
+        {
+          eventId: `delivery:${command.commandId}:000`,
+          type: "control-plane.delivery",
+          payload: {
+            kind: "command.failed",
+            commandId: command.commandId,
+            code: "ORCHESTRATOR_INTERRUPTED",
           } satisfies Delivery,
           createdAt: Date.now(),
         },

@@ -50,6 +50,30 @@ vi.mock("convex/react", () => ({
             },
           ],
         },
+        {
+          _id: "proposal",
+          text: "What should we do about checkout?",
+          reply: "Totals look wrong.",
+          route: "propose",
+          status: "answered",
+          answeredBy: "model",
+          modelActual: "gpt-x",
+          totalTokens: 1234,
+          proposal: "Fix checkout totals rounding.",
+          productId: "product",
+          repositoryId: "repository",
+          createdAt: Date.now(),
+          links: [],
+        },
+        {
+          _id: "thinking",
+          text: "Anything blocked?",
+          reply: "One session needs your input.",
+          route: "answer",
+          status: "thinking",
+          createdAt: Date.now(),
+          links: [],
+        },
       ];
     if (name === "supervisor:products") return [];
     return undefined;
@@ -76,6 +100,11 @@ it("renders the global answer and its linked session separately from the session
   expect(html).toContain('href="https://github.com/acme/shop/pull/7"');
   expect(html).not.toContain("PR: Unsafe");
   expect(html).not.toContain("javascript:");
+  expect(html).toContain("Proposed work, nothing started · gpt-x · 1,234 tokens");
+  expect(html).toContain("Fix checkout totals rounding.");
+  expect(html).toContain("Open this work");
+  expect(html).toContain("Writing a reply…");
+  expect(html).toContain("the Orchestrator is writing a reply");
   expect(html).toContain("No work sessions yet");
   expect(html).toContain("Ask Zamolxis, or tell it to start work");
 });
