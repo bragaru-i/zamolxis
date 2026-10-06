@@ -1,6 +1,6 @@
-import { spawn, execFileSync } from "node:child_process";
-import { chmodSync, copyFileSync, lstatSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { execFileSync, spawn } from "node:child_process";
+import { lstatSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import type { WorkstationId } from "@zamolxis/contracts";
 import { inspectRepository, remoteIdentity } from "@zamolxis/git";
@@ -12,7 +12,12 @@ import {
   RuntimeManager,
   WorkspaceManager,
 } from "@zamolxis/node-core";
-import { AppServerClient, CodexRuntime } from "@zamolxis/runtime-codex";
+import {
+  AppServerClient,
+  CodexRuntime,
+  prepareCodexHome,
+  releaseCodexHome,
+} from "@zamolxis/runtime-codex";
 import { RuntimeRegistry } from "@zamolxis/runtime-core";
 import { ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
@@ -35,15 +40,14 @@ const grant = (path: string) => {
     (suffix !== ".." && !suffix.startsWith("../") && !isAbsolute(suffix))
   );
 };
-const profile = mkdtempSync(join(tmpdir(), "zamolxis-node-codex-"));
-chmodSync(profile, 0o700);
+// The Node's own CODEX_HOME persists across restarts: Codex keeps each thread's rollout
+// there, which lets a restarted Node resume its runs (thread/resume). Only authentication
+// is reused from the user's Codex home; user plugins/MCP/config are not execution grants.
+const profile = join(root, "codex-home");
+prepareCodexHome(profile, {
+  authSource: join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "auth.json"),
+});
 try {
-  // Only reuse authentication; user plugins/MCP/config are not execution grants.
-  copyFileSync(
-    join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "auth.json"),
-    join(profile, "auth.json"),
-  );
-  chmodSync(join(profile, "auth.json"), 0o600);
   const children = new Set<ReturnType<typeof spawn>>();
   const statePath = join(root, "node-state.sqlite");
   for (const path of [statePath, `${statePath}-wal`, `${statePath}-shm`]) {
@@ -161,7 +165,9 @@ try {
       new ConvexControlPlaneTransport(client, config.workstationId, identity.instanceId),
       config.workstationId,
     );
-    // Discovery is performed before every assigned run by the driver.
+    // Discovery is performed before every assigned run by the driver. Its first tick
+    // reattaches the runs a previous Node process left unfinished (resumed from the
+    // persistent CODEX_HOME above, or reported lost).
     driver.setRepositoryDiscovery(new RepositoryDiscovery(workspaces));
     const control = (async () => {
       while (!stopping) {
@@ -191,5 +197,6 @@ try {
     store.close();
   }
 } finally {
-  rmSync(profile, { recursive: true, force: true });
+  // Rollouts stay for the next start; the copied login does not.
+  releaseCodexHome(profile);
 }
