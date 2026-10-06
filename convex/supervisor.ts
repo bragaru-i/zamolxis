@@ -1,11 +1,10 @@
 import { validatePlan } from "@zamolxis/application";
-import { resolveAgentProfile } from "./lib/agentProfiles";
-import { enqueue } from "./lib/commands";
-import { requireNode } from "./lib/access";
 import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
-import { fail, load, ownSession, requireUser } from "./lib/access";
+import { fail, load, ownSession, requireNode, requireUser } from "./lib/access";
+import { resolveAgentProfile } from "./lib/agentProfiles";
+import { enqueue } from "./lib/commands";
 import { queueRun } from "./runs";
 import { allocateWorkspace } from "./workspaces";
 export const products = query({
@@ -149,7 +148,7 @@ export const submit = mutation({
       // A follow-up reopens a finished Session; the Supervisor decides what it needs.
       const reopen = session.status === "completed" || session.status === "failed";
       await ctx.db.patch("workSessions", session._id, {
-        ...(reopen ? { status: "planning" as const, completedAt: undefined } : {}),
+        ...(reopen ? { status: "planning" as const, completedAt: undefined, reopenedAt: now } : {}),
         updatedAt: now,
         lastActivityAt: now,
       });

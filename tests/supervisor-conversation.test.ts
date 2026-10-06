@@ -382,6 +382,7 @@ it("reopens a completed or failed Session on follow-up and refuses a cancelled o
     const session = await f.user.query(api.sessions.get, { workSessionId: sessionId });
     expect(session.status).toBe("planning");
     expect(session.completedAt).toBeUndefined();
+    expect(session.reopenedAt).toBeGreaterThan(0);
     expect(session.lastActivityAt).toBeGreaterThan(1);
     await f.accept({ decision: "answer", reply: "Sure." });
     expect((await f.user.query(api.sessions.get, { workSessionId: sessionId })).status).toBe(
