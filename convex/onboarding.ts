@@ -270,7 +270,9 @@ export const progress = query({
         (a, b) =>
           Number(online(b)) - Number(online(a)) ||
           (b.lastHeartbeatAt ?? 0) - (a.lastHeartbeatAt ?? 0) ||
-          b.registeredAt - a.registeredAt,
+          b.registeredAt - a.registeredAt ||
+          // Two computers approved in the same millisecond: the later row is the newer one.
+          b._creationTime - a._creationTime,
       )[0];
     const session = await ctx.db
       .query("workSessions")
