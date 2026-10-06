@@ -28,6 +28,7 @@ import {
 import { explainError, explainFailure } from "./errors";
 import { PublishTask } from "./publish";
 import { RunDetail } from "./run-detail";
+import { useSearchParam } from "./use-location";
 import { STEERABLE, SteerRun } from "./steer";
 import { SupervisorLog } from "./supervisor-log";
 import { SessionUsage } from "./usage";
@@ -96,7 +97,9 @@ export function SessionView({
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirmStop, setConfirmStop] = useState(false);
-  const [openRun, setOpenRun] = useState<Id<"agentRuns">>();
+  // The open Run lives in the URL so an Orchestrator link can open it directly.
+  const [runParam, setRunParam] = useSearchParam("run");
+  const openRun = (runParam || undefined) as Id<"agentRuns"> | undefined;
   const [notice, setNotice] = useState<{ tone: "danger" | "info"; text: string }>();
   const end = useRef<HTMLDivElement>(null);
   const count = (messages?.length ?? 0) + (tasks?.length ?? 0) + (runs?.length ?? 0);
@@ -256,7 +259,7 @@ export function SessionView({
                               type="button"
                               className="z-pressable"
                               aria-haspopup="dialog"
-                              onClick={() => setOpenRun(run._id)}
+                              onClick={() => setRunParam(run._id, "replace")}
                             >
                               <strong>{ROLE[run.role ?? "builder"] ?? "Agent"}</strong>
                               <StatusBadge status={run.status} />
@@ -326,7 +329,7 @@ export function SessionView({
       )}
       {notice && <Notice tone={notice.tone}>{notice.text}</Notice>}
       <div ref={end} />
-      {openRun && <RunDetail runId={openRun} onClose={() => setOpenRun(undefined)} />}
+      {openRun && <RunDetail runId={openRun} onClose={() => setRunParam("", "replace")} />}
     </AppShell>
   );
 }

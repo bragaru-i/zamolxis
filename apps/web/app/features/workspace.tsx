@@ -96,15 +96,25 @@ export function Workspace() {
           ready={ready}
           indicator={indicator}
           notices={notices}
-          onBack={() => setSessionId("")}
-          onOpen={(id) => setSessionId(id, "replace")}
+          onBack={() => {
+            replaceRun("");
+            setSessionId("");
+          }}
+          onOpen={(id) => {
+            replaceRun("");
+            setSessionId(id, "replace");
+          }}
         />
       ) : (
         <SessionList
           ready={ready}
           indicator={indicator}
           notices={notices}
-          onOpen={(id) => setSessionId(id)}
+          onOpen={(id, runId) => {
+            setSessionId(id);
+            // Read by the Session view when it mounts after this render.
+            if (runId) replaceRun(runId);
+          }}
           onSettings={() => setSettingsOpen(true)}
         />
       )}
@@ -120,6 +130,14 @@ export function Workspace() {
       />
     </>
   );
+}
+
+function replaceRun(runId: string) {
+  const url = new URL(location.href);
+  if (runId) url.searchParams.set("run", runId);
+  else if (!url.searchParams.has("run")) return;
+  else url.searchParams.delete("run");
+  history.replaceState(null, "", url);
 }
 
 function PairingApproval({ ready }: { ready: boolean }) {

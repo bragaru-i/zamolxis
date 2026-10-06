@@ -19,9 +19,34 @@ vi.mock("convex/react", () => ({
             {
               _id: "link",
               targetType: "session",
+              targetId: "session",
               workSessionId: "session",
               label: "Alpha readiness",
               status: "needs_input",
+            },
+            {
+              _id: "run-link",
+              targetType: "run",
+              targetId: "run",
+              workSessionId: "session",
+              label: "builder: Fix totals",
+              status: "running",
+            },
+            {
+              _id: "pr-link",
+              targetType: "pull_request",
+              targetId: "task",
+              workSessionId: "session",
+              label: "PR: Fix totals",
+              url: "https://github.com/acme/shop/pull/7",
+            },
+            {
+              _id: "unsafe-link",
+              targetType: "pull_request",
+              targetId: "task-2",
+              workSessionId: "session",
+              label: "PR: Unsafe",
+              url: "javascript:alert(1)",
             },
           ],
         },
@@ -47,6 +72,10 @@ it("renders the global answer and its linked session separately from the session
   expect(html).toContain("What is going on?");
   expect(html).toContain("Answered without opening work");
   expect(html).toContain("Alpha readiness · needs_input");
+  expect(html).toContain("builder: Fix totals · running");
+  expect(html).toContain('href="https://github.com/acme/shop/pull/7"');
+  expect(html).not.toContain("PR: Unsafe");
+  expect(html).not.toContain("javascript:");
   expect(html).toContain("No work sessions yet");
   expect(html).toContain("Ask Zamolxis, or tell it to start work");
 });
