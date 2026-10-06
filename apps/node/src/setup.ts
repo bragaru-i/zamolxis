@@ -19,6 +19,7 @@ import { inspectRepository } from "@zamolxis/git";
 import { ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
 import QRCode from "qrcode";
+import { claudeSignedIn, findClaude } from "./claude";
 import {
   type CredentialStore,
   isDeviceCredential,
@@ -111,6 +112,16 @@ export function prerequisites() {
     }
     console.log(`✓ ${tool}${args[0] === "login" ? " authenticated" : ""}`);
   }
+  // Optional second runtime: the owner's Claude Code login (subscription), never an API key.
+  const claude = findClaude();
+  if (claude && claudeSignedIn(claude.executable))
+    console.log(`✓ Claude Code ${claude.version} (optional runtime)`);
+  else
+    console.log(
+      claude
+        ? "– Claude Code is installed but not signed in with a Claude subscription (optional: run claude, then /login)"
+        : "– Claude Code not found (optional runtime)",
+    );
 }
 export type AppAddress =
   | { origin: string }
