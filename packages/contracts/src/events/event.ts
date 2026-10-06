@@ -19,6 +19,21 @@ export type ApprovalDecision = "approve" | "reject";
 export type ApprovalResolutionReason = "user" | "timeout" | "stopped" | "withdrawn";
 export const APPROVAL_SUMMARY_LIMIT = 2000;
 export const APPROVAL_ID_LIMIT = 256;
+/** Characters of one intermediate agent message (`run.message`). */
+export const RUN_MESSAGE_LIMIT = 2000;
+/** Files read listed on one tool event, and characters per listed path. */
+export const TOOL_READS_LIMIT = 20;
+export const TOOL_READ_PATH_LIMIT = 300;
+
+interface ToolPayload {
+  readonly tool: string;
+  readonly summary: string;
+  /**
+   * Files the tool call read, as the runtime parsed them (workspace-relative when inside
+   * the workspace), redacted and bounded. Absent when unknown.
+   */
+  readonly reads?: readonly string[];
+}
 
 export type NormalizedRunEventDto =
   | EventBase<"run.started", { nativeSessionId?: string; activity?: string }>
@@ -33,8 +48,11 @@ export type NormalizedRunEventDto =
       }
     >
   | EventBase<"run.activity", { label: string; detail?: string }>
-  | EventBase<"tool.started", { tool: string; summary: string }>
-  | EventBase<"tool.completed", { tool: string; summary: string; success: boolean }>
+  | EventBase<"tool.started", ToolPayload>
+  | EventBase<"tool.completed", ToolPayload & { success: boolean }>
+  // A progress note the agent wrote during its turn (not its final reply, never its
+  // reasoning). Redacted and bounded to RUN_MESSAGE_LIMIT characters by the adapter.
+  | EventBase<"run.message", { text: string }>
   | EventBase<"files.changed", { paths: readonly string[] }>
   | EventBase<"run.waiting", { reason: string }>
   | EventBase<"run.stopped", { reason: string }>

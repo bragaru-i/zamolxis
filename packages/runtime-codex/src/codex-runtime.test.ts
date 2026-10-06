@@ -454,6 +454,91 @@ describe("Codex native lifecycle", () => {
     const all = await events(h.runtime);
     expect(all.find((e) => e.type === "run.completed")?.payload).toEqual({ summary: plan });
   });
+  it("reports intermediate agent messages as redacted, bounded notes, never reasoning", async () => {
+    const h = harness();
+    await h.runtime.start(input());
+    const reasoning = {
+      id: "r",
+      type: "reasoning",
+      summary: ["PRIVATE plan"],
+      content: ["PRIVATE chain"],
+    };
+    // Unknown phase: held until something follows it.
+    h.connection.emit("item/completed", {
+      item: { id: "m1", type: "agentMessage", text: "Looking at src first.\nToken: sk-abcdefghijklmnopqrstuvwxyz", phase: null },
+    });
+    h.connection.emit("item/started", { item: { ...reasoning, status: "inProgress" } });
+    h.connection.emit("item/completed", { item: reasoning });
+    h.connection.emit("item/completed", {
+      item: { id: "m2", type: "agentMessage", text: `Commentary ${"x".repeat(5000)}`, phase: "commentary" },
+    });
+    h.connection.emit("item/completed", {
+      item: { id: "m3", type: "agentMessage", text: "All done.", phase: "final_answer" },
+    });
+    h.connection.emit("turn/completed", { turn: { id: "turn", status: "completed" } });
+    const all = await events(h.runtime);
+    expect(all.map((e) => e.type)).toEqual([
+      "run.started",
+      "run.message",
+      "run.activity",
+      "run.message",
+      "run.completed",
+    ]);
+    const notes = all.filter((e) => e.type === "run.message").map((e) => e.payload);
+    expect(notes[0]).toEqual({ text: "Looking at src first.\nToken: ***" });
+    expect((notes[1] as { text: string }).text).toHaveLength(2000);
+    expect((notes[1] as { text: string }).text.endsWith("…")).toBe(true);
+    expect(all.at(-1)?.payload).toEqual({ summary: "All done." });
+    expect(JSON.stringify(all)).not.toContain("PRIVATE");
+  });
+  it("keeps a final message without a phase as the reply, and reports it as a note when the turn fails", async () => {
+    const completed = harness();
+    await completed.runtime.start(input());
+    completed.connection.emit("item/completed", {
+      item: { id: "m", type: "agentMessage", text: "Final reply" },
+    });
+    completed.connection.emit("turn/completed", { turn: { id: "turn", status: "completed" } });
+    const done = await events(completed.runtime);
+    expect(done.map((e) => e.type)).toEqual(["run.started", "run.completed"]);
+
+    const failed = harness();
+    await failed.runtime.start(input());
+    failed.connection.emit("item/completed", {
+      item: { id: "m", type: "agentMessage", text: "Trying again" },
+    });
+    failed.connection.emit("turn/completed", { turn: { id: "turn", status: "failed" } });
+    const ended = await events(failed.runtime);
+    expect(ended.map((e) => [e.type, e.payload])).toEqual([
+      ["run.started", { nativeSessionId: "native" }],
+      ["run.message", { text: "Trying again" }],
+      ["run.failed", { message: "Codex turn failed" }],
+    ]);
+  });
+  it("lists files a command reads, relative to the workspace and redacted", async () => {
+    const h = harness();
+    await h.runtime.start(input());
+    const item = {
+      id: "c",
+      type: "commandExecution",
+      command: "/bin/zsh -lc 'cat src/a.ts ../outside/secret.env'",
+      cwd: "/assigned/worktree",
+      status: "inProgress",
+      commandActions: [
+        { type: "read", command: "cat src/a.ts", name: "a.ts", path: "src/a.ts" },
+        { type: "read", command: "cat", name: "x", path: "/assigned/worktree/src/a.ts" },
+        { type: "read", command: "cat", name: "e", path: "/home/me/ghp_abcdefghijklmnopqrstuvwxyz0123/hosts.yml" },
+        { type: "search", command: "rg x", query: "x", path: null },
+      ],
+    };
+    h.connection.emit("item/started", { item });
+    h.connection.emit("turn/completed", { turn: { id: "turn", status: "completed" } });
+    const all = await events(h.runtime);
+    expect(all.find((e) => e.type === "tool.started")?.payload).toEqual({
+      tool: "command",
+      summary: "cat src/a.ts ../outside/secret.env",
+      reads: ["src/a.ts", "/home/me/***/hosts.yml"],
+    });
+  });
   it("steers only the active native turn and confirms stop before settlement", async () => {
     const h = harness();
     await h.runtime.start(input());

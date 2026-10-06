@@ -24,7 +24,7 @@ import {
   USAGE_COUNTERS,
   type UsageCounter,
 } from "@zamolxis/runtime-core";
-import { describeItem, fitPayload, redactedText } from "./activity";
+import { agentNote, describeItem, fitPayload, readPaths, redactedText } from "./activity";
 import {
   AppServerClient,
   type AppServerNotification,
@@ -70,6 +70,9 @@ interface Session {
   waiters: Set<() => void>;
   // Text of the last completed agent message: the agent's final reply for this turn.
   reply?: string;
+  // A completed agent message without a phase: the final reply unless anything follows
+  // it, in which case it was a progress note and is reported as `run.message`.
+  held?: { itemId: string; text: string } | undefined;
   approvals: Map<string, PendingApproval>;
   // Paths proposed by in-progress file change items, for approval summaries.
   fileItems: Map<string, { path: string; kind: string }[]>;
@@ -530,6 +533,8 @@ export class CodexRuntime implements AgentRuntime {
       if (session.seen.size >= 10_000) throw new Error("CODEX_EVENT_LIMIT");
       session.seen.add(key);
       const done = event.method === "item/completed";
+      // Anything after a message whose phase is unknown shows it was not the final reply.
+      if (session.held && session.held.itemId !== item.id) this.#releaseHeld(session);
       if (item.type === "fileChange" && !done && Array.isArray(item.changes)) {
         if (session.fileItems.size >= 1000) session.fileItems.clear();
         session.fileItems.set(
@@ -557,25 +562,34 @@ export class CodexRuntime implements AgentRuntime {
         });
         this.#emit(session, "files.changed", { paths });
       } else if (item.type === "agentMessage" && done) {
-        if (typeof item.text === "string" && item.text.trim())
+        if (typeof item.text === "string" && item.text.trim()) {
           // The Supervisor's reply is structured JSON that the Node parses and redacts
           // field by field; redacting it here would corrupt values such as task keys.
           session.reply =
             session.input.role === "supervisor"
               ? boundText(item.text, REPLY_LIMIT)
               : redactedText(item.text, REPLY_LIMIT);
+          // Interim commentary is a progress note now; a final answer is only the reply;
+          // without a phase the message is held until something follows it.
+          if (item.phase === "commentary")
+            this.#emit(session, "run.message", { text: agentNote(item.text) });
+          else if (item.phase !== "final_answer")
+            session.held = { itemId: text(item.id), text: item.text };
+        }
       }
       const activity = describeItem(item, done);
       if (activity?.kind === "activity")
         this.#emit(session, "run.activity", { label: activity.label });
-      else if (activity?.kind === "tool")
+      else if (activity?.kind === "tool") {
+        const reads = done ? undefined : readPaths(item, session.input.workspace.cwd);
         this.#emit(
           session,
           done ? "tool.completed" : "tool.started",
           done
             ? { tool: activity.tool, summary: activity.summary, success: activity.success === true }
-            : { tool: activity.tool, summary: activity.summary },
+            : { tool: activity.tool, summary: activity.summary, ...(reads ? { reads } : {}) },
         );
+      }
     } catch {
       this.#abort(session);
       session.client.close();
@@ -595,6 +609,9 @@ export class CodexRuntime implements AgentRuntime {
     code?: string,
   ): void {
     if (terminal(session)) return;
+    // A completed turn's last message is its reply; otherwise it was only a progress note.
+    if (state === "completed") session.held = undefined;
+    else this.#releaseHeld(session);
     // Pending approvals settle (rejected) before the terminal event.
     this.#rejectPending(session, "stopped");
     session.state = state;
@@ -602,6 +619,12 @@ export class CodexRuntime implements AgentRuntime {
     else if (state === "stopped") this.#emit(session, "run.stopped", { reason: message });
     else this.#emit(session, "run.failed", { ...(code ? { code } : {}), message });
     session.client.close();
+  }
+  // Reports a held agent message as a progress note (redacted and bounded).
+  #releaseHeld(session: Session): void {
+    const held = session.held;
+    session.held = undefined;
+    if (held) this.#emit(session, "run.message", { text: agentNote(held.text) });
   }
   #emit(
     session: Session,

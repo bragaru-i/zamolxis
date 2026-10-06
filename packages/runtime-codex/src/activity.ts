@@ -1,6 +1,8 @@
 // Turns Codex app-server thread items (codex-cli 0.160.0 `ThreadItem`) into short, redacted,
 // bounded activity for normalized events. Output, arguments, results and agent text are
 // never copied; only the command line, tool identity or a fixed label.
+import { isAbsolute, relative, resolve } from "node:path";
+import { RUN_MESSAGE_LIMIT, TOOL_READ_PATH_LIMIT, TOOL_READS_LIMIT } from "@zamolxis/contracts";
 import { boundText, redactSecrets, SUMMARY_LIMIT, safeSummary } from "@zamolxis/runtime-core";
 
 /** Backend limit is 16 KiB of JSON per event payload; keep a margin. */
@@ -173,4 +175,31 @@ export function fitPayload(
 /** Redacted (not flattened) free text, such as the agent's final reply. */
 export function redactedText(text: string, limit: number): string {
   return boundText(redactSecrets(text), limit);
+}
+
+/**
+ * Files a command reads, from Codex's best-effort parse of the command line
+ * (`commandActions` entries of type "read"). Workspace paths are shown relative to it;
+ * every path is redacted and bounded. Undefined when the command reads nothing known.
+ */
+export function readPaths(item: Record<string, unknown>, cwd: string): string[] | undefined {
+  if (item.type !== "commandExecution" || !Array.isArray(item.commandActions)) return undefined;
+  const base = str(item.cwd) ?? cwd;
+  const paths = new Set<string>();
+  for (const value of item.commandActions) {
+    const action = obj(value);
+    const path = action?.type === "read" ? str(action.path) : undefined;
+    if (!path) continue;
+    const absolute = resolve(base, path);
+    const local = relative(cwd, absolute);
+    const inside = local && local !== ".." && !local.startsWith("../") && !isAbsolute(local);
+    paths.add(safeSummary(inside ? local : absolute, TOOL_READ_PATH_LIMIT));
+    if (paths.size >= TOOL_READS_LIMIT) break;
+  }
+  return paths.size ? [...paths] : undefined;
+}
+
+/** An intermediate agent message: redacted, line breaks kept, bounded to RUN_MESSAGE_LIMIT. */
+export function agentNote(text: string): string {
+  return redactedText(text, RUN_MESSAGE_LIMIT);
 }
