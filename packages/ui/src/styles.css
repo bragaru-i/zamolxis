@@ -441,13 +441,16 @@ code,
   border-radius: var(--z-radius-md);
   background: var(--z-secondary-fg);
   color: var(--z-primary-fg);
-  font-weight: 800;
+}
+.z-mark svg {
+  display: block;
+  width: 80%;
+  height: 80%;
 }
 .z-mark--lg {
   width: 56px;
   height: 56px;
   border-radius: var(--z-radius-lg);
-  font-size: var(--z-text-xl);
 }
 
 /* Buttons */
