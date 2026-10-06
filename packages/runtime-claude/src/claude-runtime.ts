@@ -425,10 +425,11 @@ export class ClaudeRuntime implements AgentRuntime {
     const session = this.#get(input.nativeSessionId);
     if (terminal(session) || !session.approvals.has(input.approvalId))
       throw new Error("APPROVAL_NOT_PENDING");
+    if (input.decision === "approve_session") throw new Error("APPROVAL_SCOPE_UNAVAILABLE");
     this.#settleApproval(
       session,
       input.approvalId,
-      input.decision === "approve" ? "approved" : "rejected",
+      input.decision === "reject" ? "rejected" : "approved",
       "user",
     );
   }

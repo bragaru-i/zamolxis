@@ -85,6 +85,7 @@ interface Session {
 interface PendingApproval {
   requestId: AppServerRequestId;
   timer: ReturnType<typeof setTimeout>;
+  allowForSession: boolean;
   answer: (decision: ApprovalDecision) => Record<string, unknown>;
 }
 const REPLY_LIMIT = 8000;
@@ -481,13 +482,17 @@ export class CodexRuntime implements AgentRuntime {
     decision: ApprovalDecision;
   }): Promise<void> {
     const session = this.#get(input.nativeSessionId);
-    if (terminal(session) || !session.approvals.has(input.approvalId))
-      throw new Error("APPROVAL_NOT_PENDING");
+    const pending = session.approvals.get(input.approvalId);
+    if (terminal(session) || !pending) throw new Error("APPROVAL_NOT_PENDING");
+    if (input.decision === "approve_session" && !pending.allowForSession)
+      throw new Error("APPROVAL_SCOPE_UNAVAILABLE");
     this.#settleApproval(
       session,
       input.approvalId,
-      input.decision === "approve" ? "approved" : "rejected",
+      input.decision === "reject" ? "rejected" : "approved",
       "user",
+      true,
+      input.decision,
     );
   }
   async stop(input: { nativeSessionId: string }): Promise<void> {
@@ -728,6 +733,7 @@ export class CodexRuntime implements AgentRuntime {
     session.approvals.set(approvalId, {
       requestId: request.id,
       answer: held.answer,
+      allowForSession: held.allowForSession === true,
       timer: setTimeout(() => {
         try {
           this.#settleApproval(session, approvalId, "rejected", "timeout");
@@ -742,6 +748,7 @@ export class CodexRuntime implements AgentRuntime {
       kind: held.kind,
       summary: held.summary,
       risk: held.risk,
+      ...(held.allowForSession ? { allowForSession: true } : {}),
     });
     return true;
   }
@@ -753,6 +760,7 @@ export class CodexRuntime implements AgentRuntime {
         kind: ApprovalKind;
         summary: string;
         risk: ApprovalRisk;
+        allowForSession?: boolean;
         answer: PendingApproval["answer"];
       }
     | undefined {
@@ -760,7 +768,12 @@ export class CodexRuntime implements AgentRuntime {
     const workspace = session.input.workspace.cwd;
     const reason = optionalText(params.reason, 500);
     const accept = (decision: ApprovalDecision) => ({
-      decision: decision === "approve" ? "accept" : "decline",
+      decision:
+        decision === "approve_session"
+          ? "acceptForSession"
+          : decision === "approve"
+            ? "accept"
+            : "decline",
     });
     if (request.method === COMMAND_APPROVAL) {
       if (session.turnId && params.turnId !== session.turnId) return undefined;
@@ -774,6 +787,19 @@ export class CodexRuntime implements AgentRuntime {
       const amendments =
         Array.isArray(params.proposedNetworkPolicyAmendments) &&
         params.proposedNetworkPolicyAmendments.length > 0;
+      const risk = command
+        ? classifyCommandRisk({
+            command,
+            workspace,
+            ...(cwd ? { cwd } : {}),
+            network: !!network || amendments,
+          })
+        : "high";
+      const allowForSession =
+        params.kind !== "writeStdin" &&
+        (risk === "low" || risk === "medium") &&
+        Array.isArray(params.availableDecisions) &&
+        params.availableDecisions.includes("acceptForSession");
       return {
         kind: "command",
         summary: redactedSummary([
@@ -784,14 +810,8 @@ export class CodexRuntime implements AgentRuntime {
           host ? `Network access to ${host}` : undefined,
           reason ? `Reason: ${reason}` : undefined,
         ]),
-        risk: command
-          ? classifyCommandRisk({
-              command,
-              workspace,
-              ...(cwd ? { cwd } : {}),
-              network: !!network || amendments,
-            })
-          : "high",
+        risk,
+        ...(allowForSession ? { allowForSession: true } : {}),
         answer: accept,
       };
     }
@@ -857,6 +877,7 @@ export class CodexRuntime implements AgentRuntime {
     decision: "approved" | "rejected",
     reason: ApprovalResolutionReason,
     answer = true,
+    runtimeDecision?: ApprovalDecision,
   ): void {
     const pending = session.approvals.get(approvalId);
     if (!pending) return;
@@ -868,7 +889,7 @@ export class CodexRuntime implements AgentRuntime {
         if (!session.client.respond) throw new Error("CODEX_APPROVAL_BRIDGE_UNAVAILABLE");
         session.client.respond(
           pending.requestId,
-          pending.answer(decision === "approved" ? "approve" : "reject"),
+          pending.answer(runtimeDecision ?? (decision === "approved" ? "approve" : "reject")),
         );
         delivered = true;
       }

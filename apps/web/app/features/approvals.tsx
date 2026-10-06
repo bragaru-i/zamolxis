@@ -13,7 +13,7 @@ export interface PendingApproval {
   runId?: Id<"agentRuns">;
   action: string;
   risk: Risk;
-  request?: { kind?: string; summary?: string };
+  request?: { kind?: string; summary?: string; allowForSession?: boolean };
   requestedAt: number;
 }
 
@@ -45,7 +45,7 @@ export function ApprovalCard({
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string>();
   const risk = RISK[approval.risk] ?? RISK.critical;
-  const decide = async (decision: "approved" | "rejected") => {
+  const decide = async (decision: "approved" | "rejected", scope: "once" | "run" = "once") => {
     // Critical requests need a second, deliberate tap to approve.
     if (decision === "approved" && approval.risk === "critical" && !confirming) {
       setConfirming(true);
@@ -54,7 +54,7 @@ export function ApprovalCard({
     setBusy(true);
     setError(undefined);
     try {
-      await resolve({ approvalId: approval._id, decision });
+      await resolve({ approvalId: approval._id, decision, scope });
     } catch (failure) {
       setError(explainError(failure, "Could not send your decision. Try again."));
     } finally {
@@ -72,6 +72,11 @@ export function ApprovalCard({
       <p className="z-small" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
         {approval.request?.summary ?? approval.action}
       </p>
+      {approval.request?.allowForSession && (
+        <p className="z-muted z-small">
+          You can allow similar safe commands until this agent run finishes.
+        </p>
+      )}
       {confirming && (
         <Notice tone="danger">
           This touches credentials, the network or files outside the task. Approve only if you
@@ -83,10 +88,24 @@ export function ApprovalCard({
           variant={confirming ? "danger" : "primary"}
           size="small"
           disabled={busy}
-          onClick={() => decide("approved")}
+          onClick={() => decide("approved", "once")}
         >
-          {confirming ? "Approve anyway" : "Approve"}
+          {confirming
+            ? "Approve anyway"
+            : approval.request?.allowForSession
+              ? "Approve once"
+              : "Approve"}
         </Button>
+        {approval.request?.allowForSession && !confirming && (
+          <Button
+            variant="secondary"
+            size="small"
+            disabled={busy}
+            onClick={() => decide("approved", "run")}
+          >
+            Approve for run
+          </Button>
+        )}
         <Button variant="secondary" size="small" disabled={busy} onClick={() => decide("rejected")}>
           Reject
         </Button>

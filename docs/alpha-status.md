@@ -25,8 +25,10 @@ planned capability as shipped.
   longer block the queue (#60).
 - **Approvals bridge:** Codex command, file-change and form-only MCP approval
   requests from builder/repair runs are held and shown on the phone (summary, risk
-  as text and tone; critical needs a second tap); Approve/Reject is delivered to the
-  agent through `runtime.approval`. Credential/login/attestation requests, permission
+  as text and tone; critical needs a second tap). Low/medium command requests may be
+  approved once or for the current run when Codex advertises native session approval;
+  high/critical requests remain one-time only. Decisions are delivered to the agent
+  through `runtime.approval`. Credential/login/attestation requests, permission
   requests, user-input questions and all Verifier/Supervisor requests are always
   refused; unanswered requests are rejected after 30 minutes, on stop and before any
   terminal event. Real Codex acceptance (2026-10-06, codex-cli 0.160.0): a held
@@ -231,7 +233,9 @@ module aliases exist only when the variable is set.
    shown. Whether a model writes commentary is up to the model.
 3. **Steering and approvals, shipped with limits.** Real Codex acceptance covers a
    command approval being rejected (HEAD unchanged) and approved (the command runs and
-   the agent reports its result). File-change approvals, MCP elicitations, live
+   the agent reports its result). Codex-native approval for the current run is wired for
+   low/medium commands and covered by controlled protocol and control-plane tests.
+   File-change approvals, MCP elicitations, live
    `turn/steer` and the 30-minute timeout are covered by controlled tests only. A completed Codex turn ends its run, so "send to a waiting run" only
    applies to runtimes that pause. **Restart recovery:** Codex runs resume after a Node
    restart from the persistent `<managedRoot>/codex-home` (`thread/resume`); an

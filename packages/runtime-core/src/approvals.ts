@@ -41,6 +41,14 @@ const OUTSIDE = /(^|[\s'"=:])(\/(?!dev\/null\b)|~|\.\.(\/|$))/;
 // Commands that only read the workspace (no pipes, redirects or substitutions).
 const READ_ONLY =
   /^\s*(ls|cat|head|tail|wc|grep|rg|pwd|echo|nl|stat|file|tree|git\s+(status|diff|log|show|rev-parse))\b[^|;&><`$\n]*$/;
+// Codex reports shell commands through this standard wrapper. Classify the payload,
+// not the trusted interpreter path: otherwise every `/bin/zsh -lc ...` request looks
+// like access outside the workspace and is incorrectly labelled high risk.
+const LOGIN_SHELL = /^\s*(?:\/bin\/)?(?:zsh|bash|sh)\s+-lc\s+(["'])([\s\S]*)\1\s*$/;
+
+function commandPayload(command: string): string {
+  return command.match(LOGIN_SHELL)?.[2] ?? command;
+}
 
 export interface CommandRiskInput {
   readonly command: string;
@@ -54,7 +62,7 @@ export interface CommandRiskInput {
  * classified operation still requires an explicit human decision.
  */
 export function classifyCommandRisk(input: CommandRiskInput): ApprovalRisk {
-  const command = input.command;
+  const command = commandPayload(input.command);
   if (CREDENTIAL.test(command)) return "critical";
   if (input.cwd && !insideWorkspace(input.cwd, input.workspace)) return "critical";
   const risks: ApprovalRisk[] = ["medium"];

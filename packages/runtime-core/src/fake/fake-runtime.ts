@@ -35,6 +35,7 @@ export type FakeStep =
       readonly kind: ApprovalKind;
       readonly summary: string;
       readonly risk: ApprovalRisk;
+      readonly allowForSession?: boolean;
     };
 // A scenario may depend on the run (for example its role), so one fake can play several agents.
 export type FakeScenario = readonly FakeStep[] | ((input: StartRunInput) => readonly FakeStep[]);
@@ -215,7 +216,14 @@ export class FakeRuntime implements AgentRuntime {
     const session = this.#get(input.nativeSessionId);
     if (!session.pendingApproval || session.pendingApproval !== input.approvalId)
       throw new Error("APPROVAL_NOT_PENDING");
-    this.#settleApproval(session, input.decision === "approve" ? "approved" : "rejected", "user");
+    const pendingStep =
+      session.pendingStep === undefined ? undefined : session.steps[session.pendingStep];
+    if (
+      input.decision === "approve_session" &&
+      (pendingStep?.type !== "approval" || pendingStep.allowForSession !== true)
+    )
+      throw new Error("APPROVAL_SCOPE_UNAVAILABLE");
+    this.#settleApproval(session, input.decision === "reject" ? "rejected" : "approved", "user");
     this.#advance(session);
     this.#persist(session);
   }
@@ -274,6 +282,7 @@ export class FakeRuntime implements AgentRuntime {
             kind: step.kind,
             summary: approvalSummary([step.summary]),
             risk: step.risk,
+            ...(step.allowForSession ? { allowForSession: true } : {}),
           },
         });
         return;
