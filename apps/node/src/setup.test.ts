@@ -68,7 +68,7 @@ it("persists versioned private config atomically and rejects overlapping grants,
       version: 1,
       appUrl: "https://app.example",
       convexUrl: "https://backend.example",
-      name: "Mac",
+      name: "computer",
       managedRoot: join(root, "managed"),
       builderSlots: 3,
       verifierSlots: 1,
@@ -302,7 +302,7 @@ function baseConfig(root: string): NodeConfig {
     version: 1,
     appUrl: "https://app.example",
     convexUrl: "https://backend.example",
-    name: "Mac",
+    name: "computer",
     managedRoot: join(root, "managed"),
     builderSlots: 3,
     verifierSlots: 1,
@@ -538,7 +538,7 @@ describe("GitHub access per repository in the repository flow", () => {
     harness.answers.checkbox.push([p.current[0]?.path ?? ""]);
     await expect(chooseRepositories(harness.env, p.current)).resolves.toEqual(p.current);
     expect(p.offered).toHaveLength(1);
-    expect(harness.logs.at(-1)).toContain("publishes with its own GitHub token on this Mac");
+    expect(harness.logs.at(-1)).toContain("publishes with its own GitHub token on this computer");
   });
 
   it("without a signed-in account can be left for later, never falling back to another", async () => {
@@ -744,7 +744,7 @@ describe("rerunning setup", () => {
     expect(harness.calls).toEqual(
       expect.arrayContaining(["auth:jwt2", "auth:jwt-old", "retire:ws1->ws2"]),
     );
-    expect(harness.logs).toContain("✓ Revoked this Mac's previous entry");
+    expect(harness.logs).toContain("✓ Revoked this computer's previous entry");
     expect(harness.logs.join("\n")).not.toContain(OLD_SECRET);
   });
 
@@ -760,7 +760,7 @@ describe("rerunning setup", () => {
     harness.answers.confirm.push(true);
     await runSetup({}, harness.env);
     expect(harness.calls.some((call) => call.startsWith("retire:"))).toBe(false);
-    expect(harness.logs.join("\n")).toContain("previous entry for this Mac was left as it is");
+    expect(harness.logs.join("\n")).toContain("previous entry for this computer was left as it is");
   });
 
   it("reports the previous entry when repair has to pair again", async () => {
@@ -775,7 +775,7 @@ describe("rerunning setup", () => {
     harness.answers.confirm.push(true);
     await runSetup({}, harness.env);
     expect(harness.calls.some((call) => call.startsWith("retire:"))).toBe(false);
-    expect(harness.logs.join("\n")).toContain("previous entry for this Mac was left as it is");
+    expect(harness.logs.join("\n")).toContain("previous entry for this computer was left as it is");
   });
 
   it("reports a failed retirement without failing setup", async () => {
@@ -791,18 +791,18 @@ describe("rerunning setup", () => {
     harness.answers.select.push("pair");
     harness.answers.confirm.push(true);
     await runSetup({}, harness.env);
-    expect(harness.logs.join("\n")).toContain("Could not revoke this Mac's previous entry");
+    expect(harness.logs.join("\n")).toContain("Could not revoke this computer's previous entry");
     expect(harness.logs.at(-1)).toContain("Node online");
   });
 
-  it("renames this Mac in Zamolxis with its own credential and in config.json", async () => {
+  it("renames this computer in Zamolxis with its own credential and in config.json", async () => {
     saveConfig(baseConfig(harness.root), harness.env.configPath);
     harness.store.write("ws1", OLD_SECRET);
     harness.answers.select.push("rename");
-    harness.answers.input.push("  Studio Mac  ");
+    harness.answers.input.push("  Studio computer  ");
     await runSetup({}, harness.env);
-    expect(harness.calls).toEqual(["connect", "auth:jwt", "rename:ws1:Studio Mac"]);
-    expect(harness.config().name).toBe("Studio Mac");
+    expect(harness.calls).toEqual(["connect", "auth:jwt", "rename:ws1:Studio computer"]);
+    expect(harness.config().name).toBe("Studio computer");
     expect(harness.calls).not.toContain("restart");
 
     harness.answers.select.push("rename");
@@ -814,7 +814,7 @@ describe("rerunning setup", () => {
     harness.answers.select.push("rename");
     harness.answers.input.push("Other");
     await expect(runSetup({}, harness.env)).rejects.toThrow("name was not changed");
-    expect(harness.config().name).toBe("Studio Mac");
+    expect(harness.config().name).toBe("Studio computer");
   });
 
   it("verifies the heartbeat of the restarted Node process, not the previous one", async () => {
@@ -877,10 +877,10 @@ describe("rerunning setup", () => {
     ]);
     expect(harness.registered.at(-1)?.map(({ name }) => name)).toEqual(["one", "two"]);
     expect(harness.calls).toContain("restart");
-    // The removal is recorded for this Mac; the kept grants are confirmed again.
+    // The removal is recorded for this computer; the kept grants are confirmed again.
     expect(harness.calls).toContain("remove:ws1:r-three");
     expect(harness.calls).toContain("reactivate");
-    expect(harness.logs.join("\n")).toContain("no longer receives new work on this Mac");
+    expect(harness.logs.join("\n")).toContain("no longer receives new work on this computer");
   });
 
   it("keeps a repository granted while work still runs in it", async () => {
@@ -906,7 +906,7 @@ describe("rerunning setup", () => {
     await runSetup({}, harness.env);
     expect(harness.config().repositories.map(({ name }) => name)).toEqual(["one", "three"]);
     expect(harness.registered.at(-1)?.map(({ name }) => name)).toEqual(["one", "three"]);
-    expect(harness.logs.join("\n")).toContain("still has work running on this Mac");
+    expect(harness.logs.join("\n")).toContain("still has work running on this computer");
   });
 
   it("does not re-grant removed repositories on a plain repair", async () => {

@@ -45,7 +45,7 @@ async function fixture(options: { sha?: string; trusted?: boolean; integrated?: 
     const ownerId = alice.userId;
     const workstationId = await ctx.db.insert("workstations", {
       ownerId,
-      name: "Mac",
+      name: "computer",
       status: "online",
       registeredAt: 0,
       nodeAuthSubject: "device",

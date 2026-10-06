@@ -36,11 +36,11 @@ async function fixture() {
   const pairingId = await t.mutation(api.pairing.begin, {
     approvalCode,
     pollSecret,
-    name: "Fixture Mac",
+    name: "Fixture computer",
   });
   return { t, user, userId, pairingId, approvalCode, pollSecret, credential, publicKey };
 }
-it("requires authenticated single-use approval and a separate Mac secret before minting a signed device credential", async () => {
+it("requires authenticated single-use approval and a separate computer secret before minting a signed device credential", async () => {
   const f = await fixture();
   await expect(f.t.mutation(api.pairing.approve, { approvalCode: f.approvalCode })).rejects.toThrow(
     "FORBIDDEN",

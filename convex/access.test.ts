@@ -41,7 +41,7 @@ it("database grant enables access; blocking revokes existing human and Node auth
   await t.run((ctx) => ctx.db.patch("users", f.userId, { accessStatus: "allowed" }));
   const repositoryId = await f.user.mutation(api.repositories.create, { name: "Private" });
   const workstationId = await f.user.mutation(api.workstations.register, {
-    name: "Mac",
+    name: "computer",
     nodeAuthSubject: "device",
   });
   const node = t.withIdentity({

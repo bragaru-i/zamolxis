@@ -44,18 +44,18 @@ export function Workspace() {
   const online = active.filter((device) => deviceState(device, now) === "online");
   const connection =
     devices === undefined
-      ? { state: "none" as const, label: "Checking Mac…" }
+      ? { state: "none" as const, label: "Checking computer…" }
       : online.length
-        ? { state: "online" as const, label: "Mac online" }
+        ? { state: "online" as const, label: "Computer online" }
         : active.length
-          ? { state: "offline" as const, label: "Mac offline" }
-          : { state: "none" as const, label: "No Mac paired" };
+          ? { state: "offline" as const, label: "Computer offline" }
+          : { state: "none" as const, label: "No computer paired" };
   const indicator = (
     <button
       type="button"
       className="z-button z-button--ghost z-button--small"
       onClick={() => openSettings("macs")}
-      aria-label={`${connection.label}. Open Macs settings`}
+      aria-label={`${connection.label}. Open Computers settings`}
     >
       <ConnectionIndicator state={connection.state} label={connection.label} />
     </button>
@@ -64,7 +64,7 @@ export function Workspace() {
     <>
       {problem && <Notice tone="danger">{problem}</Notice>}
       <PairingApproval ready={ready} />
-      {/* Connecting a Mac is the onboarding checklist's first open step (sessions screen). */}
+      {/* Connecting a computer is the onboarding checklist's first open step (sessions screen). */}
     </>
   );
   return (
@@ -134,11 +134,11 @@ function PairingApproval({ ready }: { ready: boolean }) {
   if (result) return <Notice tone={result.tone}>{result.text}</Notice>;
   if (!valid) return null;
   return (
-    <Card label="Approve Mac">
-      <h2 className="z-title">Approve {pairing?.name ?? "this Mac"}?</h2>
+    <Card label="Approve computer">
+      <h2 className="z-title">Approve {pairing?.name ?? "this computer"}?</h2>
       <p className="z-muted z-small">
-        Only approve the QR code you just opened from setup on your own Mac. It expires after five
-        minutes.
+        Only approve the QR code you just opened from setup on your own computer. It expires after
+        five minutes.
       </p>
       <Button
         block
@@ -149,14 +149,14 @@ function PairingApproval({ ready }: { ready: boolean }) {
             await approve({ approvalCode: pair });
             setResult({
               tone: "success",
-              text: "Mac approved. Setup on your Mac is finishing and starting the Node.",
+              text: "Computer approved. Setup on your computer is finishing and starting the Node.",
             });
           } catch (error) {
             setResult({
               tone: "danger",
               text: explainError(
                 error,
-                "This code expired or was already used. Rerun setup on your Mac for a new QR code.",
+                "This code expired or was already used. Rerun setup on your computer for a new QR code.",
               ),
             });
           } finally {
@@ -165,7 +165,7 @@ function PairingApproval({ ready }: { ready: boolean }) {
           }
         }}
       >
-        Approve this Mac
+        Approve this computer
       </Button>
     </Card>
   );

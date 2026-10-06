@@ -161,7 +161,7 @@ describe("runs survive a Node restart", { timeout: 30_000 }, () => {
     writeFileSync(join(workspace.path, "feature.txt"), "partial work\n");
     first.store.close();
 
-    // The Mac restarts: a new Node process, instance and runtime process.
+    // The computer restarts: a new Node process, instance and runtime process.
     const second = m.boot();
     await second.driver.tick();
     await second.driver.idle();

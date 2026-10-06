@@ -4,7 +4,7 @@ import { withoutGitHubTokens } from "@zamolxis/runtime-core";
 import type { GitHubClient } from "./github-api";
 import { isGitHubToken, type RepositoryTokenStore } from "./token-store";
 
-/** One GitHub repository as this Mac publishes it. */
+/** One GitHub repository as this computer publishes it. */
 export interface PublishingTarget {
   readonly repositoryId?: string;
   readonly github: GitHubRepository;
@@ -30,8 +30,8 @@ export type ResolvedCredential =
 
 /**
  * Which credential publishes a repository, in this order: the repository's own token in
- * this Mac's Keychain, else the GitHub CLI account setup chose for it. There is no other
- * fallback: never the Mac's global Git credentials and never the active `gh` account.
+ * this computer's Keychain, else the GitHub CLI account setup chose for it. There is no other
+ * fallback: never the computer's global Git credentials and never the active `gh` account.
  */
 export class PublishingCredentials {
   constructor(

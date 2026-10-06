@@ -200,7 +200,7 @@ export interface OnboardingStep {
   state: OnboardingState;
   detail: string;
   /**
-   * A query result does not age by itself. After this time the Mac has stopped reporting
+   * A query result does not age by itself. After this time the computer has stopped reporting
    * heartbeats and the client shows `stale` instead.
    */
   staleAfter?: number;
@@ -209,13 +209,13 @@ export interface OnboardingStep {
 const TITLES: Record<StepId, string> = {
   signin: "Sign in",
   access: "Access approved",
-  pair: "Pair your Mac",
+  pair: "Pair your computer",
   repositories: "Choose repositories",
-  service: "Start Zamolxis on your Mac",
+  service: "Start Zamolxis on your computer",
   runtime: "Agent runtime ready",
   session: "Start your first session",
 };
-const REPAIR = "Open Terminal on your Mac and run `pnpm zamolxis setup --repair`.";
+const REPAIR = "Open Terminal on your computer and run `pnpm zamolxis setup --repair`.";
 const state = v.union(
   v.literal("done"),
   v.literal("in_progress"),
@@ -258,7 +258,7 @@ export const progress = query({
     const now = Date.now();
     const online = (device: Doc<"workstations">) =>
       device.status === "online" && (device.lastHeartbeatAt ?? 0) > now - ONLINE_WINDOW_MS;
-    // The Mac that got furthest: online, then most recently heard from, then newest.
+    // The computer that got furthest: online, then most recently heard from, then newest.
     const mac = (
       await ctx.db
         .query("workstations")
@@ -291,7 +291,7 @@ export const progress = query({
         step(
           "pair",
           "needs_you",
-          "Run `pnpm zamolxis setup` on your Mac, then scan the QR code it shows with this phone and approve the Mac.",
+          "Run `pnpm zamolxis setup` on your computer, then scan the QR code it shows with this phone and approve the computer.",
         ),
         step("repositories", "upcoming"),
         step("service", "upcoming"),
@@ -312,7 +312,7 @@ export const progress = query({
           : step(
               "pair",
               "in_progress",
-              `You approved ${name}. Setup on your Mac is finishing pairing; keep it open.`,
+              `You approved ${name}. Setup on your computer is finishing pairing; keep it open.`,
             ),
       );
       const locations = await ctx.db
@@ -331,20 +331,20 @@ export const progress = query({
               ? step(
                   "repositories",
                   "needs_you",
-                  "No repository is enabled on this Mac. Run `pnpm zamolxis setup` on your Mac and choose Add or remove repositories.",
+                  "No repository is enabled on this computer. Run `pnpm zamolxis setup` on your computer and choose Add or remove repositories.",
                 )
               : locations.length
                 ? step(
                     "repositories",
                     "failed",
-                    `${name} could not open its repositories. Check that they still exist on the Mac, then run \`pnpm zamolxis setup --repair\`.`,
+                    `${name} could not open its repositories. Check that they still exist on the computer, then run \`pnpm zamolxis setup --repair\`.`,
                   )
                 : step(
                     "repositories",
                     "in_progress",
                     registered
                       ? `${repositories(registered)} registered. ${name} checks them when Zamolxis starts.`
-                      : "Choose at least one Git repository in setup on your Mac.",
+                      : "Choose at least one Git repository in setup on your computer.",
                   ),
       );
       const offline = { state: "failed" as const, detail: `${name} is offline. ${REPAIR}` };

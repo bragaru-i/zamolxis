@@ -109,7 +109,7 @@ function MacRow({
   );
 }
 
-/** Settings section: managed worktrees per Mac, retention window and on-demand cleanup. */
+/** Settings section: managed worktrees per computer, retention window and on-demand cleanup. */
 export function StorageSettings({
   active,
   now,
@@ -149,7 +149,7 @@ export function StorageSettings({
               ))}
             </div>
           ) : (
-            <p className="z-muted z-small">No Mac paired yet.</p>
+            <p className="z-muted z-small">No computer paired yet.</p>
           )}
           <Picker
             label="Keep finished work for"
@@ -168,9 +168,9 @@ export function StorageSettings({
       {message && <Notice tone={message.tone}>{message.text}</Notice>}
       <p className="z-xsmall z-muted">
         Zamolxis removes worktrees of finished sessions every hour, at most {storage?.batch ?? 10}{" "}
-        per Mac at a time. Planning worktrees go one day after the Supervisor decided. Trusted work
-        that was not published, worktrees with uncommitted changes and anything still in use are
-        always kept. Your own branches are never touched.
+        per computer at a time. Planning worktrees go one day after the Supervisor decided. Trusted
+        work that was not published, worktrees with uncommitted changes and anything still in use
+        are always kept. Your own branches are never touched.
       </p>
     </section>
   );

@@ -39,13 +39,13 @@ beforeEach(() => {
   state.calls = [];
 });
 
-describe("Settings → Macs", () => {
-  it("offers rename, repositories and removal for an active Mac", () => {
+describe("Settings → Computers", () => {
+  it("offers rename, repositories and removal for an active computer", () => {
     const html = render();
     expect(html).toContain("Codex ready");
     expect(html).toContain("Rename");
     expect(html).toContain("Repositories");
-    expect(html).toContain("Remove this Mac…");
+    expect(html).toContain("Remove this computer…");
     // Nothing is queried until the repositories are opened.
     expect(state.calls).toEqual([]);
   });
@@ -57,7 +57,7 @@ describe("Settings → Macs", () => {
     expect(render({ device: device({ runtimes: [] }) })).toContain("No agent runtime");
   });
 
-  it("offers nothing for a revoked Mac", () => {
+  it("offers nothing for a revoked computer", () => {
     const html = render({ device: device({ status: "revoked" }) });
     expect(html).toContain("Revoked");
     expect(html).not.toContain("Rename");
@@ -72,7 +72,7 @@ describe("Settings → Macs", () => {
     expect(macNameProblem(" Laptop ")).toBeUndefined();
   });
 
-  it("lists this Mac's repositories with a way to remove each", () => {
+  it("lists this computer's repositories with a way to remove each", () => {
     state.data = {
       "repositories:listLocations": [
         {
@@ -89,12 +89,12 @@ describe("Settings → Macs", () => {
     ]);
     expect(html).toContain("zamolxis");
     expect(html).toContain("/Users/me/Projects/zamolxis");
-    expect(html).toContain("Remove from this Mac…");
+    expect(html).toContain("Remove from this computer…");
     // Not a GitHub repository: no GitHub row.
     expect(html).not.toContain("GitHub");
   });
 
-  it("shows each GitHub repository's publishing access on this Mac", () => {
+  it("shows each GitHub repository's publishing access on this computer", () => {
     state.data = {
       "repositories:listLocations": [
         {
@@ -131,8 +131,8 @@ describe("Settings → Macs", () => {
     expect(explainMacError(new ConvexError({ code: "LOCATION_BUSY" }), "x")).toContain(
       "still running",
     );
-    expect(explainMacError(new Error("boom"), "Could not rename this Mac.")).toBe(
-      "Could not rename this Mac.",
+    expect(explainMacError(new Error("boom"), "Could not rename this computer.")).toBe(
+      "Could not rename this computer.",
     );
   });
 });

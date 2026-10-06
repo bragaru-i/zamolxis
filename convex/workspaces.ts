@@ -164,7 +164,7 @@ export const requestCleanup = internalMutation({
   },
 });
 
-/** Hourly retention sweep (convex/crons.ts): a bounded batch per online Mac. */
+/** Hourly retention sweep (convex/crons.ts): a bounded batch per online computer. */
 export const sweepCleanup = internalMutation({
   args: {},
   returns: v.number(),
@@ -202,7 +202,7 @@ const MANAGED = [
   "error",
 ] as const;
 
-/** Settings -> Storage: managed worktrees per Mac, what may be removed now, last cleanup. */
+/** Settings -> Storage: managed worktrees per computer, what may be removed now, last cleanup. */
 export const storage = query({
   args: {},
   returns: v.any(),

@@ -12,7 +12,19 @@ export interface Device {
   name: string;
   status: string;
   lastHeartbeatAt?: number;
+  /** Node.js `process.platform` as the Node last reported it. */
+  platform?: string;
   runtimes: Array<{ runtime: string; status: string }>;
+}
+
+const PLATFORM_LABELS: Record<string, string> = {
+  darwin: "macOS",
+  linux: "Linux",
+  win32: "Windows",
+};
+/** The kind of computer, in the words its owner uses; nothing for an unknown platform. */
+export function platformLabel(platform: string | undefined): string | undefined {
+  return platform ? (PLATFORM_LABELS[platform] ?? platform) : undefined;
 }
 
 export function deviceState(device: Device, now: number) {
@@ -32,9 +44,9 @@ export function macNameProblem(value: string): string | undefined {
 
 const MAC_ERRORS: Record<string, string> = {
   LOCATION_BUSY:
-    "Work is still running in this repository on this Mac. Remove it once that work has finished.",
+    "Work is still running in this repository on this computer. Remove it once that work has finished.",
   INVALID_ARGUMENT: "Use a name of 1 to 64 characters.",
-  INVALID_STATE: "This Mac was removed.",
+  INVALID_STATE: "This computer was removed.",
 };
 export function explainMacError(error: unknown, fallback: string) {
   const code = errorCode(error);
@@ -46,7 +58,7 @@ export interface MacLocation {
   repositoryName: string;
   canonicalPath: string;
   status: string;
-  // GitHub repositories only: where to create the token, and what the Mac last reported.
+  // GitHub repositories only: where to create the token, and what the computer last reported.
   github?: GithubRepository;
   githubAccess?: GithubAccess;
 }
@@ -89,6 +101,9 @@ export function MacItem({
   return (
     <div className="z-list-item">
       <span className="z-list-item__title">{device.name}</span>
+      {platformLabel(device.platform) && (
+        <span className="z-xsmall z-muted">{platformLabel(device.platform)}</span>
+      )}
       <div className="z-row">
         <StatusBadge
           status={state === "online" ? "completed" : state === "revoked" ? "cancelled" : "waiting"}
@@ -113,7 +128,7 @@ export function MacItem({
               onMessage(`Renamed to ${name.trim()}.`);
               setMode("idle");
             } catch (error) {
-              setProblem(explainMacError(error, "Could not rename this Mac."));
+              setProblem(explainMacError(error, "Could not rename this computer."));
             } finally {
               setBusy(false);
             }
@@ -182,7 +197,7 @@ export function MacItem({
             Repositories
           </Button>
           <Button variant="ghost" size="small" className="z-muted" onClick={() => choose("revoke")}>
-            Remove this Mac…
+            Remove this computer…
           </Button>
         </div>
       )}
@@ -236,7 +251,7 @@ function MacRepositories({
                     try {
                       await remove({ repositoryLocationId: location.repositoryLocationId });
                       onMessage(
-                        `${device.name} no longer receives new work for ${location.repositoryName}. Re-add it with pnpm zamolxis setup on that Mac.`,
+                        `${device.name} no longer receives new work for ${location.repositoryName}. Re-add it with pnpm zamolxis setup on that computer.`,
                       );
                     } catch (error) {
                       setProblem(explainMacError(error, "Could not remove this repository."));
@@ -263,14 +278,14 @@ function MacRepositories({
                 size="small"
                 onClick={() => setConfirming(location.repositoryLocationId)}
               >
-                Remove from this Mac…
+                Remove from this computer…
               </Button>
             )}
           </div>
         ))
       ) : (
         <p className="z-muted z-small">
-          No repositories on this Mac. Add them with <code>pnpm zamolxis setup</code>.
+          No repositories on this computer. Add them with <code>pnpm zamolxis setup</code>.
         </p>
       )}
       {problem && <Notice tone="danger">{problem}</Notice>}

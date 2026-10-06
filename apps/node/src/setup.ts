@@ -486,11 +486,11 @@ export interface ControlPlane {
   ): Promise<Array<{ repositoryId: string; remoteUrl: string }>>;
   health(workstationId: string): Promise<NodeHealth>;
   renameSelf(workstationId: string, name: string): Promise<void>;
-  /** Stops new work for this Mac in one repository; "absent" if it was never registered. */
+  /** Stops new work for this computer in one repository; "absent" if it was never registered. */
   removeOwnLocation(workstationId: string, repositoryId: string): Promise<"removed" | "absent">;
   /** Called with the previous entry's token: revokes it in favour of `replacementId`. */
   retireReplaced(workstationId: string, replacementId: string): Promise<void>;
-  /** Reports a repository's GitHub publishing access on this Mac (never the token). */
+  /** Reports a repository's GitHub publishing access on this computer (never the token). */
   reportGithubAccess?(
     workstationId: string,
     repositoryId: string,
@@ -762,7 +762,7 @@ export function classifyCredentialError(error: unknown): CredentialProblem | und
 const PROBLEM_MESSAGE: Record<CredentialProblem, string> = {
   missing: "No device credential for this workstation was found in its local credential store.",
   rejected:
-    "Zamolxis no longer accepts this Mac's device credential: the Mac was removed or revoked in Settings, or the credential belongs to an older pairing.",
+    "Zamolxis no longer accepts this computer's device credential: the computer was removed or revoked in Settings, or the credential belongs to an older pairing.",
   "access-denied":
     "Your Zamolxis account does not have access (pending or blocked). Ask the operator to allow it, then run pnpm zamolxis setup --repair.",
 };
@@ -809,7 +809,7 @@ export async function chooseRepositories(
 ): Promise<NodeConfig["repositories"]> {
   const currentPaths = new Set(current.map(({ path }) => path));
   const selected = await env.io.checkbox(
-    "Repositories this Mac may work on",
+    "Repositories this computer may work on",
     [
       ...current.map(({ path }) => ({ name: path, value: path, checked: true })),
       ...env
@@ -862,7 +862,7 @@ export async function chooseRepositories(
       return { path, remoteUrl, name: basename(path) };
     });
   const repositories = [...kept, ...added];
-  // GitHub publishing per repository: its own token if one is stored on this Mac, else
+  // GitHub publishing per repository: its own token if one is stored on this computer, else
   // a signed-in GitHub CLI account chosen here and verified to push it.
   for (let index = 0; index < repositories.length; index++) {
     const repository = repositories[index];
@@ -878,7 +878,7 @@ export async function chooseRepositories(
     }
     if (stored) {
       env.io.log(
-        `✓ ${slug} publishes with its own GitHub token on this Mac (${GITHUB_TOKEN_COMMAND} to replace it)`,
+        `✓ ${slug} publishes with its own GitHub token on this computer (${GITHUB_TOKEN_COMMAND} to replace it)`,
       );
       continue;
     }
@@ -940,7 +940,7 @@ async function firstRun(env: SetupEnvironment): Promise<NodeConfig> {
   };
   if (bootstrap.version !== 1) throw new Error("UNSUPPORTED_CONTROL_PLANE_VERSION");
   if (new URL(bootstrap.appUrl).origin !== appUrl) throw new Error("CANONICAL_APP_URL_MISMATCH");
-  const name = (await io.input("Name this Mac", { default: hostname() })).trim() || hostname();
+  const name = (await io.input("Name this computer", { default: hostname() })).trim() || hostname();
   const repositories = await chooseRepositories(env, []);
   const managedRoot = (
     await io.input("Managed root", { default: join(configDirectory(), "worktrees") })
@@ -974,7 +974,7 @@ async function pairDevice(config: NodeConfig, env: SetupEnvironment, client: Con
   const holding = pairingAccount(pending.pairingId);
   // The QR carries only the single-use approval code, never poll or device secrets.
   const url = `${config.appUrl}/?pair=${pending.approvalCode}`;
-  env.io.log("Scan with iPhone, sign in and approve this Mac:");
+  env.io.log("Scan with iPhone, sign in and approve this computer:");
   await env.io.qr(url);
   env.io.log(url);
   for (;;) {
@@ -1011,7 +1011,7 @@ async function pairDevice(config: NodeConfig, env: SetupEnvironment, client: Con
   save();
   env.io.log("✓ Paired; device credential saved in the local credential store");
 }
-/** Forgets this Mac's pairing locally so the next step pairs it again. */
+/** Forgets this computer's pairing locally so the next step pairs it again. */
 export function forgetPairing(config: NodeConfig, env: SetupEnvironment) {
   if (config.workstationId) env.store.remove(config.workstationId);
   if (config.pendingPairing) env.store.remove(pairingAccount(config.pendingPairing.pairingId));
@@ -1061,7 +1061,7 @@ async function confirmServiceStable(env: SetupEnvironment, previousPid: number |
       : "The Node service stops right after it starts. Run journalctl --user -u app.zamolxis.node.service, then rerun pnpm zamolxis setup --repair",
   );
 }
-/** The entry this Mac had before pairing again, and its credential if still at hand. */
+/** The entry this computer had before pairing again, and its credential if still at hand. */
 export interface PreviousPairing {
   workstationId: string;
   credential?: string;
@@ -1079,9 +1079,9 @@ export function previousPairing(
   };
 }
 const RETIRE_FALLBACK =
-  "The previous entry for this Mac was left as it is: its credential is no longer accepted, so setup cannot prove it belongs to this Mac. If it is still listed in Settings → Macs, remove it there.";
+  "The previous entry for this computer was left as it is: its credential is no longer accepted, so setup cannot prove it belongs to this computer. If it is still listed in Settings → Computers, remove it there.";
 /**
- * Revokes the entry this Mac had before pairing again. Only the previous entry's own
+ * Revokes the entry this computer had before pairing again. Only the previous entry's own
  * credential can do that; without it the entry is left alone and the owner is told.
  */
 async function retirePrevious(
@@ -1100,19 +1100,19 @@ async function retirePrevious(
     if (auth.workstationId !== previous.workstationId) throw new Error("DEVICE_IDENTITY_MISMATCH");
     client.setAuth(auth.token);
     await client.retireReplaced(previous.workstationId, replacementId);
-    env.io.log("✓ Revoked this Mac's previous entry");
+    env.io.log("✓ Revoked this computer's previous entry");
   } catch (error) {
     env.io.log(
       classifyCredentialError(error)
         ? RETIRE_FALLBACK
-        : `Could not revoke this Mac's previous entry (${describeError(error)}). If it is still listed in Settings → Macs, remove it there.`,
+        : `Could not revoke this computer's previous entry (${describeError(error)}). If it is still listed in Settings → Computers, remove it there.`,
     );
   }
 }
 const describeError = (error: unknown) =>
   String(errorCode(error) ?? (error instanceof Error ? error.message : "unknown error"));
 /**
- * Stops new work for this Mac in repositories the owner unchecked. Repositories with
+ * Stops new work for this computer in repositories the owner unchecked. Repositories with
  * active work stay granted (returned) so the running work is not cut off.
  */
 async function removeRepositories(
@@ -1126,16 +1126,16 @@ async function removeRepositories(
     if (!repository.repositoryId) continue;
     try {
       await client.removeOwnLocation(workstationId, repository.repositoryId);
-      io.log(`✓ ${repository.path} no longer receives new work on this Mac`);
+      io.log(`✓ ${repository.path} no longer receives new work on this computer`);
     } catch (error) {
       if (errorCode(error) === "LOCATION_BUSY") {
         io.log(
-          `${repository.path} still has work running on this Mac; it stays granted. Remove it again once that work has finished.`,
+          `${repository.path} still has work running on this computer; it stays granted. Remove it again once that work has finished.`,
         );
         kept.push(repository);
       } else
         io.log(
-          `Could not record the removal of ${repository.path} in Zamolxis (${describeError(error)}); remove it in Settings → Macs if it is still listed.`,
+          `Could not record the removal of ${repository.path} in Zamolxis (${describeError(error)}); remove it in Settings → Computers if it is still listed.`,
         );
     }
   }
@@ -1160,7 +1160,7 @@ export async function checkAndRepair(
   options: {
     interactive: boolean;
     restart?: boolean;
-    /** Repositories the owner just unchecked; recorded as removed for this Mac. */
+    /** Repositories the owner just unchecked; recorded as removed for this computer. */
     removed?: NodeConfig["repositories"];
     /** The owner confirmed the repository list: removed locations become eligible again. */
     regrant?: boolean;
@@ -1196,8 +1196,8 @@ export async function checkAndRepair(
         `${PROBLEM_MESSAGE[reason]} Run pnpm zamolxis setup and choose "Pair again".`,
       );
     io.log(PROBLEM_MESSAGE[reason]);
-    if (!(await io.confirm("Pair this Mac again now? (shows a new QR code)", true)))
-      throw new Error("Setup stopped: the Node cannot connect until this Mac is paired again");
+    if (!(await io.confirm("Pair this computer again now? (shows a new QR code)", true)))
+      throw new Error("Setup stopped: the Node cannot connect until this computer is paired again");
     // The rejected credential cannot prove the old entry; it is reported, not revoked.
     if (config.workstationId && !previous) previous = { workstationId: config.workstationId };
     forgetPairing(config, env);
@@ -1324,15 +1324,15 @@ async function githubStep(
   }
 }
 /**
- * `pnpm zamolxis github-token [repository] [--remove]`: shows and manages this Mac's
- * per-repository GitHub tokens. Reports the new status to Zamolxis when the Mac is paired.
+ * `pnpm zamolxis github-token [repository] [--remove]`: shows and manages this computer's
+ * per-repository GitHub tokens. Reports the new status to Zamolxis when the computer is paired.
  */
 export async function githubToken(
   options: { repository?: string; remove?: boolean; interactive: boolean },
   env: SetupEnvironment,
 ) {
   if (!existsSync(env.configPath))
-    throw new Error("This Mac is not set up yet; run pnpm zamolxis setup first");
+    throw new Error("This computer is not set up yet; run pnpm zamolxis setup first");
   const config = readConfig(env.configPath);
   let report: { client: ControlPlane; workstationId: string } | undefined;
   if (config.workstationId)
@@ -1362,12 +1362,12 @@ export function menuChoices(): Choice<MenuAction>[] {
     { name: "Check and repair", value: "repair" },
     { name: "Add or remove repositories", value: "repositories" },
     { name: "GitHub access for publishing (status; add or replace tokens)", value: "github" },
-    { name: "Rename this Mac", value: "rename" },
+    { name: "Rename this computer", value: "rename" },
     { name: "Pair again (new QR code, replaces the device credential)", value: "pair" },
     { name: "Exit", value: "exit" },
   ];
 }
-/** Validates a Mac name the same way the control plane does (trimmed, 1..64). */
+/** Validates a computer name the same way the control plane does (trimmed, 1..64). */
 export function validateMacName(value: string): true | string {
   const name = value.trim();
   if (!name) return "Enter a name";
@@ -1376,10 +1376,13 @@ export function validateMacName(value: string): true | string {
   if (/[\u0000-\u001f\u007f]/.test(name)) return "Use printable characters only";
   return true;
 }
-/** Renames this Mac in Zamolxis (Node-authenticated) and in config.json. */
+/** Renames this computer in Zamolxis (Node-authenticated) and in config.json. */
 export async function renameMac(config: NodeConfig, env: SetupEnvironment) {
   const name = (
-    await env.io.input("New name for this Mac", { default: config.name, validate: validateMacName })
+    await env.io.input("New name for this computer", {
+      default: config.name,
+      validate: validateMacName,
+    })
   ).trim();
   if (name === config.name) {
     env.io.log("The name is unchanged");
@@ -1399,8 +1402,8 @@ export async function renameMac(config: NodeConfig, env: SetupEnvironment) {
   saveConfig(config, env.configPath);
   env.io.log(
     config.workstationId
-      ? `✓ This Mac is now "${name}" in Zamolxis`
-      : `✓ This Mac will be paired as "${name}"`,
+      ? `✓ This computer is now "${name}" in Zamolxis`
+      : `✓ This computer will be paired as "${name}"`,
   );
 }
 /** Changes repository grants in config.json; returns the change, or undefined if none. */
@@ -1419,7 +1422,7 @@ export async function editRepositories(config: NodeConfig, env: SetupEnvironment
   for (const { path } of removed) env.io.log(`- ${path}`);
   if (removed.length)
     env.io.log(
-      "Removed repositories keep their Product and history in Zamolxis; this Mac stops receiving new work for them.",
+      "Removed repositories keep their Product and history in Zamolxis; this computer stops receiving new work for them.",
     );
   return { added, removed };
 }
@@ -1427,7 +1430,7 @@ export async function runSetup(options: { repair?: boolean }, env: SetupEnvironm
   try {
     if (!existsSync(env.configPath)) {
       if (options.repair)
-        throw new Error("This Mac is not set up yet; run pnpm zamolxis setup first");
+        throw new Error("This computer is not set up yet; run pnpm zamolxis setup first");
       await checkAndRepair(await firstRun(env), env, { interactive: true });
       return;
     }
@@ -1448,7 +1451,7 @@ export async function runSetup(options: { repair?: boolean }, env: SetupEnvironm
     }
     if (options.repair) return await checkAndRepair(config, env, { interactive: false });
     env.io.log(
-      `This Mac is set up as "${config.name}" with ${config.repositories.length} repositories${config.workstationId ? "" : " (not paired yet)"}.`,
+      `This computer is set up as "${config.name}" with ${config.repositories.length} repositories${config.workstationId ? "" : " (not paired yet)"}.`,
     );
     const action = await env.io.select("What do you want to do?", menuChoices(), "repair");
     if (action === "exit") return;
@@ -1467,7 +1470,7 @@ export async function runSetup(options: { repair?: boolean }, env: SetupEnvironm
     if (action === "pair") {
       if (
         !(await env.io.confirm(
-          "Pair again? This Mac stops working until you approve the new QR code. Its previous entry is revoked once the new pairing works.",
+          "Pair again? This computer stops working until you approve the new QR code. Its previous entry is revoked once the new pairing works.",
           false,
         ))
       )

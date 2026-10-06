@@ -52,7 +52,7 @@ async function ownerData(t: T, ownerId: Awaited<ReturnType<typeof seedHuman>>["u
     });
     const workstationId = await ctx.db.insert("workstations", {
       ownerId,
-      name: "Owner's Mac",
+      name: "Owner's computer",
       status: "online",
       nodeAuthSubject: "owner-device",
       lastHeartbeatAt: now,
@@ -404,7 +404,7 @@ it("keeps every user-facing function closed to a second approved account", async
   expect(after.task?.status).toBe("running");
   expect(after.run?.status).toBe("waiting");
   expect(after.approval?.status).toBe("pending");
-  expect(after.workstation).toMatchObject({ name: "Owner's Mac", status: "online" });
+  expect(after.workstation).toMatchObject({ name: "Owner's computer", status: "online" });
   expect(after.location?.status).toBe("available");
   expect(after.profile).toMatchObject({ name: "Secret builder", enabled: true, revision: 1 });
   expect(after.owner).toMatchObject({ accessStatus: "allowed", role: "admin" });

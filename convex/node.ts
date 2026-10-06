@@ -23,6 +23,9 @@ export const heartbeat = mutation({
   args: {
     ...deviceArgs,
     instanceId: v.string(),
+    // Node.js `process.platform` / `process.arch`, so the app can say which kind of computer.
+    platform: v.optional(v.string()),
+    architecture: v.optional(v.string()),
     runtimeCapabilities: v.array(
       v.object({
         runtime: v.string(),
@@ -38,10 +41,14 @@ export const heartbeat = mutation({
     if (args.runtimeCapabilities.length > 32) fail("INVALID_ARGUMENT");
     for (const advertised of args.runtimeCapabilities)
       if ((advertised.models?.length ?? 0) > RUNTIME_MODEL_LIMITS.models) fail("INVALID_ARGUMENT");
+    if ((args.platform?.length ?? 0) > 32 || (args.architecture?.length ?? 0) > 32)
+      fail("INVALID_ARGUMENT");
     await ctx.db.patch("workstations", args.workstationId, {
       nodeInstanceId: args.instanceId,
       status: "online",
       lastHeartbeatAt: Date.now(),
+      ...(args.platform ? { platform: args.platform } : {}),
+      ...(args.architecture ? { architecture: args.architecture } : {}),
     });
     if (
       new Set(args.runtimeCapabilities.map((item) => item.runtime)).size !==
@@ -133,9 +140,9 @@ export const registerLocation = mutation({
   },
 });
 const DAY = 24 * 60 * 60 * 1000;
-// The Node reports a repository's GitHub publishing access on this Mac: status, credential
+// The Node reports a repository's GitHub publishing access on this computer: status, credential
 // source (its token or its gh account), login and token expiry only. Bounded and
-// owner-isolated; no credential ever leaves the Mac.
+// owner-isolated; no credential ever leaves the computer.
 export const reportGithubAccess = mutation({
   args: { ...deviceArgs, repositoryId: v.id("repositories"), access: githubAccess },
   returns: v.null(),

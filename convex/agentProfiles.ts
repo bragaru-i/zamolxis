@@ -35,9 +35,9 @@ export const list = query({
 
 type RuntimeModel = Infer<typeof runtimeModel>;
 /**
- * The models the signed-in owner's paired Macs report per runtime, for Settings -> Agents.
+ * The models the signed-in owner's paired computers report per runtime, for Settings -> Agents.
  * Only available runtimes on non-revoked workstations count; models are deduplicated by
- * id per runtime (first seen wins, default if any Mac reports it as default) and sorted
+ * id per runtime (first seen wins, default if any computer reports it as default) and sorted
  * default first, then by display name.
  */
 export const models = query({

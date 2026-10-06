@@ -52,7 +52,7 @@ describe("signed-in device labels", () => {
     expect(await t.run((ctx) => ctx.db.query("signInLabels").collect())).toHaveLength(0);
     const pending = await seedHuman(t, "carol", "pending");
     await expect(
-      pending.user.mutation(api.admin.labelThisDevice, { label: "Chrome on Mac" }),
+      pending.user.mutation(api.admin.labelThisDevice, { label: "Chrome on computer" }),
     ).rejects.toThrow("ACCESS_DENIED");
   });
 });

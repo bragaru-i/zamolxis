@@ -32,8 +32,8 @@ const STATE: Record<OnboardingState, { label: string; tone: Tone }> = {
 export const DISMISS_KEY = "zamolxis.onboarding.hidden";
 
 /**
- * Steps as they apply now: a step reported while the Mac was online turns into its stale
- * state once the Mac has not reported for too long (a query result does not age by itself).
+ * Steps as they apply now: a step reported while the computer was online turns into its stale
+ * state once the computer has not reported for too long (a query result does not age by itself).
  */
 export function currentSteps(progress: OnboardingProgress, now: number): OnboardingStep[] {
   return progress.steps.map((step) =>

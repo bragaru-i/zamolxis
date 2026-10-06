@@ -613,7 +613,7 @@ it("executes the Codex adapter through Node workspace assignment, Convex settlem
 });
 
 it.skipIf(process.env.ZAMOLXIS_AUTHENTICATED_ACCEPTANCE !== "1")(
-  "accepts real authenticated Mac Codex through Node, isolated Git worktree, durable outbox and Convex function settlement",
+  "accepts real authenticated computer Codex through Node, isolated Git worktree, durable outbox and Convex function settlement",
   async () => {
     const f = await fixture("codex");
     const profile = mkdtempSync(join(tmpdir(), "zamolxis-authenticated-node-"));

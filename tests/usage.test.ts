@@ -72,7 +72,7 @@ async function fixture() {
       });
       const workstationId = await ctx.db.insert("workstations", {
         ownerId,
-        name: "Mac",
+        name: "computer",
         status: "online",
         registeredAt: 0,
       });

@@ -84,7 +84,7 @@ describe("profile overrides", () => {
     const runId = await t.run(async (ctx) => {
       const workstationId = await ctx.db.insert("workstations", {
         ownerId: userId,
-        name: "Mac",
+        name: "computer",
         status: "online",
         registeredAt: 0,
       });

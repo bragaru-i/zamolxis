@@ -41,7 +41,7 @@ beforeEach(() => {
 it("orders pages by how often the owner needs them", () => {
   expect(SETTINGS_PAGES.map((page) => page.title)).toEqual([
     "Agents",
-    "Macs & repositories",
+    "Computers & repositories",
     "Usage",
     "Storage",
     "People & devices",
@@ -61,7 +61,7 @@ it("summarizes each page's current state in one line", () => {
       ],
     }),
   ).toBe("Builder: Codex · gpt-5.1-codex · 1 of 6 customized");
-  expect(pageSummary("macs", { now: NOW, devices: [] })).toBe("No Mac paired yet");
+  expect(pageSummary("macs", { now: NOW, devices: [] })).toBe("No computer paired yet");
   expect(pageSummary("macs", { now: NOW, devices: [mac()] })).toBe("Studio · online");
   expect(pageSummary("macs", { now: NOW, devices: [mac({ lastHeartbeatAt: 0 })] })).toBe(
     "Studio · offline",
@@ -71,7 +71,7 @@ it("summarizes each page's current state in one line", () => {
       now: NOW,
       devices: [mac(), mac({ _id: "w2" as Device["_id"], status: "offline" })],
     }),
-  ).toBe("2 Macs · 1 online");
+  ).toBe("2 computers · 1 online");
   const total = { items: 3, reported: true, totalTokens: 48_000 };
   expect(pageSummary("usage", { now: NOW, usage: { total, sessionCount: 2 } as never })).toContain(
     "tokens in the last 7 days",
@@ -121,7 +121,7 @@ it("shows the menu on a phone, with live summaries and sign out last", () => {
 it("shows one page with a way back to the menu", () => {
   const html = render("macs");
   expect(html).toContain("Back to Settings");
-  expect(html).toContain("Macs &amp; repositories");
-  expect(html).toContain("Remove this Mac…");
+  expect(html).toContain("Computers &amp; repositories");
+  expect(html).toContain("Remove this computer…");
   expect(html).not.toContain('aria-label="Settings sections"');
 });

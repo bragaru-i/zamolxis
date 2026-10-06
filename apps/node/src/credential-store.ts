@@ -18,7 +18,7 @@ const ACCOUNT = /^[A-Za-z0-9_-]{1,128}$/;
 const SECRET = /^[a-f0-9]{64}$/;
 export const isDeviceCredential = (value: unknown): value is string =>
   typeof value === "string" && SECRET.test(value);
-/** Account for a credential created during pairing, before the Mac has a workstation id. */
+/** Account for a credential created during pairing, before the computer has a workstation id. */
 export const pairingAccount = (pairingId: string) => `pairing-${pairingId}`;
 
 function account(value: string) {

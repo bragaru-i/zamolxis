@@ -767,7 +767,7 @@ function OrchestratorComposer({
       }
       hint={
         products && !products.length
-          ? "Pair a Mac with a repository before delegating work. Sending a message does not start work."
+          ? "Pair a computer with a repository before delegating work. Sending a message does not start work."
           : repositoryName
             ? `Context: ${repositoryName} · Sending a message does not start work.`
             : "Sending a message does not start work."

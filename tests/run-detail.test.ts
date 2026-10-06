@@ -18,7 +18,7 @@ async function seed() {
     const now = Date.now();
     const workstationId = await ctx.db.insert("workstations", {
       ownerId: alice.userId,
-      name: "Mac",
+      name: "computer",
       status: "online",
       registeredAt: now,
     });

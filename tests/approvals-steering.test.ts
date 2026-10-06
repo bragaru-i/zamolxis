@@ -108,7 +108,7 @@ async function fixture(
   await user.mutation(api.profiles.ensure, {});
   await mallory.mutation(api.profiles.ensure, {});
   const workstationId = await user.mutation(api.workstations.register, {
-    name: "Mac",
+    name: "computer",
     nodeAuthSubject: "device",
   });
   const node = t.withIdentity({

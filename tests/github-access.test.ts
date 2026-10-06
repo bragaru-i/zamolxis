@@ -4,7 +4,7 @@ import { api } from "../convex/_generated/api";
 import schema from "../convex/schema";
 import { seedHuman } from "./fixtures/auth";
 
-// Per-repository GitHub publishing access as a Mac reports it: status only, owner-isolated.
+// Per-repository GitHub publishing access as a computer reports it: status only, owner-isolated.
 const modules = {
   "./_generated/server.ts": () => import("../convex/_generated/server"),
   "./node.ts": () => import("../convex/node"),
@@ -29,7 +29,7 @@ async function fixture() {
     nodeAuthSubject: "device",
   });
   const otherWorkstationId = await other.mutation(api.workstations.register, {
-    name: "Bob's Mac",
+    name: "Bob's computer",
     nodeAuthSubject: "bob-device",
   });
   const node = nodeFor("device", "alice");
@@ -62,7 +62,7 @@ async function fixture() {
 }
 
 describe("GitHub publishing access per repository", () => {
-  it("stores what the Mac reports and shows it with the token creation link", async () => {
+  it("stores what the computer reports and shows it with the token creation link", async () => {
     const f = await fixture();
     const [before] = await f.list();
     expect(before?.githubAccess).toBeUndefined();
@@ -122,7 +122,7 @@ describe("GitHub publishing access per repository", () => {
     expect((await f.list())[0]?.githubAccess?.checkedAt).toBeLessThanOrEqual(Date.now());
   });
 
-  it("is reported only by the owner's own Mac and shown only to the owner", async () => {
+  it("is reported only by the owner's own computer and shown only to the owner", async () => {
     const f = await fixture();
     const access = { status: "ok" as const, checkedAt: Date.now() };
     await expect(

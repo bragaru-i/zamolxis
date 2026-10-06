@@ -42,7 +42,7 @@ describe("GitHub access per repository", () => {
       NOW,
     );
     expect(gone).toMatchObject({ tone: "danger", needsToken: true });
-    expect(gone.text).toContain("(bragaru-i) isn't signed in on your Mac");
+    expect(gone.text).toContain("(bragaru-i) isn't signed in on your computer");
     expect(gone.text).toContain("gh auth login");
   });
 

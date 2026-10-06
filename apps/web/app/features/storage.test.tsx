@@ -57,7 +57,7 @@ describe("StorageSettings", () => {
     expect(state.calls[0]).toEqual({ name: "workspaces:storage", args: "skip" });
   });
 
-  it("shows worktrees per Mac, what can go now and the last cleanup", () => {
+  it("shows worktrees per computer, what can go now and the last cleanup", () => {
     state.data = {
       "workspaces:storage": summary([
         mac({ lastCleanupAt: NOW - 2 * 60 * 60 * 1000, pending: 2, failed: 1 }),
@@ -82,7 +82,7 @@ describe("StorageSettings", () => {
     expect(html).toContain("300+");
     expect(html).toContain("Offline");
     expect(html).toContain("Never");
-    // One enabled button for the online Mac with eligible worktrees, one disabled.
+    // One enabled button for the online computer with eligible worktrees, one disabled.
     expect(html.match(/Clean up now/g)).toHaveLength(2);
     expect(html.match(/disabled=""/g)).toHaveLength(1);
     expect(html).toContain("3 days (default)");
@@ -93,7 +93,7 @@ describe("StorageSettings", () => {
   it("explains the empty state", () => {
     state.data = { "workspaces:storage": summary([], 1) };
     const html = render();
-    expect(html).toContain("No Mac paired yet.");
+    expect(html).toContain("No computer paired yet.");
     expect(html).toMatch(/class="z-picker__value">1 day/);
   });
 

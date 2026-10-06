@@ -188,6 +188,8 @@ try {
       await client.mutation(makeFunctionReference<"mutation">("node:heartbeat"), {
         workstationId: config.workstationId,
         instanceId: identity.instanceId,
+        platform: process.platform,
+        architecture: process.arch,
         runtimeCapabilities: await catalog.advertise([
           ...(codex
             ? [

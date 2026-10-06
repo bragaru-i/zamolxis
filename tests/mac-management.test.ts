@@ -4,7 +4,7 @@ import { api } from "../convex/_generated/api";
 import schema from "../convex/schema";
 import { seedHuman } from "./fixtures/auth";
 
-// Mac management (#45): rename, pairing again, exact heartbeat, repository removal.
+// Computer management (#45): rename, pairing again, exact heartbeat, repository removal.
 const modules = {
   "./_generated/server.ts": () => import("../convex/_generated/server"),
   "./admin.ts": () => import("../convex/admin"),
@@ -32,7 +32,7 @@ async function fixture() {
       ownerSubject: owner,
     });
   const workstationId = await user.mutation(api.workstations.register, {
-    name: "Old Mac",
+    name: "Old computer",
     nodeAuthSubject: "device",
   });
   const node = nodeFor("device");
@@ -45,7 +45,7 @@ async function fixture() {
 }
 
 describe("workstation rename", () => {
-  it("lets the owner and the Mac itself rename it within bounds", async () => {
+  it("lets the owner and the computer itself rename it within bounds", async () => {
     const { t, user, other, node, nodeFor, workstationId } = await fixture();
     await user.mutation(api.workstations.rename, { workstationId, name: "  Studio  " });
     expect((await t.run((ctx) => ctx.db.get("workstations", workstationId)))?.name).toBe("Studio");
@@ -76,11 +76,11 @@ describe("pairing again", () => {
   it("retires the previous entry only with its own credential and for the same owner", async () => {
     const { t, user, other, node, nodeFor, workstationId } = await fixture();
     const replacementId = await user.mutation(api.workstations.register, {
-      name: "Old Mac",
+      name: "Old computer",
       nodeAuthSubject: "device-2",
     });
     const foreignId = await other.mutation(api.workstations.register, {
-      name: "Bob's Mac",
+      name: "Bob's computer",
       nodeAuthSubject: "bob-device",
     });
     // The new entry cannot retire the old one: only the old credential proves it.
@@ -114,8 +114,8 @@ describe("pairing again", () => {
 });
 
 describe("node health", () => {
-  it("reports the exact heartbeat and process instance", async () => {
-    const { node, workstationId } = await fixture();
+  it("reports the exact heartbeat, process instance and platform", async () => {
+    const { t, node, workstationId } = await fixture();
     const health = await node.query(api.node.health, { workstationId });
     expect(health).toMatchObject({
       online: true,
@@ -126,12 +126,26 @@ describe("node health", () => {
     await node.mutation(api.node.heartbeat, {
       workstationId,
       instanceId: "instance-2",
+      platform: "linux",
+      architecture: "x64",
       runtimeCapabilities: [{ runtime: "claude", capabilities: ["start"] }],
     });
     expect(await node.query(api.node.health, { workstationId })).toMatchObject({
       instanceId: "instance-2",
       runtimeAvailable: true,
     });
+    expect(await t.run((ctx) => ctx.db.get("workstations", workstationId))).toMatchObject({
+      platform: "linux",
+      architecture: "x64",
+    });
+    await expect(
+      node.mutation(api.node.heartbeat, {
+        workstationId,
+        instanceId: "instance-2",
+        platform: "x".repeat(33),
+        runtimeCapabilities: [],
+      }),
+    ).rejects.toThrow("INVALID_ARGUMENT");
     await node.mutation(api.node.heartbeat, {
       workstationId,
       instanceId: "instance-2",
@@ -163,7 +177,7 @@ describe("repository removal", () => {
     return { ...f, repositoryId: registered.repositoryId, repositoryLocationId, register, status };
   }
 
-  it("removes this Mac's location for the Node, sticks across restarts and comes back on re-grant", async () => {
+  it("removes this computer's location for the Node, sticks across restarts and comes back on re-grant", async () => {
     const f = await located();
     await expect(
       f.nodeFor("intruder").mutation(api.repositories.removeOwnLocation, {

@@ -1,9 +1,9 @@
 /**
- * GitHub access for publishing, per repository on the Mac that publishes. The credential
- * is, in this order: the repository's own token in that Mac's login Keychain, else the
+ * GitHub access for publishing, per repository on the computer that publishes. The credential
+ * is, in this order: the repository's own token in that computer's login Keychain, else the
  * GitHub CLI account setup chose for the repository (its token read from `gh` for one
  * publication). Only the Node uses it, only to push a trusted branch and open its pull
- * request. What leaves the Mac is this status, never the credential.
+ * request. What leaves the computer is this status, never the credential.
  */
 export const GITHUB_ACCESS_STATUSES = [
   "ok",
@@ -16,7 +16,7 @@ export const GITHUB_ACCESS_STATUSES = [
   "no_push",
   // Neither a token nor a GitHub CLI account is set up for this repository.
   "missing",
-  // The GitHub CLI account chosen for this repository is not signed in on this Mac, or
+  // The GitHub CLI account chosen for this repository is not signed in on this computer, or
   // its credential now belongs to another login.
   "account_unavailable",
   // GitHub could not be reached; says nothing about the token.

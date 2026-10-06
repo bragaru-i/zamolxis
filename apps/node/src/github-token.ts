@@ -13,7 +13,7 @@ import {
   type RepositoryTokenStore,
 } from "@zamolxis/node-core";
 
-/** One repository on this Mac whose origin is on GitHub. */
+/** One repository on this computer whose origin is on GitHub. */
 export interface GitHubEntry {
   readonly name: string;
   readonly path: string;
@@ -109,7 +109,7 @@ export function describeAccess(access: GitHubAccess, now = Date.now()): string {
     case "missing":
       return "not connected: no token and no GitHub account chosen for this repository yet";
     case "account_unavailable":
-      return `the GitHub account chosen for it (${access.login ?? "unknown"}) isn't signed in to gh on this Mac; run gh auth login for it, or add a token`;
+      return `the GitHub account chosen for it (${access.login ?? "unknown"}) isn't signed in to gh on this computer; run gh auth login for it, or add a token`;
     case "unreachable":
       return "couldn't reach GitHub to check access";
   }
@@ -151,7 +151,7 @@ async function report(entry: GitHubEntry, access: GitHubAccess, env: GitHubToken
   try {
     await env.report(entry, access);
   } catch {
-    env.io.log("  (Zamolxis will show the new status after this Mac's next check.)");
+    env.io.log("  (Zamolxis will show the new status after this computer's next check.)");
   }
 }
 
@@ -212,7 +212,7 @@ export async function addToken(
 export async function removeToken(entry: GitHubEntry, env: GitHubTokenEnvironment) {
   env.tokens.remove(entry.github);
   env.io.log(
-    `✓ Removed the GitHub token for ${githubSlug(entry.github)} from this Mac. Revoke it on GitHub too: https://github.com/settings/personal-access-tokens`,
+    `✓ Removed the GitHub token for ${githubSlug(entry.github)} from this computer. Revoke it on GitHub too: https://github.com/settings/personal-access-tokens`,
   );
   // Without the token, the repository's chosen gh account (if any) publishes.
   const access = entry.account
@@ -252,7 +252,7 @@ export async function manageGitHubTokens(
   const { io } = env;
   const entries = githubEntries(repositories);
   if (!entries.length) {
-    io.log("No repository on this Mac has a GitHub origin remote; nothing to connect.");
+    io.log("No repository on this computer has a GitHub origin remote; nothing to connect.");
     return;
   }
   let targets = entries;
@@ -260,7 +260,7 @@ export async function manageGitHubTokens(
     targets = match(entries, options.repository);
     if (targets.length !== 1)
       throw new Error(
-        `No single repository "${options.repository}" on this Mac. Choose one of: ${entries
+        `No single repository "${options.repository}" on this computer. Choose one of: ${entries
           .map((entry) => githubSlug(entry.github))
           .join(", ")}`,
       );
@@ -301,7 +301,9 @@ export async function manageGitHubTokens(
   );
   if (!env.interactive) {
     if (needing.length)
-      io.log(`To add or replace a token, run ${GITHUB_TOKEN_COMMAND} in Terminal on this Mac.`);
+      io.log(
+        `To add or replace a token, run ${GITHUB_TOKEN_COMMAND} in Terminal on this computer.`,
+      );
     return;
   }
   if (options.offer === "when-needed" && !needing.length) return;

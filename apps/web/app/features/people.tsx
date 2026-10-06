@@ -34,7 +34,7 @@ const CONFIRM: Record<Action, { button: string; text: (who: string) => string }>
   block: {
     button: "Block",
     text: (who) =>
-      `Block ${who}? They are signed out on every device and their Macs stop working. Their data is kept.`,
+      `Block ${who}? They are signed out on every device and their computers stop working. Their data is kept.`,
   },
   makeAdmin: {
     button: "Make admin",

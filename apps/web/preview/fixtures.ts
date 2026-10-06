@@ -467,7 +467,7 @@ function build(name: string) {
         planStatus: "completed",
         decision: "ask",
         reply:
-          "The behavioral check needs a running Node. Should I retry once the Mac is online, or mark the task as done without it?",
+          "The behavioral check needs a running Node. Should I retry once the computer is online, or mark the task as done without it?",
       },
     ],
     s4: [
@@ -927,9 +927,9 @@ function build(name: string) {
                   { id: "access", title: "Get access", state: "done", detail: "Access granted." },
                   {
                     id: "pair",
-                    title: "Pair a Mac",
+                    title: "Pair a computer",
                     state: "needs_you",
-                    detail: "Run `pnpm zamolxis setup` on your Mac.",
+                    detail: "Run `pnpm zamolxis setup` on your computer.",
                   },
                   {
                     id: "repo",

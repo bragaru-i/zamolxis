@@ -12,9 +12,9 @@ export interface ConversationMessage {
   reply?: string;
   proposedTasks?: Array<{ key: string; title: string; description: string }>;
   supervisor?: { modelActual?: string; totalTokens?: number };
-  /** Reported by the Mac while the Supervisor works. */
+  /** Reported by the computer while the Supervisor works. */
   progress?: { activity?: string; startedAt: number };
-  /** The owner asked to stop the Supervisor and the Mac has not confirmed yet. */
+  /** The owner asked to stop the Supervisor and the computer has not confirmed yet. */
   stopping?: boolean;
   /** The Supervisor stopped before answering. */
   stopped?: boolean;
