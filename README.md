@@ -322,7 +322,14 @@ Builder, Verifier, Repair and Integration roles. Global summaries do not link ex
 your messages, the planning outcome for each, Task cards with their Runs (status, live
 activity label, reported token totals) and a Stop control per active Run and per Session.
 The Session composer stays pinned to the bottom; in an ended Session, sending starts a new Session.
-Computer status, removal of a computer and sign-out are in Settings. The sidebar's
+Agent requests for permission (a command Codex cannot run in its sandbox, a file change
+outside the task) reach you wherever you are: as cards in the Session and on Home, and as
+toasts on any other screen, each with Approve, Approve for run, Reject and Open session.
+Settings → Agents lets a Builder or Repair profile allow low-risk, or low- and
+medium-risk, commands automatically; the backend records those as approved by policy and
+answers them at once, while high and critical requests, file changes and tool
+confirmations always wait for you. Computer status, removal of a computer and sign-out
+are in Settings. The sidebar's
 connection line counts connected computers ("Computers connected (2)"). Settings →
 Computers & repositories also lists **Products**: one per repository, matched by its remote
 origin wherever it is checked out; a product that only repeats repositories of another one

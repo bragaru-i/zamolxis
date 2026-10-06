@@ -4,6 +4,7 @@ import { useMutation, useQuery } from "convex/react";
 import { useEffect, useState } from "react";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
+import { ApprovalToasts } from "./approvals";
 import { explainError } from "./errors";
 import { type Device, deviceState } from "./macs";
 import { SessionView } from "./session-view";
@@ -103,6 +104,15 @@ export function Workspace() {
           onSettings={openSettings}
         />
       )}
+      <ApprovalToasts
+        ready={ready}
+        {...(sessionId ? { exceptSessionId: sessionId as Id<"workSessions"> } : {})}
+        onOpen={(id) => {
+          setSettingsOpen(false);
+          replaceRun("");
+          setSessionId(id);
+        }}
+      />
       <Settings
         open={settingsOpen}
         page={settingsPage}

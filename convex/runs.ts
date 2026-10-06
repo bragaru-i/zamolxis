@@ -118,6 +118,7 @@ export async function queueRun(
           ...(profile.instructionsDigest ? { instructionsDigest: profile.instructionsDigest } : {}),
           ...(profile.model ? { modelRequested: profile.model } : {}),
           ...(profile.reasoningEffort ? { reasoningEffort: profile.reasoningEffort } : {}),
+          ...(profile.approvalPolicy ? { approvalPolicy: profile.approvalPolicy } : {}),
         }
       : {}),
     ...(installation.version ? { runtimeVersion: installation.version } : {}),

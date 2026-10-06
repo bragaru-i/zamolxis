@@ -1,5 +1,5 @@
 "use client";
-import { Button, Card, Notice, type Tone } from "@zamolxis/ui";
+import { Button, Card, Notice, Toast, ToastStack, type Tone } from "@zamolxis/ui";
 import { useMutation, useQuery } from "convex/react";
 import { useState } from "react";
 import { api } from "../../../../convex/_generated/api";
@@ -33,18 +33,12 @@ export function approvalTitle(approval: PendingApproval): string {
   return ASK[approval.request?.kind ?? approval.action] ?? "Agent asks for permission";
 }
 
-export function ApprovalCard({
-  approval,
-  onOpen,
-}: {
-  approval: PendingApproval;
-  onOpen?: (id: Id<"workSessions">) => void;
-}) {
+/** The decision flow one request shares between its card and its toast. */
+export function useApprovalDecision(approval: PendingApproval) {
   const resolve = useMutation(api.approvals.resolve);
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string>();
-  const risk = RISK[approval.risk] ?? RISK.critical;
   const decide = async (decision: "approved" | "rejected", scope: "once" | "run" = "once") => {
     // Critical requests need a second, deliberate tap to approve.
     if (decision === "approved" && approval.risk === "critical" && !confirming) {
@@ -62,6 +56,68 @@ export function ApprovalCard({
       setConfirming(false);
     }
   };
+  return { busy, confirming, error, decide };
+}
+
+function ApprovalButtons({
+  approval,
+  state,
+  onOpen,
+}: {
+  approval: PendingApproval;
+  state: ReturnType<typeof useApprovalDecision>;
+  onOpen?: (id: Id<"workSessions">) => void;
+}) {
+  const { busy, confirming, decide } = state;
+  return (
+    <>
+      <Button
+        variant={confirming ? "danger" : "primary"}
+        size="small"
+        disabled={busy}
+        onClick={() => decide("approved", "once")}
+      >
+        {confirming
+          ? "Approve anyway"
+          : approval.request?.allowForSession
+            ? "Approve once"
+            : "Approve"}
+      </Button>
+      {approval.request?.allowForSession && !confirming && (
+        <Button
+          variant="secondary"
+          size="small"
+          disabled={busy}
+          onClick={() => decide("approved", "run")}
+        >
+          Approve for run
+        </Button>
+      )}
+      <Button variant="secondary" size="small" disabled={busy} onClick={() => decide("rejected")}>
+        Reject
+      </Button>
+      <span className="z-spacer" />
+      {onOpen && (
+        <Button variant="ghost" size="small" onClick={() => onOpen(approval.workSessionId)}>
+          Open session
+        </Button>
+      )}
+    </>
+  );
+}
+
+const CRITICAL_WARNING =
+  "This touches credentials, the network or files outside the task. Approve only if you expected it.";
+
+export function ApprovalCard({
+  approval,
+  onOpen,
+}: {
+  approval: PendingApproval;
+  onOpen?: (id: Id<"workSessions">) => void;
+}) {
+  const state = useApprovalDecision(approval);
+  const risk = RISK[approval.risk] ?? RISK.critical;
   return (
     <Card label={approvalTitle(approval)}>
       <div className="z-row z-small">
@@ -77,47 +133,84 @@ export function ApprovalCard({
           You can allow similar safe commands until this agent run finishes.
         </p>
       )}
-      {confirming && (
-        <Notice tone="danger">
-          This touches credentials, the network or files outside the task. Approve only if you
-          expected it.
-        </Notice>
-      )}
+      {state.confirming && <Notice tone="danger">{CRITICAL_WARNING}</Notice>}
       <div className="z-row">
-        <Button
-          variant={confirming ? "danger" : "primary"}
-          size="small"
-          disabled={busy}
-          onClick={() => decide("approved", "once")}
-        >
-          {confirming
-            ? "Approve anyway"
-            : approval.request?.allowForSession
-              ? "Approve once"
-              : "Approve"}
-        </Button>
-        {approval.request?.allowForSession && !confirming && (
-          <Button
-            variant="secondary"
-            size="small"
-            disabled={busy}
-            onClick={() => decide("approved", "run")}
-          >
-            Approve for run
-          </Button>
-        )}
-        <Button variant="secondary" size="small" disabled={busy} onClick={() => decide("rejected")}>
-          Reject
-        </Button>
-        <span className="z-spacer" />
-        {onOpen && (
-          <Button variant="ghost" size="small" onClick={() => onOpen(approval.workSessionId)}>
-            Open session
-          </Button>
-        )}
+        <ApprovalButtons approval={approval} state={state} {...(onOpen ? { onOpen } : {})} />
       </div>
-      {error && <Notice tone="danger">{error}</Notice>}
+      {state.error && <Notice tone="danger">{state.error}</Notice>}
     </Card>
+  );
+}
+
+/** One pending request as a toast: the same decision as the card, wherever the owner is. */
+export function ApprovalToast({
+  approval,
+  onOpen,
+  onDismiss,
+}: {
+  approval: PendingApproval;
+  onOpen: (id: Id<"workSessions">) => void;
+  onDismiss: () => void;
+}) {
+  const state = useApprovalDecision(approval);
+  const risk = RISK[approval.risk] ?? RISK.critical;
+  return (
+    <Toast
+      title={approvalTitle(approval)}
+      tone={risk.tone === "neutral" ? "info" : risk.tone}
+      meta={<span className={`z-badge z-tone-${risk.tone}`}>{risk.label}</span>}
+      onDismiss={onDismiss}
+      actions={<ApprovalButtons approval={approval} state={state} onOpen={onOpen} />}
+    >
+      {approval.request?.summary ?? approval.action}
+      {state.confirming && <Notice tone="danger">{CRITICAL_WARNING}</Notice>}
+      {state.error && <Notice tone="danger">{state.error}</Notice>}
+    </Toast>
+  );
+}
+
+const TOASTS_SHOWN = 3;
+
+/**
+ * Pending requests as toasts on every screen. Requests of the Session that is open are
+ * left to its own cards; a dismissed toast stays in the inbox and the Session.
+ */
+export function ApprovalToasts({
+  ready,
+  exceptSessionId,
+  onOpen,
+}: {
+  ready: boolean;
+  exceptSessionId?: Id<"workSessions">;
+  onOpen: (id: Id<"workSessions">) => void;
+}) {
+  const approvals = useQuery(api.approvals.listPending, ready ? {} : "skip") as
+    | PendingApproval[]
+    | undefined;
+  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set());
+  const waiting = (approvals ?? [])
+    .filter(
+      (approval) => approval.workSessionId !== exceptSessionId && !dismissed.has(approval._id),
+    )
+    .sort((a, b) => a.requestedAt - b.requestedAt);
+  const shown = waiting.slice(0, TOASTS_SHOWN);
+  const more = waiting.length - shown.length;
+  return (
+    <ToastStack label="Approvals waiting">
+      {shown.map((approval) => (
+        <ApprovalToast
+          key={approval._id}
+          approval={approval}
+          onOpen={onOpen}
+          onDismiss={() => setDismissed((current) => new Set(current).add(approval._id))}
+        />
+      ))}
+      {more > 0 && (
+        <Toast title={`${more} more waiting`} tone="warning">
+          Older requests are listed on Home under "Needs your approval".
+        </Toast>
+      )}
+    </ToastStack>
   );
 }
 

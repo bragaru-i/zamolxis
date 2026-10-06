@@ -1,5 +1,6 @@
 import {
   type ButtonHTMLAttributes,
+  Children,
   type DragEvent,
   type FormEvent,
   type KeyboardEvent,
@@ -10,6 +11,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import { compactPath, crownPath, facePath } from "./product-mark";
 
 export { AgentRow, compactCount, costLabel, elapsed } from "./agent";
@@ -119,6 +121,108 @@ export function Notice({ tone = "info", children }: { tone?: Tone; children: Rea
     <p className={`z-notice z-tone-${tone}`} role={tone === "danger" ? "alert" : "status"}>
       {children}
     </p>
+  );
+}
+
+/**
+ * A fixed stack of notices that need attention wherever the owner is (an approval that
+ * arrives while they are in Settings or another chat). It is a manual popover, so it sits
+ * in the top layer above any sheet that was already open; nothing in it closes by itself.
+ */
+export function ToastStack({
+  label = "Notifications",
+  children,
+}: {
+  label?: string;
+  children: ReactNode;
+}) {
+  const items = Children.toArray(children).filter(Boolean);
+  if (!items.length) return null;
+  return <ToastRegion label={label}>{items}</ToastRegion>;
+}
+function ToastRegion({ label, children }: { label: string; children: ReactNode }) {
+  // A modal sheet makes everything outside it inert, so the stack is rendered inside the
+  // topmost open sheet while one is open (as its descendant it stays clickable) and in the
+  // page otherwise. Server rendering (and static tests) keep it inline.
+  const [host, setHost] = useState<HTMLElement | null | undefined>(undefined);
+  useEffect(() => {
+    const update = () => {
+      const open = document.querySelectorAll<HTMLDialogElement>("dialog[open]");
+      setHost(open.length ? (open[open.length - 1] as HTMLElement) : document.body);
+    };
+    update();
+    const observer = new MutationObserver(update);
+    observer.observe(document.body, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ["open"],
+    });
+    return () => observer.disconnect();
+  }, []);
+  const inSheet = typeof document !== "undefined" && !!host && host !== document.body;
+  const region = (
+    <ToastPopover key={inSheet ? "sheet" : "page"} label={label}>
+      {children}
+    </ToastPopover>
+  );
+  if (typeof document === "undefined") return region;
+  if (host === undefined) return null;
+  return createPortal(region, host ?? document.body);
+}
+function ToastPopover({ label, children }: { label: string; children: ReactNode }) {
+  const root = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const element = root.current as (HTMLElement & { showPopover?: () => void }) | null;
+    try {
+      // In the top layer above the sheet it belongs to; the fixed layout applies anyway.
+      element?.showPopover?.();
+    } catch {
+      /* Already shown or unsupported. */
+    }
+  }, []);
+  return (
+    <section className="z-toasts" ref={root} popover="manual" aria-label={label}>
+      {children}
+    </section>
+  );
+}
+/** One notice in a ToastStack: a title line, the message and optional actions. */
+export function Toast({
+  title,
+  tone = "info",
+  meta,
+  actions,
+  onDismiss,
+  children,
+}: {
+  title: string;
+  tone?: Tone;
+  /** Shown after the title, e.g. a risk badge. */
+  meta?: ReactNode;
+  actions?: ReactNode;
+  onDismiss?: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <section
+      className={`z-toast z-toast--${tone}`}
+      role={tone === "danger" ? "alert" : "status"}
+      aria-label={title}
+    >
+      <div className="z-toast__head">
+        <strong className="z-toast__title">{title}</strong>
+        {meta}
+        <span className="z-spacer" />
+        {onDismiss && (
+          <button type="button" className="z-toast__close" aria-label="Dismiss" onClick={onDismiss}>
+            <Icon name="close" />
+          </button>
+        )}
+      </div>
+      <div className="z-toast__body">{children}</div>
+      {actions && <div className="z-row z-toast__actions">{actions}</div>}
+    </section>
   );
 }
 

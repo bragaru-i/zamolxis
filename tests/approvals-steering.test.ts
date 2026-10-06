@@ -97,6 +97,7 @@ class LiveRuntime extends FakeRuntime {
 async function fixture(
   runtime: FakeRuntime,
   capabilities = ["start", "stop", "message", "approval"],
+  options: { approvalPolicy?: "auto_low" | "auto_low_medium" } = {},
 ) {
   const repo = repositoryFixture();
   cleanup.push(() => rmSync(repo.root, { recursive: true, force: true }));
@@ -184,6 +185,14 @@ async function fixture(
     baseRef: "main",
   });
   await driver.tick();
+  if (options.approvalPolicy)
+    await user.mutation(api.agentProfiles.upsert, {
+      name: "Builder",
+      role: "builder",
+      runtime: "fake",
+      enabled: true,
+      approvalPolicy: options.approvalPolicy,
+    });
   const runId = await user.mutation(api.runs.request, { taskId, workspaceId, runtime: "fake" });
   const commands = () => t.run((ctx) => ctx.db.query("commands").collect());
   const approvals = () => t.run((ctx) => ctx.db.query("approvals").collect());
@@ -316,6 +325,71 @@ describe("approvals", { timeout: 60_000 }, () => {
     await f.driver.idle();
     expect((await f.run()).status).toBe("completed");
     f.assertCanonicalUnchanged();
+  });
+
+  it("grants commands by the profile's policy and leaves the rest to the owner", async () => {
+    const f = await fixture(
+      new FakeRuntime([
+        {
+          type: "approval",
+          kind: "command",
+          summary: 'Run: node -e "console.log(${HOME})"',
+          risk: "low",
+          allowForSession: true,
+        },
+        { type: "approval", kind: "command", summary: "Run: pnpm build", risk: "medium" },
+        { type: "success", summary: "Built" },
+      ]),
+      undefined,
+      { approvalPolicy: "auto_low" },
+    );
+    expect((await f.run()).approvalPolicy).toBe("auto_low");
+    await f.driver.tick();
+    // The low-risk request never waited: approved by policy, for the rest of the run.
+    expect(await f.user.query(api.approvals.listPending, {})).toEqual([]);
+    const granted = only(await f.approvals());
+    expect(granted).toMatchObject({
+      risk: "low",
+      status: "approved",
+      resolvedByPolicy: "auto_low",
+    });
+    expect(granted.resolvedBy).toBeUndefined();
+    const queued = only(
+      (await f.commands()).filter((command) => command.type === "runtime.approval"),
+    );
+    expect(queued.payload).toMatchObject({ decision: "approve_session" });
+    await f.driver.control();
+    await f.driver.idle();
+    // The medium-risk request is outside the policy and waits for the owner.
+    expect((await f.run()).status).toBe("needs_approval");
+    const pending = only(await f.user.query(api.approvals.listPending, {}));
+    expect(pending).toMatchObject({ risk: "medium", status: "pending" });
+    await f.user.mutation(api.approvals.resolve, { approvalId: pending._id, decision: "approved" });
+    await f.driver.control();
+    await f.driver.idle();
+    expect((await f.run()).status).toBe("completed");
+    f.assertCanonicalUnchanged();
+  });
+
+  it("never grants high or critical requests, file changes or the Verifier's role by policy", async () => {
+    const f = await fixture(new FakeRuntime(approvalThenSuccess), undefined, {
+      approvalPolicy: "auto_low_medium",
+    });
+    await f.driver.tick();
+    // "Run: pnpm install" is high risk: it waits even under the widest policy.
+    expect(only(await f.user.query(api.approvals.listPending, {}))).toMatchObject({
+      risk: "high",
+      status: "pending",
+    });
+    await expect(
+      f.user.mutation(api.agentProfiles.upsert, {
+        name: "Verifier",
+        role: "verifier",
+        runtime: "fake",
+        enabled: true,
+        approvalPolicy: "auto_low",
+      }),
+    ).rejects.toThrow("INVALID_ARGUMENT");
   });
 
   it("refuses run-scoped approval for high-risk or unsupported requests", async () => {
