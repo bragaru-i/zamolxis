@@ -245,6 +245,57 @@ export default defineSchema({
     .index("by_owner", ["ownerId"])
     .index("by_owner_slug", ["ownerId", "slug"]),
 
+  // The durable, owner-level conversation with Zamolxis. It sits above Work
+  // Sessions: questions remain here, while explicit work may link to a Session.
+  orchestratorConversations: defineTable({
+    ownerId: v.id("users"),
+    title: v.string(),
+    lastActivityAt: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    archivedAt: v.optional(v.number()),
+  }).index("by_owner_activity", ["ownerId", "lastActivityAt"]),
+
+  orchestratorMessages: defineTable({
+    ownerId: v.id("users"),
+    conversationId: v.id("orchestratorConversations"),
+    idempotencyKey: v.string(),
+    text: v.string(),
+    productId: v.optional(v.id("products")),
+    repositoryId: v.optional(v.id("repositories")),
+    route: v.union(v.literal("answer"), v.literal("create"), v.literal("continue")),
+    reply: v.string(),
+    workSessionId: v.optional(v.id("workSessions")),
+    createdAt: v.number(),
+  })
+    .index("by_owner_key", ["ownerId", "idempotencyKey"])
+    .index("by_conversation_time", ["conversationId", "createdAt"]),
+
+  // Typed navigation emitted by an Orchestrator answer. The first version
+  // links Sessions; the target union keeps Tasks/Runs/approvals addressable as
+  // richer summaries are added without putting URLs in assistant prose.
+  orchestratorMessageLinks: defineTable({
+    ownerId: v.id("users"),
+    messageId: v.id("orchestratorMessages"),
+    workSessionId: v.optional(v.id("workSessions")),
+    targetType: v.union(
+      v.literal("session"),
+      v.literal("task"),
+      v.literal("run"),
+      v.literal("approval"),
+      v.literal("trust"),
+      v.literal("pull_request"),
+      v.literal("external_ticket"),
+    ),
+    targetId: v.string(),
+    label: v.string(),
+    status: v.optional(v.string()),
+    url: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_message", ["messageId"])
+    .index("by_session", ["workSessionId"]),
+
   repositories: defineTable({
     ownerId: v.id("users"),
     productId: v.optional(v.id("products")),
