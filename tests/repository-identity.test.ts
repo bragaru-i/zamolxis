@@ -12,6 +12,7 @@ const modules = {
   "./agentProfiles.ts": () => import("../convex/agentProfiles"),
   "./node.ts": () => import("../convex/node"),
   "./onboarding.ts": () => import("../convex/onboarding"),
+  "./products.ts": () => import("../convex/products"),
   "./profiles.ts": () => import("../convex/profiles"),
   "./repositories.ts": () => import("../convex/repositories"),
   "./sessions.ts": () => import("../convex/sessions"),
@@ -170,6 +171,97 @@ describe("repository identity across computers", () => {
         repositoryId: b.repositoryId,
       }),
     ).toBe("removed");
+  });
+
+  it("archives a duplicate Product on the owner's request, merging its repository first", async () => {
+    const f = await fixture();
+    const { user: other } = await seedHuman(f.t, "bob");
+    // Two Products for one remote, as the old rule left them, plus an unrelated Product.
+    const seeded = await f.t.run(async (ctx) => {
+      const product = (name: string, slug: string, createdAt: number) =>
+        ctx.db.insert("products", {
+          ownerId: f.userId,
+          name,
+          slug,
+          createdAt,
+          updatedAt: createdAt,
+        });
+      const repository = (
+        name: string,
+        remoteUrl: string,
+        productId: Id<"products">,
+        createdAt: number,
+      ) =>
+        ctx.db.insert("repositories", {
+          ownerId: f.userId,
+          productId,
+          name,
+          remoteUrl,
+          createdAt,
+          updatedAt: createdAt,
+        });
+      const productA = await product("zamolxis", "a", 1);
+      const productB = await product("zamolxis", "b", 2);
+      const productC = await product("docs", "c", 3);
+      const repoA = await repository("zamolxis", SSH, productA, 1);
+      const repoB = await repository("zamolxis", HTTPS, productB, 2);
+      const repoC = await repository("docs", "https://github.com/bragaru-i/docs.git", productC, 3);
+      await ctx.db.insert("workSessions", {
+        ownerId: f.userId,
+        productId: productB,
+        title: "Earlier work in the duplicate",
+        goal: "Earlier work",
+        status: "completed",
+        activeRunCount: 0,
+        completedTaskCount: 1,
+        totalTaskCount: 1,
+        needsInputCount: 0,
+        lastActivityAt: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      return { productA, productB, productC, repoA, repoB, repoC };
+    });
+    await f.locate(f.mac, f.macId, seeded.repoA, "/Users/me/zamolxis");
+    const linuxLocation = await f.locate(f.linux, f.linuxId, seeded.repoB, "/home/me/zamolxis");
+    const list = await f.user.query(api.products.list, {});
+    expect(list.map((row) => [row.name, row.canArchive, row.sessions])).toEqual([
+      ["docs", false, 0],
+      ["zamolxis", false, 0],
+      ["zamolxis", true, 1],
+    ]);
+    const duplicate = list.find((row) => row._id === seeded.productB);
+    expect(duplicate?.repositories[0]?.duplicateOf).toEqual({
+      productId: seeded.productA,
+      name: "zamolxis",
+    });
+    // A Product whose repository exists nowhere else cannot be archived.
+    await expect(
+      f.user.mutation(api.products.archive, { productId: seeded.productC }),
+    ).rejects.toThrow("PRODUCT_IN_USE");
+    await expect(
+      other.mutation(api.products.archive, { productId: seeded.productB }),
+    ).rejects.toThrow("FORBIDDEN");
+    await f.user.mutation(api.products.archive, { productId: seeded.productB });
+    const after = await f.t.run(async (ctx) => ({
+      b: await ctx.db.get("repositories", seeded.repoB),
+      productB: await ctx.db.get("products", seeded.productB),
+      location: await ctx.db.get("repositoryLocations", linuxLocation),
+    }));
+    expect(after.b).toMatchObject({ mergedIntoId: seeded.repoA, productId: seeded.productA });
+    expect(after.productB?.archivedAt).toBeTypeOf("number");
+    expect(after.location).toMatchObject({ repositoryId: seeded.repoA, status: "available" });
+    expect((await f.user.query(api.supervisor.products, {})).map((row) => row.name)).toEqual([
+      "zamolxis",
+      "docs",
+    ]);
+    // Archiving again is a no-op; the Session history of the duplicate stays readable.
+    await f.user.mutation(api.products.archive, { productId: seeded.productB });
+    expect(
+      await f.user.query(api.sessions.listMine, { paginationOpts: { numItems: 10, cursor: null } }),
+    ).toMatchObject({
+      page: [expect.objectContaining({ title: "Earlier work in the duplicate" })],
+    });
   });
 
   it("leaves a duplicate alone while work runs in it", async () => {

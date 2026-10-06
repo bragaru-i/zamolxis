@@ -52,7 +52,7 @@ async function archiveEmptyProduct(ctx: MutationCtx, productId: Id<"products">) 
  * over, the entry points at the survivor and its Product is archived when it stayed
  * empty. Nothing moves while work runs in the duplicate; the next registration retries.
  */
-async function mergeRepository(
+export async function mergeRepository(
   ctx: MutationCtx,
   duplicate: Doc<"repositories">,
   into: Doc<"repositories">,

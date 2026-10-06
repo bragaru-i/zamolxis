@@ -25,6 +25,7 @@ import type * as lib_repositories from "../lib/repositories.js";
 import type * as lib_settlement from "../lib/settlement.js";
 import type * as lib_value from "../lib/value.js";
 import type * as node from "../node.js";
+import type * as products from "../products.js";
 import type * as profiles from "../profiles.js";
 import type * as proof from "../proof.js";
 import type * as repositories from "../repositories.js";
@@ -63,6 +64,7 @@ const fullApi: ApiFromModules<{
   "lib/settlement": typeof lib_settlement;
   "lib/value": typeof lib_value;
   node: typeof node;
+  products: typeof products;
   profiles: typeof profiles;
   proof: typeof proof;
   repositories: typeof repositories;

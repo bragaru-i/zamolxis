@@ -976,6 +976,32 @@ function build(name: string) {
           return products;
         case "repositories:listByProduct":
           return repositories;
+        case "products:list":
+          return empty
+            ? []
+            : [
+                {
+                  _id: "p1",
+                  name: "Zamolxis",
+                  sessions: 8,
+                  repositories: [{ _id: "rp1", name: "zamolxis" }],
+                  canArchive: false,
+                  reason: "A repository of this product exists in no other product.",
+                },
+                {
+                  _id: "p2",
+                  name: "zamolxis",
+                  sessions: 0,
+                  repositories: [
+                    {
+                      _id: "rp2",
+                      name: "zamolxis",
+                      duplicateOf: { productId: "p1", name: "Zamolxis" },
+                    },
+                  ],
+                  canArchive: true,
+                },
+              ];
         case "repositories:computers":
           return [
             {
