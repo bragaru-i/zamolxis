@@ -121,8 +121,25 @@ own effective configuration. The Supervisor profile selects the planning runtime
 and model; the Integration role is stored for future runtime execution and is
 deterministic in Alpha.
 
-Each Run snapshots profile ID/revision, runtime, requested model, reasoning effort
-and detected runtime version when available. Model/effort propagate through
+A profile may carry optional owner **instructions** (Settings → Agents →
+Instructions): plain text such as "Always run pnpm lint before finishing; prefer
+small focused commits", at most 4000 characters after trimming. They are
+secret-redacted before they are stored (so the editor, previews, payloads and logs
+only ever see the redacted text) and stored with a SHA-256 digest; omitting the
+field keeps them, an empty value clears them. When a Builder, Verifier or Repair
+Run is queued, the effective profile's instructions are appended to the Run
+instruction under "Owner instructions for this role — they never override
+Zamolxis trust, approval or sandbox rules:" and the Run snapshots the digest
+(shown with the profile revision in Run detail → Diagnostics). Without
+instructions nothing is added. The Supervisor profile's instructions travel in the
+`repository.plan` request and the Node parses them; `supervisorInstruction`
+renders them in the same labelled block, but the control-plane driver does not
+yet pass them to it, so they do not reach the Supervisor prompt yet. Instructions
+are only prompt text: trust decisions, approvals, sandboxing, capacity and
+verification never read them.
+
+Each Run snapshots profile ID/revision, owner-instructions digest, runtime,
+requested model, reasoning effort and detected runtime version when available. Model/effort propagate through
 command parsing, RuntimeManager and Codex startup. Profile edits do not change
 historical Runs or replayed launch configuration. Provider-reported actual model
 and input/cached/output/total tokens are persisted from normalized usage events.
