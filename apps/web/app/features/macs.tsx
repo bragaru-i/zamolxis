@@ -72,7 +72,13 @@ export function MacItem({
   const [problem, setProblem] = useState("");
   const nameId = useId();
   const state = deviceState(device, now);
-  const codex = device.runtimes.find((runtime) => runtime.runtime === "codex");
+  const runtime = device.runtimes.find((candidate) => candidate.status === "available");
+  const runtimeName =
+    runtime?.runtime === "codex"
+      ? "Codex"
+      : runtime?.runtime === "claude"
+        ? "Claude Code"
+        : runtime?.runtime;
   const choose = (next: MacMode) => {
     setProblem("");
     onMessage("");
@@ -88,8 +94,8 @@ export function MacItem({
           label={state === "online" ? "Online" : state === "revoked" ? "Revoked" : "Offline"}
         />
         <StatusBadge
-          status={codex?.status === "available" ? "completed" : "waiting"}
-          label={codex?.status === "available" ? "Codex ready" : "Codex unavailable"}
+          status={runtime ? "completed" : "waiting"}
+          label={runtimeName ? `${runtimeName} ready` : "No agent runtime"}
         />
       </div>
       {state !== "revoked" && mode === "rename" && (

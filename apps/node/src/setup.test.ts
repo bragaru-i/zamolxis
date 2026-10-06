@@ -21,12 +21,15 @@ import {
   type ControlPlane,
   chooseRepositories,
   classifyCredentialError,
+  configDirectory,
   discoverRepositories,
   inspectServicePlist,
+  inspectServiceUnit,
   type MenuAction,
   menuChoices,
   migratePlaintextCredential,
   type NodeConfig,
+  newProcessHeartbeat,
   parseAppAddress,
   readConfig,
   reloadService,
@@ -36,8 +39,27 @@ import {
   type SetupIo,
   saveConfig,
   servicePlist,
+  serviceUnit,
+  systemdService,
   validateConfig,
 } from "./setup";
+
+it("uses native per-user configuration directories", () => {
+  expect(configDirectory("darwin", "/home/me", "/xdg")).toBe(
+    "/home/me/Library/Application Support/Zamolxis",
+  );
+  expect(configDirectory("linux", "/home/me", "/xdg")).toBe("/xdg/zamolxis");
+  expect(configDirectory("linux", "/home/me", "")).toBe("/home/me/.config/zamolxis");
+});
+
+it("accepts a fresh Node heartbeat even before an agent runtime is installed", () => {
+  expect(
+    newProcessHeartbeat(
+      { online: true, runtimeAvailable: false, instanceId: "new", lastHeartbeatAt: 20 },
+      { online: true, runtimeAvailable: true, instanceId: "old", lastHeartbeatAt: 10 },
+    ),
+  ).toBe(true);
+});
 
 it("persists versioned private config atomically and rejects overlapping grants, insecure permissions and symlinks", () => {
   const root = mkdtempSync(join(tmpdir(), "zamolxis-setup-"));
@@ -153,6 +175,71 @@ describe("service definition", () => {
         runtime.daemon,
       ),
     ).toEqual({ status: "other-checkout", daemon: "/old & co/apps/node/src/daemon.ts" });
+  });
+});
+
+describe("systemd user service definition", () => {
+  it("quotes paths and detects a stale checkout", () => {
+    const runtime = {
+      node: "/opt/node bin/node",
+      tsx: "/repo/node_modules/tsx/dist/cli.mjs",
+      daemon: "/repo/apps/node/src/daemon.ts",
+      PATH: "/home/me/.local/bin:/usr/bin",
+    };
+    const expected = serviceUnit("/config with space/config.json", runtime);
+    expect(expected).toContain('ExecStart="/opt/node bin/node"');
+    expect(expected).toContain('"/config with space/config.json"');
+    expect(expected).toContain("WantedBy=default.target");
+    expect(inspectServiceUnit(undefined, expected, runtime.daemon)).toEqual({ status: "missing" });
+    expect(inspectServiceUnit(expected, expected, runtime.daemon)).toEqual({ status: "current" });
+    expect(
+      inspectServiceUnit(
+        serviceUnit("/config.json", { ...runtime, daemon: "/old/apps/node/src/daemon.ts" }),
+        expected,
+        runtime.daemon,
+      ),
+    ).toEqual({ status: "other-checkout", daemon: "/old/apps/node/src/daemon.ts" });
+  });
+
+  it("installs, starts, inspects and restarts through the user service manager", () => {
+    const root = mkdtempSync(join(tmpdir(), "zamolxis-systemd-"));
+    const unitPath = join(root, "systemd", "user", "app.zamolxis.node.service");
+    const calls: string[][] = [];
+    let active = false;
+    const run = (args: string[]) => {
+      calls.push(args);
+      if (args[0] === "is-active") {
+        if (!active) throw new Error("inactive");
+        return "active";
+      }
+      if (args[0] === "enable") active = true;
+      if (args[0] === "show") return "4321";
+      return "";
+    };
+    try {
+      const definition = serviceUnit("/config.json", {
+        node: "/usr/bin/node",
+        tsx: "/repo/node_modules/tsx/dist/cli.mjs",
+        daemon: "/repo/apps/node/src/daemon.ts",
+        PATH: "/usr/bin:/bin",
+      });
+      const service = systemdService("/config.json", { unitPath, run, definition });
+      expect(service.inspect()).toEqual({ plist: { status: "missing" }, loaded: false });
+      service.install();
+      expect(lstatSync(unitPath).mode & 0o777).toBe(0o600);
+      expect(service.inspect()).toEqual({ plist: { status: "current" }, loaded: true });
+      expect(service.pid()).toBe(4321);
+      service.restart();
+      expect(calls).toEqual(
+        expect.arrayContaining([
+          ["daemon-reload"],
+          ["enable", "--now", "app.zamolxis.node"],
+          ["restart", "app.zamolxis.node"],
+        ]),
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
@@ -589,7 +676,7 @@ describe("rerunning setup", () => {
     harness.env.service.install = () => {
       harness.service.pids = [undefined];
     };
-    await expect(runSetup({ repair: true }, harness.env)).rejects.toThrow("node-error.log");
+    await expect(runSetup({ repair: true }, harness.env)).rejects.toThrow("setup --repair");
   });
 
   it("explains a revoked credential and never pairs without a person in --repair", async () => {

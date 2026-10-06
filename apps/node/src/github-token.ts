@@ -134,9 +134,9 @@ export async function checkEntry(
 export function tokenSteps(entry: GitHubEntry): string[] {
   const slug = githubSlug(entry.github);
   return [
-    `Connect ${slug} to GitHub for publishing. Zamolxis uses this token only on this Mac,`,
+    `Connect ${slug} to GitHub for publishing. Zamolxis uses this token only on this workstation,`,
     "only to push trusted work to a zamolxis/… branch and open its pull request. It stays in",
-    "this Mac's login Keychain; it is never sent to the Zamolxis app and agents never get it.",
+    "this workstation's local credential store; it is never sent to Zamolxis or exposed to agents.",
     "",
     "1. GitHub opens a prefilled page for a fine-grained personal access token",
     `   (sign in as the account that should publish to ${slug}).`,

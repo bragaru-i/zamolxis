@@ -43,11 +43,11 @@ const progress = (overrides: Partial<OnboardingProgress> = {}): OnboardingProgre
       },
     },
     {
-      id: "codex",
-      title: "Codex ready",
+      id: "runtime",
+      title: "Agent runtime ready",
       state: "failed",
       detail:
-        "Codex isn't available or signed in on Studio. Run `codex login` on your Mac, then `pnpm zamolxis setup --repair`.",
+        "No agent runtime is available on Studio. Install and sign in to Codex or Claude Code, then run `pnpm zamolxis setup --repair`.",
     },
     { id: "session", title: "Start your first session", state: "upcoming", detail: "" },
   ],
@@ -66,7 +66,7 @@ describe("onboarding checklist", () => {
     expect(html).toContain("Get started");
     expect(html).toContain("4 of 7 done");
     for (const label of ["Done", "In progress", "Failed", "Not yet"]) expect(html).toContain(label);
-    expect(html).toContain("<code>codex login</code>");
+    expect(html).toContain("Codex or Claude Code");
     expect(html).toContain("<code>pnpm zamolxis setup --repair</code>");
     expect(html).toContain("Hide checklist");
     expect(html).not.toContain("`");

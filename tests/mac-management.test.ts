@@ -126,9 +126,18 @@ describe("node health", () => {
     await node.mutation(api.node.heartbeat, {
       workstationId,
       instanceId: "instance-2",
-      runtimeCapabilities: [{ runtime: "codex", capabilities: ["start"] }],
+      runtimeCapabilities: [{ runtime: "claude", capabilities: ["start"] }],
     });
-    expect((await node.query(api.node.health, { workstationId })).instanceId).toBe("instance-2");
+    expect(await node.query(api.node.health, { workstationId })).toMatchObject({
+      instanceId: "instance-2",
+      runtimeAvailable: true,
+    });
+    await node.mutation(api.node.heartbeat, {
+      workstationId,
+      instanceId: "instance-2",
+      runtimeCapabilities: [],
+    });
+    expect((await node.query(api.node.health, { workstationId })).runtimeAvailable).toBe(false);
   });
 });
 

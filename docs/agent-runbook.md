@@ -114,6 +114,12 @@ Agents must never run `github-token` with a real token, read the Keychain item o
 `gh auth token`; tests use `MemoryRepositoryTokenStore`, an injected gh-account reader
 and mocked fetch.
 
+On Linux, the equivalent device and repository credentials are atomic 0600 files in
+`${XDG_CONFIG_HOME:-~/.config}/zamolxis`; the directory is 0700 and symlinks or
+permissive files are refused. The Node runs as the `app.zamolxis.node` systemd user
+service; inspect it with `systemctl --user status app.zamolxis.node` and
+`journalctl --user -u app.zamolxis.node.service`.
+
 ## Inspecting production safely
 
 `node scripts/prod-inspect.mjs data <table> [limit] [fields]` prints recent rows

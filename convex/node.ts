@@ -782,15 +782,16 @@ export const health = query({
   }),
   handler: async (ctx, args) => {
     const device = await requireNode(ctx, args.workstationId);
-    const runtime = await ctx.db
+    const runtimes = await ctx.db
       .query("runtimeInstallations")
-      .withIndex("by_workstation_runtime", (q) =>
-        q.eq("workstationId", device._id).eq("runtime", "codex"),
-      )
-      .unique();
+      .withIndex("by_workstation", (q) => q.eq("workstationId", device._id))
+      .take(33);
+    if (runtimes.length > 32) fail("LIMIT_EXCEEDED");
     return {
       online: device.status === "online" && (device.lastHeartbeatAt ?? 0) > Date.now() - 45_000,
-      runtimeAvailable: runtime?.status === "available",
+      runtimeAvailable: runtimes.some(
+        (runtime) => runtime.status === "available" && runtime.capabilities.includes("start"),
+      ),
       lastHeartbeatAt: device.lastHeartbeatAt ?? null,
       instanceId: device.nodeInstanceId ?? null,
     };

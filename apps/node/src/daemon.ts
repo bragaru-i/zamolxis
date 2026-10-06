@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { lstatSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
@@ -6,6 +6,7 @@ import type { WorkstationId } from "@zamolxis/contracts";
 import { inspectRepository, remoteIdentity } from "@zamolxis/git";
 import {
   ControlPlaneDriver,
+  FileRepositoryTokenStore,
   GitHubAccessMonitor,
   ghCliAccountTokens,
   githubRepositoryFromRemote,
@@ -31,16 +32,26 @@ import { RuntimeRegistry } from "@zamolxis/runtime-core";
 import { ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
 import { claudeSignedIn, findClaude } from "./claude";
+import { codexSignedIn, findCodex } from "./codex";
 import { ConvexControlPlaneTransport } from "./convex-control-plane";
-import { KeychainCredentialStore, loadDeviceCredential } from "./credential-store";
-import { configPath, pause, readConfig } from "./setup";
+import {
+  FileCredentialStore,
+  KeychainCredentialStore,
+  loadDeviceCredential,
+} from "./credential-store";
+import { configDirectory, configPath, pause, readConfig } from "./setup";
 
 const pathIndex = process.argv.indexOf("--config");
 const config = readConfig(pathIndex >= 0 ? process.argv[pathIndex + 1] : configPath());
 if (!config.workstationId) throw new Error("SETUP_REQUIRED");
-// launchd runs this agent in the user's GUI session, so the login Keychain is reachable
-// while unlocked; a legacy plaintext value is used until setup migrates it.
-config.credential = loadDeviceCredential(config, new KeychainCredentialStore());
+const localDirectory = configDirectory();
+const mac = process.platform === "darwin";
+config.credential = loadDeviceCredential(
+  config,
+  mac
+    ? new KeychainCredentialStore()
+    : new FileCredentialStore(join(localDirectory, "credentials.json")),
+);
 const root = realpathSync.native(config.managedRoot);
 const canonical = config.repositories.map((repository) => realpathSync.native(repository.path));
 const grant = (path: string) => {
@@ -54,9 +65,12 @@ const grant = (path: string) => {
 // there, which lets a restarted Node resume its runs (thread/resume). Only authentication
 // is reused from the user's Codex home; user plugins/MCP/config are not execution grants.
 const profile = join(root, "codex-home");
-prepareCodexHome(profile, {
-  authSource: join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "auth.json"),
-});
+const detectedCodex = findCodex();
+const codex = detectedCodex && codexSignedIn(detectedCodex.executable) ? detectedCodex : undefined;
+if (codex)
+  prepareCodexHome(profile, {
+    authSource: join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "auth.json"),
+  });
 try {
   const children = new Set<ReturnType<typeof spawn>>();
   const statePath = join(root, "node-state.sqlite");
@@ -68,30 +82,34 @@ try {
   const identity = store.getOrCreateIdentity();
   const client = new ConvexHttpClient(config.convexUrl);
   const runtimes = new RuntimeRegistry();
-  runtimes.register(
-    new CodexRuntime({
-      connect: (cwd) =>
-        new AppServerClient({
-          cwd,
-          launch: (executable, assignedCwd) => {
-            const child = spawn(executable, ["app-server", "--listen", "stdio://"], {
-              cwd: assignedCwd,
-              // No GitHub tokens: only the Node publishes, with each repository's own.
-              env: codexEnv({ CODEX_HOME: profile }),
-              shell: false,
-              stdio: ["pipe", "pipe", "ignore"],
-            });
-            children.add(child);
-            child.once("exit", () => children.delete(child));
-            return child;
-          },
-        }),
-    }),
-  );
+  if (codex)
+    runtimes.register(
+      new CodexRuntime({
+        connect: (cwd) =>
+          new AppServerClient({
+            cwd,
+            executable: codex.executable,
+            launch: (executable, assignedCwd) => {
+              const child = spawn(executable, ["app-server", "--listen", "stdio://"], {
+                cwd: assignedCwd,
+                // No GitHub tokens: only the Node publishes, with each repository's own.
+                env: codexEnv({ CODEX_HOME: profile }),
+                shell: false,
+                stdio: ["pipe", "pipe", "ignore"],
+              });
+              children.add(child);
+              child.once("exit", () => children.delete(child));
+              return child;
+            },
+          }),
+      }),
+    );
   // Claude Code is registered only when its CLI runs here. It uses the owner's own Claude
   // Code login (subscription); API key variables are removed from its environment. It is
   // advertised while that login is signed in.
-  const claude = findClaude();
+  const detectedClaude = findClaude();
+  const claude =
+    detectedClaude && claudeSignedIn(detectedClaude.executable) ? detectedClaude : undefined;
   if (claude)
     runtimes.register(
       new ClaudeRuntime({
@@ -126,7 +144,9 @@ try {
   // (never a credential) is reported at most every 30 minutes per repository and soon
   // after a credential changes.
   const githubCredentials = new PublishingCredentials({
-    tokens: new KeychainRepositoryTokenStore(),
+    tokens: mac
+      ? new KeychainRepositoryTokenStore()
+      : new FileRepositoryTokenStore(join(localDirectory, "github-tokens.json")),
     account: ({ repositoryId, github: target }) => {
       const identity = config.repositories.find(
         (candidate) => candidate.repositoryId === repositoryId,
@@ -169,16 +189,17 @@ try {
         workstationId: config.workstationId,
         instanceId: identity.instanceId,
         runtimeCapabilities: await catalog.advertise([
-          {
-            runtime: "codex",
-            version: execFileSync("codex", ["--version"], {
-              encoding: "utf8",
-              timeout: 5000,
-            }).trim(),
-            // "message": steering active runs; "approval": held operations wait for a human.
-            capabilities: ["start", "stop", "message", "approval"],
-          },
-          ...(claude && claudeSignedIn(claude.executable)
+          ...(codex
+            ? [
+                {
+                  runtime: "codex",
+                  version: codex.version,
+                  // "message": steering active runs; "approval": held operations wait for a human.
+                  capabilities: ["start", "stop", "message", "approval"],
+                },
+              ]
+            : []),
+          ...(claude
             ? [
                 {
                   runtime: "claude",
@@ -242,7 +263,7 @@ try {
       workspaces,
       runtimes,
       config.workstationId as WorkstationId,
-      (runtime) => runtime === "codex" || (!!claude && runtime === "claude"),
+      (runtime) => runtimes.ids().includes(runtime),
     );
     const driver = new ControlPlaneDriver(
       store,
@@ -286,5 +307,5 @@ try {
   }
 } finally {
   // Rollouts stay for the next start; the copied login does not.
-  releaseCodexHome(profile);
+  if (codex) releaseCodexHome(profile);
 }

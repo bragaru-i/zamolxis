@@ -104,7 +104,7 @@ export const registerRepositories = mutation({
 // locations, sessions). Nothing is assumed or simulated.
 export const ONLINE_WINDOW_MS = 45_000;
 export type OnboardingState = "done" | "in_progress" | "needs_you" | "failed" | "upcoming";
-type StepId = "signin" | "access" | "pair" | "repositories" | "service" | "codex" | "session";
+type StepId = "signin" | "access" | "pair" | "repositories" | "service" | "runtime" | "session";
 export interface OnboardingStep {
   id: StepId;
   title: string;
@@ -123,7 +123,7 @@ const TITLES: Record<StepId, string> = {
   pair: "Pair your Mac",
   repositories: "Choose repositories",
   service: "Start Zamolxis on your Mac",
-  codex: "Codex ready",
+  runtime: "Agent runtime ready",
   session: "Start your first session",
 };
 const REPAIR = "Open Terminal on your Mac and run `pnpm zamolxis setup --repair`.";
@@ -206,7 +206,7 @@ export const progress = query({
         ),
         step("repositories", "upcoming"),
         step("service", "upcoming"),
-        step("codex", "upcoming"),
+        step("runtime", "upcoming"),
       );
     } else {
       const name = mac.name;
@@ -275,23 +275,25 @@ export const progress = query({
                 })
               : step("service", offline.state, offline.detail),
       );
-      const codex = heard
+      const runtimes = heard
         ? await ctx.db
             .query("runtimeInstallations")
-            .withIndex("by_workstation_runtime", (q) =>
-              q.eq("workstationId", mac._id).eq("runtime", "codex"),
-            )
-            .unique()
-        : null;
+            .withIndex("by_workstation", (q) => q.eq("workstationId", mac._id))
+            .take(33)
+        : [];
+      if (runtimes.length > 32) fail("LIMIT_EXCEEDED");
+      const runtime = runtimes.find(
+        (item) => item.status === "available" && item.capabilities.includes("start"),
+      );
       steps.push(
         !heard
-          ? step("codex", "upcoming")
-          : codex?.status === "available"
-            ? step("codex", "done", `${codex.version ?? "Codex"} is ready on ${name}.`)
+          ? step("runtime", "upcoming")
+          : runtime
+            ? step("runtime", "done", `${runtime.version ?? runtime.runtime} is ready on ${name}.`)
             : step(
-                "codex",
+                "runtime",
                 "failed",
-                `Codex isn't available or signed in on ${name}. Run \`codex login\` on your Mac, then \`pnpm zamolxis setup --repair\`.`,
+                `No agent runtime is available on ${name}. Install and sign in to Codex or Claude Code, then run \`pnpm zamolxis setup --repair\`.`,
               ),
       );
     }

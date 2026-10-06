@@ -42,11 +42,19 @@ beforeEach(() => {
 describe("Settings → Macs", () => {
   it("offers rename, repositories and removal for an active Mac", () => {
     const html = render();
+    expect(html).toContain("Codex ready");
     expect(html).toContain("Rename");
     expect(html).toContain("Repositories");
     expect(html).toContain("Remove this Mac…");
     // Nothing is queried until the repositories are opened.
     expect(state.calls).toEqual([]);
+  });
+
+  it("reports any available agent runtime", () => {
+    expect(
+      render({ device: device({ runtimes: [{ runtime: "claude", status: "available" }] }) }),
+    ).toContain("Claude Code ready");
+    expect(render({ device: device({ runtimes: [] }) })).toContain("No agent runtime");
   });
 
   it("offers nothing for a revoked Mac", () => {

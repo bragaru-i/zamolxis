@@ -1,5 +1,9 @@
+import { chmodSync, lstatSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  FileRepositoryTokenStore,
   GITHUB_TOKEN_SERVICE,
   isGitHubToken,
   KeychainRepositoryTokenStore,
@@ -29,6 +33,22 @@ describe("repository token store", () => {
     expect(() => store.write(REPO, "not-a-token")).toThrow("INVALID_GITHUB_TOKEN");
     store.remove(REPO);
     expect(store.read(REPO)).toBeUndefined();
+  });
+
+  it("stores Linux tokens in a private local file", () => {
+    const root = mkdtempSync(join(tmpdir(), "zamolxis-tokens-"));
+    const path = join(root, "private", "github-tokens.json");
+    try {
+      const store = new FileRepositoryTokenStore(path);
+      expect(store.read(REPO)).toBeUndefined();
+      store.write(REPO, TOKEN);
+      expect(store.read(REPO)).toBe(TOKEN);
+      expect(lstatSync(path).mode & 0o777).toBe(0o600);
+      chmodSync(path, 0o644);
+      expect(() => store.read(REPO)).toThrow("MUST_BE_PRIVATE");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("writes through security's stdin, never its arguments, and reads with -w", () => {

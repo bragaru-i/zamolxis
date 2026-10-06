@@ -1,5 +1,9 @@
+import { chmodSync, lstatSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  FileCredentialStore,
   KeychainCredentialStore,
   loadDeviceCredential,
   MemoryCredentialStore,
@@ -69,6 +73,40 @@ describe("KeychainCredentialStore", () => {
     expect(() => new KeychainCredentialStore(run, "linux").read("ws123")).toThrow(
       "KEYCHAIN_REQUIRES_MACOS",
     );
+  });
+});
+
+describe("FileCredentialStore", () => {
+  it("persists private credentials without the macOS Keychain", () => {
+    const root = mkdtempSync(join(tmpdir(), "zamolxis-credentials-"));
+    const path = join(root, "private", "credentials.json");
+    try {
+      const store = new FileCredentialStore(path);
+      expect(store.read("ws123")).toBeUndefined();
+      store.write("ws123", secret);
+      expect(store.read("ws123")).toBe(secret);
+      expect(lstatSync(path).mode & 0o777).toBe(0o600);
+      store.remove("ws123");
+      expect(store.read("ws123")).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses public or symlinked stores", () => {
+    const root = mkdtempSync(join(tmpdir(), "zamolxis-credentials-"));
+    const path = join(root, "credentials.json");
+    try {
+      const store = new FileCredentialStore(path);
+      store.write("ws123", secret);
+      chmodSync(path, 0o644);
+      expect(() => store.read("ws123")).toThrow("MUST_BE_PRIVATE");
+      rmSync(path);
+      symlinkSync(join(root, "missing"), path);
+      expect(() => store.write("ws123", secret)).toThrow();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
