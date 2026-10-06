@@ -75,6 +75,29 @@ refused while work runs there) and **Remove this Mac…** (revoke). A location r
 in Settings stays removed across Node restarts; re-add it with setup's
 "Add or remove repositories" on that Mac.
 
+## Onboarding progress in the app
+
+Until the first session exists, the sessions screen shows a **Get started** checklist
+(phone-first; **Hide checklist** hides it in this browser). Each step is derived by
+the owner-scoped query `onboarding:progress` from stored state only, never assumed:
+
+| Step | Done when | Otherwise |
+| --- | --- | --- |
+| Sign in, Access approved | the query runs (it requires an allowed sign-in) | the app shows the access screen instead |
+| Pair your Mac | a non-revoked Mac has an activated device credential or has sent a heartbeat | no Mac: needs you ("run `pnpm zamolxis setup`, scan the QR code"); approved but not activated: in progress |
+| Choose repositories | the Mac has at least one available repository location | locations all removed, or none registered while the Mac runs: needs you; locations missing/invalid: failed; registered but not yet checked by the Node: in progress |
+| Start Zamolxis on your Mac | heartbeat within the last 45 s | no heartbeat yet: in progress; heartbeat older than 45 s: failed ("offline — run `pnpm zamolxis setup --repair`") |
+| Codex ready | the Mac's last heartbeat reported Codex available (with its version) | failed ("run `codex login`, then `pnpm zamolxis setup --repair`") |
+| Start your first session | a session exists | needs you once every step above is done |
+
+The Mac considered is the furthest along (online first, then most recent heartbeat,
+then newest). A query result does not age by itself, so the "online" step carries the
+time after which the app shows it as offline without a new heartbeat. The backend
+cannot see launchd itself: the service counts as running once a heartbeat arrives.
+The Node does not start without a Codex login, so a missing login usually shows as no
+heartbeat rather than as a Codex failure. Pending QR requests are not linked to an
+owner until approved, so "scan the QR code" is not tracked before approval.
+
 `pnpm zamolxis setup --repair` runs Check and repair without prompts (for scripts);
 when the Mac must be paired again it stops and says so. `pnpm zamolxis doctor`
 checks local prerequisites without installing a service.

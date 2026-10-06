@@ -606,3 +606,14 @@ Manual verification is available when the user wants it, but routine success doe
 10. Human can inspect and re-run proof after or before integration.
 11. Private chain-of-thought is never required.
 12. Failed independent verification normally enters autonomous repair before human escalation.
+
+## Implemented trace (Alpha)
+
+Nodes record run steps (discovery, workspace, runtime, candidate commit, each
+verification check) through the durable outbox (`traces:append`). The backend adds
+steps to the candidate's trace with ids prefixed `backend:` that Nodes cannot write:
+`trust` (`backend:trust:<decisionId>`, evidence counts per modality, required
+modalities, reasons), `integration` (`backend:integration:<decisionId>`, prepared SHA
+and branch) and publish (`backend:publish:<commandId>`, PR or compare URL, or the
+failure code; one step per attempt). Traces hold at most 500 steps; extra steps are
+dropped without failing the decision being traced.

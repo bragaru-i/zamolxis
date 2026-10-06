@@ -9,6 +9,7 @@ import { decideVerification, refreshSession } from "./lib/lifecycle";
 import { refreshDependents } from "./lib/settlement";
 import { settleStoppedText } from "./supervisor";
 import { settleRun } from "./lib/settlement";
+import { recordIntegrationStep } from "./traces";
 import { valueKey } from "./lib/value";
 
 const deviceArgs = { workstationId: v.id("workstations") };
@@ -752,6 +753,7 @@ export const completeIntegration = mutation({
       completedAt: Date.now(),
       updatedAt: Date.now(),
     });
+    await recordIntegrationStep(ctx, decision, args.branchName);
     await refreshDependents(ctx, task._id);
     await refreshSession(ctx, task.workSessionId);
     return null;

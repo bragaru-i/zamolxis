@@ -43,7 +43,10 @@ planned capability as shipped.
   commit, each verification check with exit code, duration and a redacted output
   tail), delivered through the durable outbox to `traces:append` (Node-authenticated,
   bounded, idempotent; at most 500 steps per trace) and shown as "Trace" in Run
-  detail. Not recorded: Supervisor, trust and integration steps (backend-side).
+  detail. The backend adds `trust` (eligible or not, evidence counts, reasons),
+  `integration` (prepared at SHA, branch) and publish (PR, compare link or failure)
+  steps to the candidate's trace (`backend:` step ids, which Nodes cannot write).
+  Not recorded: Supervisor steps.
 - **Steering:** "Message agent" on an active run steers a streaming Codex turn
   (`turn/steer`) or continues a waiting run to completion with the normal
   completion handling.
@@ -107,11 +110,13 @@ planned capability as shipped.
    test covers every user-facing query/mutation (convex-test identities). Missing:
    validation with two real Google accounts on the deployed app and iPhone home-screen
    / offline checks.
-6. **Onboarding (#45), mostly shipped.** Rename a Mac (Settings or setup), remove a
+6. **Onboarding (#45), shipped.** Rename a Mac (Settings or setup), remove a
    repository from a Mac (refused while busy; sticky across Node restarts; re-granted
    from setup's repository list), "Pair again" revokes the previous entry when its
-   credential is still valid, and setup waits for a heartbeat from the new Node
-   instance. Missing: web onboarding progress.
+   credential is still valid, setup waits for a heartbeat from the new Node instance,
+   and the sessions screen shows a "Get started" checklist derived from real backend
+   state (`onboarding.progress`) until the first session. Limits: a missing Codex login
+   usually shows as "no heartbeat"; QR scanning before approval is not tracked.
 7. **Integration, shipped for single tasks.** On the owner's explicit "Open pull
    request", the Node pushes the trusted integration commit as
    `zamolxis/<task>-<sha7>` (no force, hooks respected, never the default branch) and
