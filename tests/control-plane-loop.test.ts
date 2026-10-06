@@ -1870,6 +1870,55 @@ it.skipIf(!claudeAcceptance)(
 );
 
 it.skipIf(!claudeAcceptance)(
+  "real Claude Orchestrator answers a top-level question without a repository",
+  async () => {
+    const f = await fixture("claude");
+    await f.user.mutation(api.agentProfiles.upsert, {
+      name: "Claude orchestrator",
+      role: "orchestrator",
+      runtime: "claude",
+      model: CLAUDE_TEST_MODEL,
+      enabled: true,
+    });
+    const { runtime } = realClaude();
+    const starts: StartRunInput[] = [];
+    const original = runtime.start.bind(runtime);
+    runtime.start = (input) => {
+      starts.push(input);
+      return original(input);
+    };
+    const n = await f.boot(runtime, ["start", "stop", "message", "approval"]);
+    const driver = n.driver();
+    await f.user.mutation(api.orchestrator.submit, {
+      text: "Question only: how many Work Sessions are listed in the current state? Reply in one short sentence that contains the number as digits.",
+      idempotencyKey: "claude-orchestrator",
+    });
+    for (let tick = 0; tick < 5; tick++) {
+      await driver.tick();
+      await driver.idle();
+      const [message] = await f.user.query(api.orchestrator.messages, {});
+      if (message?.status === "answered") break;
+    }
+    const [message] = await f.user.query(api.orchestrator.messages, {});
+    console.log(`Claude Orchestrator: ${message?.route} · ${message?.reply}`);
+    expect(message).toMatchObject({ status: "answered", answeredBy: "model", runtime: "claude" });
+    expect(["answer", "ask"]).toContain(message?.route);
+    expect(String(message?.reply)).toMatch(/\d/);
+    expect(message?.totalTokens).toBeGreaterThan(0);
+    // Read-only, in an empty scratch directory that is removed afterwards.
+    expect(starts).toHaveLength(1);
+    expect(starts[0]?.role).toBe("supervisor");
+    expect(starts[0]?.workspace.cwd).not.toContain(f.path);
+    expect(existsSync(starts[0]?.workspace.cwd ?? "")).toBe(false);
+    expect(await f.t.run((ctx) => ctx.db.query("textCommands").collect())).toEqual([]);
+    expect(n.store.listInterruptedCommands()).toEqual([]);
+    expect(git(f.path, ["rev-parse", "HEAD"])).toBe(f.originalHead);
+    expect(git(f.path, ["status", "--porcelain"])).toBe(f.originalStatus);
+  },
+  180_000,
+);
+
+it.skipIf(!claudeAcceptance)(
   "makes a Builder change with real Claude Code in its own worktree and reports usage",
   async () => {
     const f = await fixture("claude");
