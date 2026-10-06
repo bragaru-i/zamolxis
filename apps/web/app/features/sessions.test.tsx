@@ -76,6 +76,16 @@ vi.mock("convex/react", () => ({
         },
       ];
     if (name === "supervisor:products") return [];
+    if (name === "orchestrator:conversations")
+      return [
+        { _id: "c1", title: "What is going on?", lastActivityAt: Date.now(), createdAt: 1 },
+        {
+          _id: "c2",
+          title: "How does the verifier work?",
+          lastActivityAt: Date.now() - 3 * 24 * 60 * 60 * 1000,
+          createdAt: 1,
+        },
+      ];
     return undefined;
   },
 }));
@@ -88,11 +98,18 @@ it("renders the global answer and its linked session separately from the session
       ready: true,
       indicator: null,
       notices: null,
+      chatId: "c1",
+      onOpenChat: vi.fn(),
       onOpen: vi.fn(),
       onSettings: vi.fn(),
     }),
   );
   expect(html).toContain("Orchestrator");
+  expect(html).toContain("+ New chat");
+  expect(html).toContain(">Today<");
+  expect(html).toContain(">Previous 7 days<");
+  expect(html).toContain("How does the verifier work?");
+  expect(html).toMatch(/z-home-session z-home-session--active[^>]*aria-current="page"/);
   expect(html).toContain("What is going on?");
   expect(html).toContain(">Answer<");
   expect(html).toMatch(/Alpha readiness<\/span><span class="z-chip__status">Needs you</);
@@ -111,4 +128,24 @@ it("renders the global answer and its linked session separately from the session
   expect(html).toContain("No Work Sessions yet");
   expect(html).toContain("Sending a message does not start work");
   expect(html).toContain("Ask Zamolxis");
+});
+
+it("opens as a new, empty chat with earlier chats in the sidebar", () => {
+  const html = renderToStaticMarkup(
+    createElement(SessionList, {
+      ready: true,
+      indicator: null,
+      notices: null,
+      chatId: "",
+      onOpenChat: vi.fn(),
+      onOpen: vi.fn(),
+      onSettings: vi.fn(),
+    }),
+  );
+  expect(html).toContain(">New chat<");
+  expect(html).not.toContain("What should we do about checkout?");
+  expect(html).not.toContain("Loading conversation");
+  expect(html).toContain("Earlier chats are in the sidebar.");
+  expect(html).toContain("What is going on?");
+  expect(html).toMatch(/z-home-link z-home-link--active[^>]*aria-current="page"/);
 });

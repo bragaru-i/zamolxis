@@ -121,7 +121,7 @@ it("summarizes existing sessions and returns typed navigation links", async () =
     });
     return id;
   });
-  await f.user.mutation(api.orchestrator.submit, {
+  const first = await f.user.mutation(api.orchestrator.submit, {
     text: "Current project status?",
     idempotencyKey: "status-2",
     productId: f.productId,
@@ -146,6 +146,7 @@ it("summarizes existing sessions and returns typed navigation links", async () =
   const continuation = await f.user.mutation(api.orchestrator.submit, {
     text: "Do it",
     idempotencyKey: "status-follow-up",
+    conversationId: first.conversationId,
     productId: f.productId,
     repositoryId: f.repositoryId,
   });
@@ -182,6 +183,7 @@ it("keeps explicit work as a proposal until the owner confirms it", async () => 
   const secondArgs = {
     text: "Continue with that",
     idempotencyKey: "work-2",
+    conversationId: first.conversationId,
     productId: f.productId,
     repositoryId: f.repositoryId,
   } as const;
@@ -352,7 +354,7 @@ it("hands a question to the Orchestrator model on an online Node and settles onl
     instructions: "Be brief.",
     enabled: true,
   });
-  await f.user.mutation(api.orchestrator.submit, {
+  const { conversationId } = await f.user.mutation(api.orchestrator.submit, {
     text: "First question",
     idempotencyKey: "q-1",
     productId: f.productId,
@@ -361,6 +363,7 @@ it("hands a question to the Orchestrator model on an online Node and settles onl
     text: "What is going on?",
     idempotencyKey: "q-2",
     productId: f.productId,
+    conversationId,
   });
   const commands = await f.t.run((ctx) =>
     ctx.db
@@ -461,4 +464,144 @@ it("answers deterministically when no Node can run the Orchestrator", async () =
         .collect(),
     ),
   ).toEqual([]);
+});
+
+it("starts a new chat per message unless the chat is named, and lists chats by activity", async () => {
+  const f = await fixture();
+  const first = await f.user.mutation(api.orchestrator.submit, {
+    text: "  What is going on?\nSecond line is not the title.",
+    idempotencyKey: "chat-1",
+  });
+  const followUp = await f.user.mutation(api.orchestrator.submit, {
+    text: "And now?",
+    idempotencyKey: "chat-1b",
+    conversationId: first.conversationId,
+  });
+  expect(followUp.conversationId).toBe(first.conversationId);
+  const second = await f.user.mutation(api.orchestrator.submit, {
+    text: `${"Long ".repeat(40)}question`,
+    idempotencyKey: "chat-2",
+  });
+  expect(second.conversationId).not.toBe(first.conversationId);
+
+  const chats = await f.user.query(api.orchestrator.conversations, {});
+  expect(chats.map((chat) => chat._id)).toEqual([second.conversationId, first.conversationId]);
+  expect(chats[1]?.title).toBe("What is going on?");
+  expect(chats[0]?.title).toHaveLength(80);
+  expect(chats[0]?.title.endsWith("…")).toBe(true);
+
+  const firstChat = await f.user.query(api.orchestrator.messages, {
+    conversationId: first.conversationId,
+  });
+  expect(firstChat.map((message) => message.text)).toEqual([
+    "What is going on?\nSecond line is not the title.",
+    "And now?",
+  ]);
+  // Without a chat the latest one is read, as before.
+  expect((await f.user.query(api.orchestrator.messages, {})).map((m) => m.text)).toEqual([
+    `${"Long ".repeat(40)}question`,
+  ]);
+
+  // A retry of the first message returns the same chat; a retry aimed at another chat conflicts.
+  expect(
+    await f.user.mutation(api.orchestrator.submit, {
+      text: "  What is going on?\nSecond line is not the title.",
+      idempotencyKey: "chat-1",
+    }),
+  ).toEqual(first);
+  await expect(
+    f.user.mutation(api.orchestrator.submit, {
+      text: "  What is going on?\nSecond line is not the title.",
+      idempotencyKey: "chat-1",
+      conversationId: second.conversationId,
+    }),
+  ).rejects.toThrow("COMMAND_CONFLICT");
+
+  // Another owner can neither read nor continue this chat.
+  expect(await f.other.query(api.orchestrator.conversations, {})).toEqual([]);
+  await expect(
+    f.other.query(api.orchestrator.messages, { conversationId: first.conversationId }),
+  ).rejects.toThrow("FORBIDDEN");
+  await expect(
+    f.other.mutation(api.orchestrator.submit, {
+      text: "Mine now",
+      idempotencyKey: "bob-1",
+      conversationId: first.conversationId,
+    }),
+  ).rejects.toThrow("FORBIDDEN");
+  await expect(
+    f.other.mutation(api.orchestrator.renameConversation, {
+      conversationId: first.conversationId,
+      title: "Bob's",
+    }),
+  ).rejects.toThrow("FORBIDDEN");
+  await expect(
+    f.other.mutation(api.orchestrator.archiveConversation, {
+      conversationId: first.conversationId,
+    }),
+  ).rejects.toThrow("FORBIDDEN");
+});
+
+it("renames and deletes chats; a deleted chat keeps its history but takes no new messages", async () => {
+  const f = await fixture();
+  const { conversationId } = await f.user.mutation(api.orchestrator.submit, {
+    text: "Status?",
+    idempotencyKey: "chat-3",
+  });
+  await expect(
+    f.user.mutation(api.orchestrator.renameConversation, { conversationId, title: "   " }),
+  ).rejects.toThrow("INVALID_ARGUMENT");
+  await expect(
+    f.user.mutation(api.orchestrator.renameConversation, {
+      conversationId,
+      title: "x".repeat(81),
+    }),
+  ).rejects.toThrow("INVALID_ARGUMENT");
+  await f.user.mutation(api.orchestrator.renameConversation, {
+    conversationId,
+    title: "  Alpha   check ",
+  });
+  expect((await f.user.query(api.orchestrator.conversations, {}))[0]?.title).toBe("Alpha check");
+
+  await f.user.mutation(api.orchestrator.archiveConversation, { conversationId });
+  await f.user.mutation(api.orchestrator.archiveConversation, { conversationId });
+  expect(await f.user.query(api.orchestrator.conversations, {})).toEqual([]);
+  expect(await f.user.query(api.orchestrator.messages, {})).toEqual([]);
+  expect(await f.user.query(api.orchestrator.messages, { conversationId })).toHaveLength(1);
+  await expect(
+    f.user.mutation(api.orchestrator.submit, {
+      text: "Still there?",
+      idempotencyKey: "chat-3b",
+      conversationId,
+    }),
+  ).rejects.toThrow("INVALID_STATE");
+});
+
+it("names a chat created before titles after its first message", async () => {
+  const f = await fixture();
+  const conversationId = await f.t.run(async (ctx) => {
+    const owner = await ctx.db.query("users").first();
+    if (!owner) throw new Error("Missing owner");
+    const id = await ctx.db.insert("orchestratorConversations", {
+      ownerId: owner._id,
+      title: "Zamolxis",
+      lastActivityAt: 5,
+      createdAt: 1,
+      updatedAt: 5,
+    });
+    await ctx.db.insert("orchestratorMessages", {
+      ownerId: owner._id,
+      conversationId: id,
+      idempotencyKey: "legacy-1",
+      text: "How does the verifier work?",
+      route: "answer",
+      reply: "…",
+      createdAt: 2,
+    });
+    return id;
+  });
+  const chats = await f.user.query(api.orchestrator.conversations, {});
+  expect(chats).toEqual([
+    expect.objectContaining({ _id: conversationId, title: "How does the verifier work?" }),
+  ]);
 });

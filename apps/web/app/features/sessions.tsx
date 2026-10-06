@@ -25,8 +25,15 @@ import { ApprovalsInbox } from "./approvals";
 import { explainError } from "./errors";
 import { LiveAgents } from "./live-agents";
 import { OnboardingChecklist } from "./onboarding";
-import { relativeTime } from "./time";
+import { groupByRecency, relativeTime } from "./time";
 import { useNow } from "./workspace";
+
+interface ChatRow {
+  _id: Id<"orchestratorConversations">;
+  title: string;
+  lastActivityAt: number;
+  createdAt: number;
+}
 
 interface SessionRow {
   _id: Id<"workSessions">;
@@ -41,12 +48,17 @@ export function SessionList({
   ready,
   indicator,
   notices,
+  chatId,
+  onOpenChat,
   onOpen,
   onSettings,
 }: {
   ready: boolean;
   indicator: ReactNode;
   notices: ReactNode;
+  /** The open chat; empty means a new, empty chat. */
+  chatId: string;
+  onOpenChat: (id: string, mode?: "push" | "replace") => void;
   onOpen: (id: Id<"workSessions">, runId?: Id<"agentRuns">) => void;
   onSettings: () => void;
 }) {
@@ -54,14 +66,25 @@ export function SessionList({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [filter, setFilter] = useState<"all" | "active" | "waiting" | "completed">("all");
   const [search, setSearch] = useState("");
+  const [chatMenu, setChatMenu] = useState<ChatRow>();
+  const chats = useQuery(api.orchestrator.conversations, ready ? {} : "skip") as
+    | ChatRow[]
+    | undefined;
   const { results, status, loadMore } = usePaginatedQuery(
     api.sessions.listMine,
     ready ? {} : "skip",
     { initialNumItems: 20 },
   );
   const sessions = results as SessionRow[];
-  const visible = sessions.filter((session) => {
-    const matchesSearch = session.title.toLowerCase().includes(search.trim().toLowerCase());
+  const needle = search.trim().toLowerCase();
+  // Both lists are grouped by day, so they are kept newest first here as well.
+  const byActivity = <T extends { lastActivityAt: number }>(rows: T[]) =>
+    [...rows].sort((a, b) => b.lastActivityAt - a.lastActivityAt);
+  const visibleChats = byActivity(chats ?? []).filter((chat) =>
+    chat.title.toLowerCase().includes(needle),
+  );
+  const visible = byActivity(sessions).filter((session) => {
+    const matchesSearch = session.title.toLowerCase().includes(needle);
     const matchesFilter =
       filter === "all" ||
       (filter === "active" && ["planning", "running"].includes(session.status)) ||
@@ -69,6 +92,7 @@ export function SessionList({
       (filter === "completed" && session.status === "completed");
     return matchesSearch && matchesFilter;
   });
+  const openChat = chats?.find((chat) => chat._id === chatId);
   const navigation = (
     <div className="z-home-nav__content">
       <div className="z-row z-row--between">
@@ -87,21 +111,73 @@ export function SessionList({
       </div>
       <button
         type="button"
-        className="z-home-link z-home-link--active"
-        onClick={() => setDrawerOpen(false)}
+        className={`z-home-link${chatId ? "" : " z-home-link--active"}`}
+        aria-current={chatId ? undefined : "page"}
+        onClick={() => {
+          setDrawerOpen(false);
+          onOpenChat("");
+        }}
       >
-        Home
+        + New chat
       </button>
+      <TextInput
+        value={search}
+        aria-label="Search chats and work sessions"
+        placeholder="Search…"
+        onChange={(event) => setSearch(event.target.value)}
+      />
+      <div className="z-row z-row--between">
+        <h2 className="z-section-title">Chats</h2>
+        <span className="z-xsmall z-muted">{chats?.length ?? ""}</span>
+      </div>
+      <section className="z-home-session-list" aria-label="Chats">
+        {chats === undefined ? (
+          <p className="z-muted z-small" role="status">
+            Loading chats…
+          </p>
+        ) : visibleChats.length ? (
+          groupByRecency(visibleChats, (chat) => chat.lastActivityAt, now).map((group) => (
+            <div className="z-home-session-list" key={group.label}>
+              <p className="z-home-group">{group.label}</p>
+              {group.items.map((chat) => (
+                <div className="z-home-chat" key={chat._id}>
+                  <button
+                    type="button"
+                    className={`z-home-session${chat._id === chatId ? " z-home-session--active" : ""}`}
+                    aria-current={chat._id === chatId ? "page" : undefined}
+                    onClick={() => {
+                      setDrawerOpen(false);
+                      onOpenChat(chat._id);
+                    }}
+                  >
+                    <span className="z-home-session__title">{chat.title}</span>
+                    <span className="z-xsmall z-muted">
+                      {relativeTime(chat.lastActivityAt, now)}
+                    </span>
+                  </button>
+                  <Button
+                    variant="ghost"
+                    size="small"
+                    className="z-home-chat__menu"
+                    aria-label={`Options for chat ${chat.title}`}
+                    onClick={() => setChatMenu(chat)}
+                  >
+                    …
+                  </Button>
+                </div>
+              ))}
+            </div>
+          ))
+        ) : (
+          <p className="z-muted z-small">
+            {search ? "No chats match." : "No chats yet. Your first message starts one."}
+          </p>
+        )}
+      </section>
       <div className="z-row z-row--between">
         <h2 className="z-section-title">Work Sessions</h2>
         <span className="z-xsmall z-muted">{sessions.length}</span>
       </div>
-      <TextInput
-        value={search}
-        aria-label="Search work sessions"
-        placeholder="Search sessions…"
-        onChange={(event) => setSearch(event.target.value)}
-      />
       <fieldset className="z-home-filters">
         <legend className="z-visually-hidden">Filter work sessions</legend>
         {(["all", "active", "waiting", "completed"] as const).map((value) => (
@@ -117,33 +193,38 @@ export function SessionList({
           </button>
         ))}
       </fieldset>
-      <div className="z-home-session-list">
+      <section className="z-home-session-list" aria-label="Work Sessions">
         {status === "LoadingFirstPage" ? (
           <p className="z-muted z-small" role="status">
             Loading sessions…
           </p>
         ) : visible.length ? (
-          visible.map((session) => (
-            <button
-              type="button"
-              className="z-home-session"
-              key={session._id}
-              onClick={() => {
-                setDrawerOpen(false);
-                onOpen(session._id);
-              }}
-            >
-              <span className="z-list-item__title">{session.title}</span>
-              <span className="z-row z-xsmall z-muted">
-                <SessionStatusBadge status={session.status} />
-                {session.totalTaskCount > 0 && (
-                  <span>
-                    {session.completedTaskCount}/{session.totalTaskCount}
+          groupByRecency(visible, (session) => session.lastActivityAt, now).map((group) => (
+            <div className="z-home-session-list" key={group.label}>
+              <p className="z-home-group">{group.label}</p>
+              {group.items.map((session) => (
+                <button
+                  type="button"
+                  className="z-home-session"
+                  key={session._id}
+                  onClick={() => {
+                    setDrawerOpen(false);
+                    onOpen(session._id);
+                  }}
+                >
+                  <span className="z-list-item__title">{session.title}</span>
+                  <span className="z-row z-xsmall z-muted">
+                    <SessionStatusBadge status={session.status} />
+                    {session.totalTaskCount > 0 && (
+                      <span>
+                        {session.completedTaskCount}/{session.totalTaskCount}
+                      </span>
+                    )}
+                    <span>{relativeTime(session.lastActivityAt, now)}</span>
                   </span>
-                )}
-                <span>{relativeTime(session.lastActivityAt, now)}</span>
-              </span>
-            </button>
+                </button>
+              ))}
+            </div>
           ))
         ) : (
           <p className="z-muted z-small">
@@ -154,7 +235,7 @@ export function SessionList({
                 : `No ${filter} sessions.`}
           </p>
         )}
-      </div>
+      </section>
       {status === "CanLoadMore" && (
         <Button variant="secondary" block onClick={() => loadMore(20)}>
           Show older sessions
@@ -193,7 +274,7 @@ export function SessionList({
               Sessions
             </Button>
           }
-          title="Home"
+          title={chatId ? (openChat?.title ?? "Chat") : "Home"}
           subtitle={indicator}
           trailing={
             <Button variant="ghost" onClick={onSettings}>
@@ -206,13 +287,133 @@ export function SessionList({
           <OnboardingChecklist ready={ready} />
           <ApprovalsInbox ready={ready} onOpen={onOpen} />
           <LiveAgents ready={ready} onOpen={onOpen} />
-          <OrchestratorConversation ready={ready} onOpen={onOpen} />
+          <OrchestratorConversation
+            key={chatId}
+            ready={ready}
+            conversationId={chatId ? (chatId as Id<"orchestratorConversations">) : undefined}
+            hasChats={(chats?.length ?? 0) > 0}
+            onOpen={onOpen}
+          />
         </main>
         <footer className="z-home-composer">
-          <OrchestratorComposer ready={ready} />
+          <OrchestratorComposer
+            ready={ready}
+            conversationId={chatId ? (chatId as Id<"orchestratorConversations">) : undefined}
+            onStarted={(id) => onOpenChat(id, "replace")}
+          />
         </footer>
       </div>
+      <ChatOptions
+        chat={chatMenu}
+        onClose={() => setChatMenu(undefined)}
+        onDeleted={(id) => {
+          if (id === chatId) onOpenChat("", "replace");
+        }}
+      />
     </div>
+  );
+}
+
+const CHAT_TITLE_LIMIT = 80;
+
+/** Rename or delete one chat. Deleting hides it; nothing running is affected. */
+function ChatOptions({
+  chat,
+  onClose,
+  onDeleted,
+}: {
+  chat: ChatRow | undefined;
+  onClose: () => void;
+  onDeleted: (id: Id<"orchestratorConversations">) => void;
+}) {
+  const rename = useMutation(api.orchestrator.renameConversation);
+  const archive = useMutation(api.orchestrator.archiveConversation);
+  const [title, setTitle] = useState("");
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  // Each opened chat starts from its own title.
+  const [seen, setSeen] = useState<string>();
+  if (chat && chat._id !== seen) {
+    setSeen(chat._id);
+    setTitle(chat.title);
+    setConfirming(false);
+    setError("");
+  }
+  if (!chat && seen !== undefined) setSeen(undefined);
+  const trimmed = title.replace(/\s+/g, " ").trim();
+  return (
+    <Sheet open={chat !== undefined} title="Chat options" onClose={onClose}>
+      {chat && (
+        <div className="z-stack">
+          <form
+            className="z-stack"
+            aria-label="Rename chat"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              if (!trimmed || trimmed.length > CHAT_TITLE_LIMIT)
+                return setError(`Use a name of 1 to ${CHAT_TITLE_LIMIT} characters.`);
+              setBusy(true);
+              setError("");
+              try {
+                await rename({ conversationId: chat._id, title: trimmed });
+                onClose();
+              } catch (failure) {
+                setError(explainError(failure, "Could not rename this chat."));
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            <TextInput
+              value={title}
+              aria-label="Chat name"
+              maxLength={CHAT_TITLE_LIMIT}
+              onChange={(event) => setTitle(event.target.value)}
+            />
+            <Button type="submit" block disabled={busy || trimmed === chat.title}>
+              {busy ? "Saving…" : "Rename"}
+            </Button>
+          </form>
+          {error && <Notice tone="danger">{error}</Notice>}
+          {confirming ? (
+            <div className="z-stack">
+              <p className="z-small z-muted">
+                The chat disappears from your list. Work Sessions it opened keep running.
+              </p>
+              <div className="z-row">
+                <Button
+                  variant="danger"
+                  disabled={busy}
+                  onClick={async () => {
+                    setBusy(true);
+                    setError("");
+                    try {
+                      await archive({ conversationId: chat._id });
+                      onDeleted(chat._id);
+                      onClose();
+                    } catch (failure) {
+                      setError(explainError(failure, "Could not delete this chat."));
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                >
+                  Delete chat
+                </Button>
+                <Button variant="ghost" disabled={busy} onClick={() => setConfirming(false)}>
+                  Keep
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <Button variant="secondary" block disabled={busy} onClick={() => setConfirming(true)}>
+              Delete chat…
+            </Button>
+          )}
+        </div>
+      )}
+    </Sheet>
   );
 }
 
@@ -385,14 +586,21 @@ function OpenProposal({
 
 function OrchestratorConversation({
   ready,
+  conversationId,
+  hasChats,
   onOpen,
 }: {
   ready: boolean;
+  conversationId: Id<"orchestratorConversations"> | undefined;
+  hasChats: boolean;
   onOpen: (id: Id<"workSessions">, runId?: Id<"agentRuns">) => void;
 }) {
-  const messages = useQuery(api.orchestrator.messages, ready ? {} : "skip") as
-    | OrchestratorMessage[]
-    | undefined;
+  // A new chat has no messages to load; the list stays empty until the first one is sent.
+  const loaded = useQuery(
+    api.orchestrator.messages,
+    ready && conversationId ? { conversationId } : "skip",
+  ) as OrchestratorMessage[] | undefined;
+  const messages = conversationId ? loaded : [];
   const now = Date.now();
   const thinking = (message: OrchestratorMessage) =>
     message.status === "thinking" && now - message.createdAt < THINKING_SHOWN_MS;
@@ -409,7 +617,7 @@ function OrchestratorConversation({
   return (
     <section className="z-stack" aria-label="Orchestrator conversation">
       <div className="z-row z-row--between">
-        <h2 className="z-section-title">Ask Zamolxis</h2>
+        <h2 className="z-section-title">{conversationId ? "Ask Zamolxis" : "New chat"}</h2>
         <span className="z-xsmall z-muted">Ask anything · nothing starts until you say so</span>
       </div>
       {messages === undefined ? (
@@ -450,6 +658,7 @@ function OrchestratorConversation({
       ) : (
         <p className="z-muted">
           Ask what is happening, how orchestration works, or tell Zamolxis explicitly to start work.
+          {hasChats ? " Earlier chats are in the sidebar." : ""}
         </p>
       )}
       <div ref={end} />
@@ -457,7 +666,16 @@ function OrchestratorConversation({
   );
 }
 
-function OrchestratorComposer({ ready }: { ready: boolean }) {
+function OrchestratorComposer({
+  ready,
+  conversationId,
+  onStarted,
+}: {
+  ready: boolean;
+  conversationId: Id<"orchestratorConversations"> | undefined;
+  /** The first message of a new chat created it; Home now shows that chat. */
+  onStarted: (id: Id<"orchestratorConversations">) => void;
+}) {
   const products = useQuery(api.supervisor.products, ready ? {} : "skip") as Product[] | undefined;
   const [productId, setProductId] = useState<Id<"products"> | "">("");
   const repositories = useQuery(
@@ -534,13 +752,15 @@ function OrchestratorComposer({ ready }: { ready: boolean }) {
       onSubmit={async () => {
         setBusy(true);
         try {
-          await submit({
+          const result = await submit({
             ...(productId ? { productId } : {}),
             ...(repositoryId ? { repositoryId } : {}),
+            ...(conversationId ? { conversationId } : {}),
             text,
             idempotencyKey: crypto.randomUUID(),
           });
           setText("");
+          if (!conversationId) onStarted(result.conversationId);
         } catch (failure) {
           setError(explainError(failure, "Could not send the message. Try again."));
         } finally {
