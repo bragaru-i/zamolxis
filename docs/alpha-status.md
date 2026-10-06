@@ -69,6 +69,12 @@ planned capability as shipped.
   execution language creates a Session; "continue", "do it" and equivalent follow a recent linked
   Session in the selected repository. Role runtimes, models, effort and instructions remain
   selectable in Settings → Agents.
+- **Owner-friendly UI:** choices use a styled bottom-sheet `Picker` instead of native selects
+  (iOS); an idle Session reads **Idle** (not a yellow "Waiting") and has **Close session**
+  (`sessions.close`: only when nothing runs; unfinished Tasks are cancelled; a follow-up reopens
+  it); statuses, link labels, the deterministic summary and failure messages use plain language;
+  Orchestrator and Supervisor prompts ask for non-technical replies and forbid claiming to
+  close/stop anything themselves.
 - **Access administration (#67):** Settings → People (admins approve, block,
   restore, promote; blocking revokes all sign-ins) and Settings → Signed-in devices.
   First admin via the internal `admin:bootstrapAdmin` (done on prod for the owner).
