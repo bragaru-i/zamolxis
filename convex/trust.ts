@@ -2,6 +2,7 @@ import { evaluateTrust, type TrustEvidence } from "@zamolxis/application";
 import { v } from "convex/values";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { bounded, fail, load, nodeRun, ownRun } from "./lib/access";
+import { recordTrustStep } from "./traces";
 export const linkVerification = internalMutation({
   args: { candidateRunId: v.id("agentRuns"), verifierRunId: v.id("agentRuns") },
   returns: v.id("verificationRuns"),
@@ -139,12 +140,20 @@ export const evaluate = internalMutation({
       decision.eligible = false;
       decision.reasons.push("Candidate snapshot is incomplete or stale");
     }
-    return ctx.db.insert("trustDecisions", {
+    const subjectSha = candidate.finalHeadSha ?? "";
+    const id = await ctx.db.insert("trustDecisions", {
       candidateRunId: candidate._id,
-      subjectSha: candidate.finalHeadSha ?? "",
+      subjectSha,
       ...decision,
       createdAt: Date.now(),
     });
+    await recordTrustStep(
+      ctx,
+      { id, candidateRunId: candidate._id, subjectSha, ...decision },
+      evidence.filter((item) => item.subjectSha === subjectSha),
+      task.requiredModalities ?? ["static", "behavioral"],
+    );
+    return id;
   },
 });
 export const listByRun = query({

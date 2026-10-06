@@ -1,6 +1,7 @@
 import { evaluateTrust } from "@zamolxis/application";
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
+import { recordTrustStep } from "../traces";
 import { allocateWorkspace } from "../workspaces";
 import { fail, load } from "./access";
 import { enqueue } from "./commands";
@@ -94,6 +95,18 @@ export async function decideVerification(ctx: MutationCtx, verifierId: Id<"agent
     ...decision,
     createdAt: Date.now(),
   });
+  await recordTrustStep(
+    ctx,
+    {
+      id: trustDecisionId,
+      candidateRunId: candidate._id,
+      subjectSha: verification.subjectSha,
+      ...decision,
+    },
+    records,
+    task.requiredModalities ?? ["static", "behavioral"],
+    { startedAt: verification.createdAt, verifierRunId: verifier._id },
+  );
   await ctx.db.patch("verificationRuns", verification._id, { trustDecisionId });
   await ctx.db.patch("tasks", task._id, {
     trustDecisionId,

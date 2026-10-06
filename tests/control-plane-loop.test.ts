@@ -846,8 +846,13 @@ it("runs text intent through discovery, native Builder, independent Verifier, de
     ["workspace", "passed"],
     ["runtime", "passed"],
     ["workspace", "passed"],
+    // Backend-side: the trust decision and the prepared integration branch.
+    ["trust", "passed"],
+    ["integration", "passed"],
   ]);
   expect(built[3]?.references?.sha).toBe(candidate.finalHeadSha);
+  expect(built[4]?.references?.sha).toBe(candidate.finalHeadSha);
+  expect(built[5]?.references?.sha).toBe(candidate.finalHeadSha);
   const checked = await trace(verifier._id);
   expect(checked.filter((step) => step.kind === "verification-check")).toEqual([
     expect.objectContaining({ status: "passed", label: "git diff --check HEAD^ HEAD" }),

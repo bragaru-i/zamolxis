@@ -4,6 +4,7 @@ import type { Doc } from "./_generated/dataModel";
 import { mutation, type MutationCtx, type QueryCtx, query } from "./_generated/server";
 import { fail, load, ownSession, requireNode } from "./lib/access";
 import { enqueue } from "./lib/commands";
+import { recordPublishStep } from "./traces";
 
 // Publishing pushes a trusted integration branch and opens a pull request on the owner's
 // explicit action. It never merges and never targets the default branch: merge stays human.
@@ -152,6 +153,11 @@ export const publish = mutation({
       publishError: undefined,
       updatedAt: Date.now(),
     });
+    await recordPublishStep(ctx, ready.decision.candidateRunId, commandId, {
+      status: "started",
+      branch,
+      sha,
+    });
     return { status: "pending", branch };
   },
 });
@@ -204,6 +210,15 @@ export const completePublish = mutation({
       publishedAt: Date.now(),
       updatedAt: Date.now(),
     });
+    if (task.candidateRunId)
+      await recordPublishStep(ctx, task.candidateRunId, command._id, {
+        status: "passed",
+        branch: args.remoteBranch,
+        base: args.base,
+        sha: args.subjectSha,
+        prUrl,
+        compareUrl,
+      });
     return null;
   },
 });
@@ -219,6 +234,11 @@ export async function failPublish(ctx: MutationCtx, command: Doc<"commands">, co
     publishError: code.slice(0, 64),
     updatedAt: Date.now(),
   });
+  if (task.candidateRunId)
+    await recordPublishStep(ctx, task.candidateRunId, command._id, {
+      status: "failed",
+      code: code.slice(0, 64),
+    });
 }
 
 /** A publish command is complete once its result was recorded. */
