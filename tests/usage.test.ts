@@ -151,8 +151,11 @@ it("sums a session by role and model with only reported values", async () => {
         modelActual: "gpt-5",
         inputTokens: 100,
         cachedInputTokens: 40,
+        cacheWriteInputTokens: 30,
         outputTokens: 20,
+        reasoningOutputTokens: 5,
         totalTokens: 120,
+        modelCalls: 4,
       },
       { role: "builder", modelActual: "gpt-5", totalTokens: 80 },
       { role: "verifier", totalTokens: 50 },
@@ -169,8 +172,13 @@ it("sums a session by role and model with only reported values", async () => {
   expect(usage.total).toEqual({
     inputTokens: 125,
     cachedInputTokens: 40,
+    // Derived per item: (100 - 40) + (25 - 0); never estimated for items without input.
+    freshInputTokens: 85,
+    cacheWriteInputTokens: 30,
     outputTokens: 20,
+    reasoningOutputTokens: 5,
     totalTokens: 280,
+    modelCalls: 4,
     items: 5,
     reported: 4,
   });

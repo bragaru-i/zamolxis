@@ -94,6 +94,17 @@ async function seed() {
         initialHeadSha: "a".repeat(40),
         finalHeadSha: "b".repeat(40),
         finalChangedFileCount: 2,
+        ...(role === "builder"
+          ? {
+              inputTokens: 2_577_180,
+              cachedInputTokens: 2_491_520,
+              cacheWriteInputTokens: 0,
+              outputTokens: 13_815,
+              reasoningOutputTokens: 1_676,
+              totalTokens: 2_590_995,
+              modelCalls: 41,
+            }
+          : {}),
       });
     const builderRunId = await run("builder", builderWorkspace);
     const verifierRunId = await run("verifier", verifierWorkspace);
@@ -146,7 +157,12 @@ it("returns run, workspace, verification evidence and trust for the owner only",
     role: "builder",
     runtime: "codex",
     finalChangedFileCount: 2,
+    // Usage exactly as stored: calls, cache writes and reasoning travel with the tokens.
+    cachedInputTokens: 2_491_520,
+    reasoningOutputTokens: 1_676,
+    modelCalls: 41,
   });
+  expect(builder.run).not.toHaveProperty("estimatedCostUsd");
   expect(builder.workspace).toMatchObject({ branchName: "zamolxis/builder", baseRef: "main" });
   expect(builder.workspace).not.toHaveProperty("localPath");
   expect(builder.task).toMatchObject({ title: "Add API", repairAttempts: 1, repairLimit: 2 });

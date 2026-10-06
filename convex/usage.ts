@@ -10,10 +10,21 @@ import { ownSession, requireUser } from "./lib/access";
 export type UsageRole = "supervisor" | "builder" | "verifier" | "repair";
 
 export interface UsageTotals {
+  /** Every input token the models processed, cached ones included. */
   inputTokens: number;
+  /** The cache-read part of `inputTokens`. */
   cachedInputTokens: number;
+  /** Derived: input minus cached, the tokens the provider actually had to read anew. */
+  freshInputTokens: number;
+  /** Input written to the provider's cache, when reported. */
+  cacheWriteInputTokens: number;
   outputTokens: number;
+  /** The reasoning part of `outputTokens`, when reported. */
+  reasoningOutputTokens: number;
+  /** Input plus output: everything the provider processed and counts against limits. */
   totalTokens: number;
+  /** Model responses, when reported. */
+  modelCalls: number;
   /** Items (runs or Supervisor turns) counted. */
   items: number;
   /** Items that reported a total token count. */
@@ -27,9 +38,30 @@ interface UsageItem {
   model?: string;
   inputTokens?: number;
   cachedInputTokens?: number;
+  cacheWriteInputTokens?: number;
   outputTokens?: number;
+  reasoningOutputTokens?: number;
   totalTokens?: number;
+  modelCalls?: number;
   costUsd?: number;
+}
+
+const COUNTERS = [
+  "inputTokens",
+  "cachedInputTokens",
+  "cacheWriteInputTokens",
+  "outputTokens",
+  "reasoningOutputTokens",
+  "totalTokens",
+  "modelCalls",
+] as const;
+
+function counters(
+  row: Partial<Record<(typeof COUNTERS)[number], number>>,
+): Partial<Record<(typeof COUNTERS)[number], number>> {
+  const item: Partial<Record<(typeof COUNTERS)[number], number>> = {};
+  for (const counter of COUNTERS) if (row[counter] !== undefined) item[counter] = row[counter];
+  return item;
 }
 
 const PERIODS = { "24h": 86_400_000, "7d": 7 * 86_400_000, "30d": 30 * 86_400_000 } as const;
@@ -44,8 +76,12 @@ function empty(): UsageTotals {
   return {
     inputTokens: 0,
     cachedInputTokens: 0,
+    freshInputTokens: 0,
+    cacheWriteInputTokens: 0,
     outputTokens: 0,
+    reasoningOutputTokens: 0,
     totalTokens: 0,
+    modelCalls: 0,
     items: 0,
     reported: 0,
   };
@@ -53,13 +89,10 @@ function empty(): UsageTotals {
 
 function add(totals: UsageTotals, item: UsageItem) {
   totals.items += 1;
-  totals.inputTokens += item.inputTokens ?? 0;
-  totals.cachedInputTokens += item.cachedInputTokens ?? 0;
-  totals.outputTokens += item.outputTokens ?? 0;
-  if (item.totalTokens !== undefined) {
-    totals.totalTokens += item.totalTokens;
-    totals.reported += 1;
-  }
+  for (const counter of COUNTERS) totals[counter] += item[counter] ?? 0;
+  // Cached never exceeds input in provider reports; clamp so a bad report cannot go negative.
+  totals.freshInputTokens += Math.max((item.inputTokens ?? 0) - (item.cachedInputTokens ?? 0), 0);
+  if (item.totalTokens !== undefined) totals.reported += 1;
   if (item.costUsd !== undefined) totals.costUsd = (totals.costUsd ?? 0) + item.costUsd;
 }
 
@@ -67,10 +100,7 @@ function fromRun(run: Doc<"agentRuns">): UsageItem {
   return {
     role: run.role ?? "builder",
     ...(run.modelActual !== undefined ? { model: run.modelActual } : {}),
-    ...(run.inputTokens !== undefined ? { inputTokens: run.inputTokens } : {}),
-    ...(run.cachedInputTokens !== undefined ? { cachedInputTokens: run.cachedInputTokens } : {}),
-    ...(run.outputTokens !== undefined ? { outputTokens: run.outputTokens } : {}),
-    ...(run.totalTokens !== undefined ? { totalTokens: run.totalTokens } : {}),
+    ...counters(run),
     // Stored only when the provider reports a cost; never estimated here.
     ...(run.estimatedCostUsd !== undefined ? { costUsd: run.estimatedCostUsd } : {}),
   };
@@ -82,12 +112,7 @@ function fromCommand(command: Doc<"textCommands">): UsageItem | undefined {
   return {
     role: "supervisor",
     ...(command.modelActual !== undefined ? { model: command.modelActual } : {}),
-    ...(command.inputTokens !== undefined ? { inputTokens: command.inputTokens } : {}),
-    ...(command.cachedInputTokens !== undefined
-      ? { cachedInputTokens: command.cachedInputTokens }
-      : {}),
-    ...(command.outputTokens !== undefined ? { outputTokens: command.outputTokens } : {}),
-    ...(command.totalTokens !== undefined ? { totalTokens: command.totalTokens } : {}),
+    ...counters(command),
   };
 }
 
