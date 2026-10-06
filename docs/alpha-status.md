@@ -1,6 +1,6 @@
 # Alpha status and handoff
 
-Status as of 2026-10-06, main through #104. The engineering Alpha is built and
+Status as of 2026-10-06, main through #112 (plus #105 and #110). The engineering Alpha is built and
 deployed as a **private Alpha candidate**: the core Supervisor -> Builder ->
 Verifier -> trust -> integration loop and its web/mobile control plane are shipped.
 Alpha completion still requires the operational proof listed below. The owner has
@@ -185,7 +185,9 @@ shipped or a tested implementation as proven in production.
   gh-account status check runs `gh auth token` about once a minute per repository.
   The automated local end-to-end path passes, but opening a PR through the deployed
   production path has not yet succeeded; recent attempts ended in
-  `PUBLISH_PUSH_FAILED`, so production publishing remains unproven.
+  `PUBLISH_PUSH_FAILED`, so production publishing remains unproven. #105 (merged) treats a
+  retry whose branch is already at the exact trusted SHA as published and recovers its PR
+  even when closed or merged; a successful production PR after it is still the proof.
 - **Run detail (#68):** tapping a run opens result, grouped live activity, changes
   (files, base → head, branch) and verification (evidence, trust decision, repairs).
 - **Setup repair (#69):** rerunning setup offers Check and repair, repositories,
