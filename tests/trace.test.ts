@@ -111,8 +111,12 @@ async function seed() {
   return { t, alice, mallory, node: node("alice-device"), nodeAs: node, ...ids };
 }
 
-function step(stepId: string, extra: Partial<TraceStepDto> = {}): TraceStepDto {
-  return {
+// An `undefined` field in `extra` removes the default.
+function step(
+  stepId: string,
+  extra: { [K in keyof TraceStepDto]?: TraceStepDto[K] | undefined } = {},
+): TraceStepDto {
+  const result: Record<string, unknown> = {
     stepId,
     kind: "verification-check",
     label: "pnpm run test",
@@ -123,6 +127,9 @@ function step(stepId: string, extra: Partial<TraceStepDto> = {}): TraceStepDto {
     references: { script: "test", exitCode: 0, sha: "a".repeat(40) },
     ...extra,
   };
+  // Convex arguments must not carry explicit undefined fields.
+  for (const key of Object.keys(result)) if (result[key] === undefined) delete result[key];
+  return result as unknown as TraceStepDto;
 }
 const page = { numItems: 100, cursor: null };
 
@@ -177,7 +184,7 @@ describe("traces.append", () => {
       ["c:check:001", 3, "failed", "pnpm run lint"],
     ]);
     expect(result.page[0]).toMatchObject({ startedAt: 1000, finishedAt: 9000 });
-    expect(result.page[1].detail).toBe("ok");
+    expect(result.page[1]?.detail).toBe("ok");
     const trace = await f.t.run((ctx) =>
       ctx.db
         .query("traces")
