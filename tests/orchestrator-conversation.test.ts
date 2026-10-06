@@ -149,11 +149,12 @@ it("summarizes existing sessions and returns typed navigation links", async () =
     productId: f.productId,
     repositoryId: f.repositoryId,
   });
-  expect(continuation).toMatchObject({ route: "continue", workSessionId: sessionId });
+  expect(continuation).toMatchObject({ route: "propose" });
+  expect(continuation).not.toHaveProperty("workSessionId");
   expect(await f.t.run((ctx) => ctx.db.query("workSessions").collect())).toHaveLength(1);
 });
 
-it("opens work only for an explicit command, continues its link and stays idempotent", async () => {
+it("keeps explicit work as a proposal until the owner confirms it", async () => {
   const f = await fixture();
   const first = await f.user.mutation(api.orchestrator.submit, {
     text: "Fix the alpha blocker",
@@ -161,8 +162,22 @@ it("opens work only for an explicit command, continues its link and stays idempo
     productId: f.productId,
     repositoryId: f.repositoryId,
   });
-  expect(first.route).toBe("create");
-  expect(first.workSessionId).toBeDefined();
+  expect(first.route).toBe("propose");
+  expect(first).not.toHaveProperty("workSessionId");
+  expect(await f.t.run((ctx) => ctx.db.query("workSessions").collect())).toHaveLength(0);
+  const opened = await f.user.mutation(api.orchestrator.openProposal, {
+    messageId: first.messageId,
+    productId: f.productId,
+    repositoryId: f.repositoryId,
+  });
+  expect(opened).toBeDefined();
+  expect(
+    await f.user.mutation(api.orchestrator.openProposal, {
+      messageId: first.messageId,
+      productId: f.productId,
+      repositoryId: f.repositoryId,
+    }),
+  ).toBe(opened);
 
   const secondArgs = {
     text: "Continue with that",
@@ -171,7 +186,8 @@ it("opens work only for an explicit command, continues its link and stays idempo
     repositoryId: f.repositoryId,
   } as const;
   const second = await f.user.mutation(api.orchestrator.submit, secondArgs);
-  expect(second).toMatchObject({ route: "continue", workSessionId: first.workSessionId });
+  expect(second).toMatchObject({ route: "propose" });
+  expect(second).not.toHaveProperty("workSessionId");
   expect(await f.user.mutation(api.orchestrator.submit, secondArgs)).toEqual(second);
 
   const state = await f.t.run(async (ctx) => ({
@@ -181,10 +197,10 @@ it("opens work only for an explicit command, continues its link and stays idempo
   }));
   expect(state.sessions).toHaveLength(1);
   expect(state.orchestratorMessages).toHaveLength(2);
-  expect(state.supervisorMessages).toHaveLength(2);
+  expect(state.supervisorMessages).toHaveLength(1);
   const messages = await f.user.query(api.orchestrator.messages, {});
-  expect(messages[0]?.links[0]).toMatchObject({ workSessionId: first.workSessionId });
-  expect(messages[1]?.links[0]).toMatchObject({ workSessionId: first.workSessionId });
+  expect(messages[0]?.proposalSessionId).toBe(opened);
+  expect(messages[1]?.proposalSessionId).toBeUndefined();
 });
 
 it("links approvals, pull requests, attention Tasks, trust and active Runs in a status answer", async () => {

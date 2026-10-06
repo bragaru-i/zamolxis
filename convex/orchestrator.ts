@@ -4,7 +4,7 @@ import { type MutationCtx, mutation, query } from "./_generated/server";
 import { fail, load, requireNode, requireUser } from "./lib/access";
 import { resolveAgentProfile } from "./lib/agentProfiles";
 import { enqueue } from "./lib/commands";
-import { explicitlyRequestsWork, requestsContinuation } from "./lib/orchestration";
+import { explicitlyRequestsWork } from "./lib/orchestration";
 import { assertUsage, submitText, usageArgs } from "./supervisor";
 
 const MAX_MESSAGES = 100;
@@ -150,35 +150,18 @@ export const submit = mutation({
 
     const now = Date.now();
     const conversation = await activeConversation(ctx, owner._id, now);
-    const opensWork = explicitlyRequestsWork(text);
-    let route: "answer" | "create" | "continue" = "answer";
-    let workSessionId: Id<"workSessions"> | undefined;
+    const proposesWork = explicitlyRequestsWork(text);
+    const route: "answer" | "propose" = proposesWork ? "propose" : "answer";
     let reply: string;
+    let proposal: string | undefined;
     let links: LinkDraft[] = [];
     let model: Awaited<ReturnType<typeof orchestratorTarget>> | undefined;
 
-    if (opensWork) {
-      if (!product || !repository) fail("WORK_CONTEXT_REQUIRED");
-      const recentSession = requestsContinuation(text)
-        ? await mostRecentLinkedSession(
-            ctx,
-            conversation._id,
-            owner._id,
-            product._id,
-            repository._id,
-          )
-        : undefined;
-      route = recentSession ? "continue" : "create";
-      workSessionId = await submitText(ctx, {
-        productId: product._id,
-        repositoryId: repository._id,
-        text,
-        idempotencyKey: `orch_${args.idempotencyKey}`.slice(0, 128),
-        ...(recentSession ? { sessionId: recentSession._id } : {}),
-      });
-      reply = recentSession
-        ? `I sent this to “${recentSession.title}” and reopened it if needed.`
-        : "I opened a Work Session and sent your request to its Supervisor.";
+    if (proposesWork) {
+      proposal = text;
+      reply =
+        "I prepared this as a proposal. Review the target and request before opening a Work Session; nothing has started.";
+      model = await orchestratorTarget(ctx, owner._id, product?._id);
     } else {
       const summary = await statusAnswer(ctx, owner._id, product?._id, text);
       reply = summary.reply;
@@ -196,7 +179,7 @@ export const submit = mutation({
       ...(repository ? { repositoryId: repository._id } : {}),
       route,
       reply,
-      ...(workSessionId ? { workSessionId } : {}),
+      ...(proposal ? { proposal } : {}),
       status: model ? "thinking" : "answered",
       ...(model
         ? {
@@ -206,7 +189,6 @@ export const submit = mutation({
         : { answeredBy: "deterministic" as const }),
       createdAt: now,
     });
-    if (workSessionId) links = [sessionLink(await load(ctx, "workSessions", workSessionId))];
     for (const link of links.slice(0, MAX_LINKS))
       await ctx.db.insert("orchestratorMessageLinks", {
         ownerId: owner._id,
@@ -242,7 +224,7 @@ export const submit = mutation({
       lastActivityAt: now,
       updatedAt: now,
     });
-    return { messageId, route, ...(workSessionId ? { workSessionId } : {}) };
+    return { messageId, route };
   },
 });
 
@@ -262,42 +244,6 @@ async function activeConversation(ctx: MutationCtx, ownerId: Id<"users">, now: n
     updatedAt: now,
   });
   return load(ctx, "orchestratorConversations", id);
-}
-
-async function mostRecentLinkedSession(
-  ctx: MutationCtx,
-  conversationId: Id<"orchestratorConversations">,
-  ownerId: Id<"users">,
-  productId: Id<"products">,
-  repositoryId: Id<"repositories">,
-) {
-  const messages = await ctx.db
-    .query("orchestratorMessages")
-    .withIndex("by_conversation_time", (q) => q.eq("conversationId", conversationId))
-    .order("desc")
-    .take(25);
-  for (const message of messages) {
-    const links = await ctx.db
-      .query("orchestratorMessageLinks")
-      .withIndex("by_message", (q) => q.eq("messageId", message._id))
-      .take(MAX_LINKS);
-    const candidateIds = [
-      ...(message.workSessionId ? [message.workSessionId] : []),
-      ...links.flatMap((link) => (link.workSessionId ? [link.workSessionId] : [])),
-    ];
-    for (const sessionId of candidateIds) {
-      const session = await ctx.db.get(sessionId);
-      if (session?.ownerId !== ownerId || session.productId !== productId) continue;
-      const relationship = await ctx.db
-        .query("sessionRepositories")
-        .withIndex("by_session_repository", (q) =>
-          q.eq("workSessionId", session._id).eq("repositoryId", repositoryId),
-        )
-        .unique();
-      if (relationship) return session;
-    }
-  }
-  return undefined;
 }
 
 async function statusAnswer(

@@ -50,7 +50,8 @@ planned capability as shipped.
 - **Steering:** "Message agent" on an active run steers a streaming Codex turn
   (`turn/steer`) or continues a waiting run to completion with the normal
   completion handling.
-- **Web app (#61):** phone-first sessions list; open session kept in `?session=<id>`;
+- **Web app (#61):** conversation-first Home with a persistent desktop Work Sessions sidebar and
+  a mobile sessions drawer; open session kept in `?session=<id>`;
   your messages with their planning outcome, task cards with runs (status, activity
   label, token totals), Stop per run and per session, pinned composer, Settings sheet
   (Macs, removal, sign-out), iOS safe areas. Shared tokens and components live in
@@ -65,9 +66,10 @@ planned capability as shipped.
   outside Work Sessions. Questions and status requests answer from control-plane state without
   creating hidden work. Answers persist their route and typed links: Sessions, pending approvals,
   pull requests, Tasks needing the owner with their trust decision, and active Runs (a Run link
-  opens Run detail via `?run=`). Explicit
-  execution language creates a Session; "continue", "do it" and equivalent follow a recent linked
-  Session in the selected repository. Role runtimes, models, effort and instructions remain
+  opens Run detail via `?run=`). Every Home message remains conversation: execution language,
+  including "continue" and "do it", creates an inert proposal. The owner reviews the full request
+  and selected Product/repository in a separate sheet; only **Open Work Session and start
+  planning** creates work, idempotently. Role runtimes, models, effort and instructions remain
   selectable in Settings → Agents.
 - **Owner-friendly UI:** choices use a styled bottom-sheet `Picker` instead of native selects
   (iOS); an idle Session reads **Idle** (not a yellow "Waiting") and has **Close session**
@@ -140,10 +142,11 @@ planned capability as shipped.
    field after parsing).
 2. **Global Orchestrator conversation, shipped with limits.** `orchestratorConversations`,
    `orchestratorMessages` and `orchestratorMessageLinks` persist the owner-level chat, its routing
-   decision (`answer`, `create`, `continue`) and typed navigation. The current backend answers
+   decision (new messages use `answer` or `propose`; historical `create`/`continue` values remain)
+   and typed navigation. The current backend answers
    architecture questions and deterministic status summaries directly, with typed links, and
-   creates no Session/Task/Run for those messages. Explicit work uses the existing SHA-bound
-   Session Supervisor; explicit continuation can reuse a Session linked by an earlier summary.
+   creates no Session/Task/Run for any Home message. Execution-looking text becomes an inert
+   proposal; the separate owner confirmation uses the existing SHA-bound Session Supervisor.
    Links cover Sessions, approvals, pull requests, attention Tasks, trust decisions and active Runs
    of the five most recent Sessions in scope; link status is a snapshot from answer time. Current
    limits: no external-ticket links (no connector).
@@ -153,10 +156,14 @@ planned capability as shipped.
    model for the reply. The model receives only that summary, its link list and the last 10
    exchanges, and runs read-only in an empty scratch directory (no repository, no workspace lease,
    approvals rejected, stopped after 5 minutes). It may `answer`, `ask` or `propose`; a proposal is
-   inert until the owner clicks **Open this work**, which opens a Session with an explicit request.
+   inert until the owner reviews it and clicks **Open Work Session and start planning**, which
+   opens a Session with an explicit request.
    Routing, links and Session creation stay backend-authorized. Without a Node, or when the model
    fails, the deterministic summary is the answer (`answeredBy: "deterministic"`, `modelError`).
-   There is no opt-out yet: every question uses tokens when a Node is online. **In-Session conversation is shipped:** Supervisor replies (Markdown, bounded to 8000),
+   There is no opt-out yet: every question uses tokens when a Node is online. The sidebar's
+   search and lifecycle filters currently apply to loaded pages only; server-wide discovery,
+   hide/restore, the dedicated attention index, new-session drafts and persistent navigation
+   while a Session is open remain unshipped. **In-Session conversation is shipped:** Supervisor replies (Markdown, bounded to 8000),
    builder/verifier final replies (`agentRuns.resultSummary`) and intermediate agent
    notes (`run.message`, redacted, ≤2000 chars, shown in Run detail Activity) are
    shown. Whether a model writes commentary is up to the model.
