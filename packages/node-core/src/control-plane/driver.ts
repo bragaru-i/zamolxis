@@ -623,8 +623,14 @@ export class ControlPlaneDriver {
           await runtime.stop({ nativeSessionId: session.nativeSessionId });
           // A streaming runtime.start reports the outcome; a waiting run has no owner.
           const owner = this.#streaming.get(runId);
-          if (owner) await owner;
-          else {
+          if (owner) {
+            // A recovery that already stopped following the run looks again.
+            if (this.#recovering.has(runId)) this.#nudged.add(runId);
+            await owner;
+          }
+          const recorded = this.store.getRuntimeSession(runId)?.status;
+          // Nobody reported the stopped run (no owner, or one that ended before the stop).
+          if (!owner || !recorded || !TERMINAL.includes(recorded)) {
             const events: NormalizedRunEventDto[] = [];
             const ends = TERMINAL.map((state) => `run.${state}`);
             for await (const event of this.#follow(

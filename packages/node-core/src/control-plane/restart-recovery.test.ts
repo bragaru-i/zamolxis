@@ -441,6 +441,47 @@ describe("runs survive a Node restart", { timeout: 30_000 }, () => {
     expect(second.store.getWorkspaceLease("build")).toBeUndefined();
   });
 
+  it("stops a waiting run whose stop arrived while the Node was down", async () => {
+    const m = machine([
+      { type: "waiting", reason: "Need input" },
+      { type: "success", summary: "Done" },
+    ]);
+    const first = m.boot();
+    first.workspaces.provision({
+      workspaceId: "build",
+      repositoryLocationId: "location",
+      baseRef: "main",
+    });
+    m.cloud.pending = [start("run-ws")];
+    await first.driver.tick();
+    first.store.close();
+
+    const second = m.boot();
+    m.cloud.status = "stopping";
+    m.cloud.pending = [
+      {
+        commandId: "stop-ws",
+        idempotencyKey: "stop:run-ws",
+        workstationId: "node",
+        type: "runtime.stop",
+        payload: { runId: "run-ws" },
+      },
+    ];
+    await second.driver.tick();
+    await second.driver.idle();
+    const all = m.events("run-ws");
+    expectContiguous(all);
+    expect(all.at(-1)?.type).toBe("run.stopped");
+    const complete = m.deliveries.findIndex((d) => d.kind === "run.complete");
+    const stopped = m.deliveries.findIndex(
+      (d) => d.kind === "command.complete" && d.commandId === "stop-ws",
+    );
+    expect(complete).toBeGreaterThanOrEqual(0);
+    expect(stopped).toBeGreaterThan(complete);
+    expect(m.deliveries.filter((d) => d.kind === "run.complete")).toHaveLength(1);
+    expect(second.store.getWorkspaceLease("build")).toBeUndefined();
+  });
+
   it("fails an interrupted run once it was continued twice", async () => {
     const m = machine([approval, { type: "success", summary: "Built" }]);
     const first = m.boot();
