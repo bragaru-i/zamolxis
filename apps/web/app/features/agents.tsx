@@ -98,7 +98,8 @@ const EFFORT_HELP: Record<string, string> = {
 // Only roles that start runs can be limited in how many run at once.
 const RUN_ROLES: readonly Role[] = ["builder", "verifier", "repair"];
 const RUNTIME_LABELS: Record<string, string> = { codex: "Codex", claude: "Claude" };
-export function runtimeLabel(runtime: string): string {
+export function runtimeLabel(runtime: string | undefined): string {
+  if (!runtime) return "Agent";
   return RUNTIME_LABELS[runtime] ?? runtime[0]?.toUpperCase() + runtime.slice(1);
 }
 function effortLabel(effort: string): string {
@@ -238,15 +239,19 @@ export function AgentsSettings({
   devices,
   initialRole,
   initialScope = "",
+  compact = false,
 }: {
   active: boolean;
   devices: DeviceRuntimes[] | undefined;
   /** Opens one role directly, e.g. from a Session's work map. */
   initialRole?: Role;
   initialScope?: string;
+  /** Only the editor for `initialRole`, for a surface that already describes the role. */
+  compact?: boolean;
 }) {
   const [scope, setScope] = useState(initialScope);
   const [editing, setEditing] = useState<Role | undefined>(initialRole);
+  const [saved, setSaved] = useState(false);
   const products = useQuery(api.supervisor.products, active ? {} : "skip") as Product[] | undefined;
   const global = useQuery(api.agentProfiles.list, active ? {} : "skip") as Profile[] | undefined;
   const productId = scope ? (scope as Id<"products">) : undefined;
@@ -276,6 +281,31 @@ export function AgentsSettings({
   const open = editing ? ROLES.find((item) => item.role === editing) : undefined;
   if (open && !loading) {
     const { effective, own, shown } = roleState(open.role);
+    const editor = (
+      <ProfileEditor
+        key={`${open.role}:${scope}`}
+        role={open.role}
+        label={open.label}
+        scopeName={scopeName}
+        productId={productId}
+        existing={own}
+        prefill={own ?? shown}
+        runtimes={runtimeChoices(devices, (own ?? shown)?.runtime)}
+        onDone={() => (compact ? setSaved(true) : setEditing(undefined))}
+      />
+    );
+    if (compact)
+      return (
+        <section className="z-stack" aria-label={`Change the ${open.label} agent`}>
+          <p className="z-xsmall z-muted">
+            {productId
+              ? `Saved for ${scopeName} only. Settings → Agents changes it for all products.`
+              : "Saved for all products."}
+          </p>
+          {saved && <Notice tone="success">Saved. The next {open.label} run uses it.</Notice>}
+          {editor}
+        </section>
+      );
     return (
       <section className="z-stack" aria-label={`${open.label} agent`}>
         <Button
@@ -306,17 +336,7 @@ export function AgentsSettings({
           productId={productId}
           scopeName={scopeName}
         />
-        <ProfileEditor
-          key={`${open.role}:${scope}`}
-          role={open.role}
-          label={open.label}
-          scopeName={scopeName}
-          productId={productId}
-          existing={own}
-          prefill={own ?? shown}
-          runtimes={runtimeChoices(devices, (own ?? shown)?.runtime)}
-          onDone={() => setEditing(undefined)}
-        />
+        {editor}
       </section>
     );
   }

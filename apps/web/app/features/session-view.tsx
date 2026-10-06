@@ -36,6 +36,7 @@ import { STEERABLE, SteerRun } from "./steer";
 import { SupervisorLog } from "./supervisor-log";
 import { SessionUsage } from "./usage";
 import { useSearchParam } from "./use-location";
+import { WorkMap } from "./work-map";
 
 interface Session {
   _id: Id<"workSessions">;
@@ -234,6 +235,15 @@ export function SessionView({
             </Button>
           </div>
         </div>
+      )}
+      {session && (sortedTasks.length > 0 || session.status === "planning") && (
+        <WorkMap
+          ready={ready}
+          productId={messages?.[0]?.productId}
+          sessionStatus={session.status}
+          tasks={sortedTasks}
+          runs={runs ?? []}
+        />
       )}
       {session === undefined || messages === undefined ? (
         <p className="z-muted" role="status">

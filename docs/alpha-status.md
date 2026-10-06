@@ -74,7 +74,14 @@ planned capability as shipped.
   Builder's model, which Mac is online, tokens in the last 7 days). Phones show the menu or one
   page with a back button; wide screens show the menu as a left column next to the page. Agents
   is a compact list of roles; tapping one opens its description and editor. Usage and Settings are
-  also at the top of the Home sidebar, and the Mac status in the header opens Macs directly. Questions and status requests answer from control-plane state without
+  also at the top of the Home sidebar, and the Mac status in the header opens Macs directly.
+- **Session work map:** a Session with tasks shows how its work moves in five plain steps (Plan,
+  Build, Check, Fix, Ready), each with its state derived from task phases and runs (for example
+  "1 agent writing code · 2 of 3 done", "Not needed so far"), and the agent that did it (the
+  latest run's runtime and model, else the effective profile). Collapsed to one summary line on
+  phones, a horizontal strip on wide screens. Tapping a step explains it and offers "Change the
+  ... agent", which saves a profile for that Session's Product (next runs only; Integration has
+  no agent in Alpha). Questions and status requests answer from control-plane state without
   creating hidden work. Answers persist their route and typed links: Sessions, pending approvals,
   pull requests, Tasks needing the owner with their trust decision, and active Runs (a Run link
   opens Run detail via `?run=`). Every Home message remains conversation: execution language,
