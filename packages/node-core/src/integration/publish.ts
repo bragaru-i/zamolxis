@@ -35,6 +35,19 @@ export interface PullRequestInput {
   readonly head: string;
   readonly title: string;
   readonly body: string;
+  readonly authentication?: GithubCredential;
+}
+export interface GithubCredential {
+  readonly login: string;
+  readonly token: string;
+}
+export interface GithubCredentialProvider {
+  get(input: {
+    repositoryId: string;
+    host: string;
+    owner: string;
+    repo: string;
+  }): Promise<GithubCredential | undefined>;
 }
 /**
  * Opens (or finds) a pull request with the repository's own credentials. Resolves to the
@@ -45,6 +58,7 @@ export interface PullRequestOpener {
 }
 export interface PublishOptions {
   readonly pullRequests: PullRequestOpener;
+  readonly githubCredentials?: GithubCredentialProvider;
   // Hosts treated as GitHub for pull requests and compare links.
   readonly githubHosts?: readonly string[];
 }
@@ -93,12 +107,25 @@ export async function publishIntegration(
     !request.branch.endsWith(request.subjectSha.slice(0, 7))
   )
     throw new Error("PUBLISH_INVALID_BRANCH");
+  const github = githubRepository(url, options.githubHosts ?? ["github.com"]);
+  const authentication = github
+    ? await options.githubCredentials?.get({ repositoryId: workspace.repositoryId, ...github })
+    : undefined;
+  if (github && options.githubCredentials && !authentication)
+    throw new Error("PUBLISH_GITHUB_AUTH_REQUIRED");
   try {
-    pushCommit(workspace.path, request.subjectSha, request.branch);
+    pushCommit(
+      workspace.path,
+      request.subjectSha,
+      request.branch,
+      "origin",
+      authentication
+        ? { username: authentication.login, password: authentication.token }
+        : undefined,
+    );
   } catch {
     throw new Error("PUBLISH_PUSH_FAILED");
   }
-  const github = githubRepository(url, options.githubHosts ?? ["github.com"]);
   if (!github) return { remoteBranch: request.branch, base };
   const compareUrl = `https://${github.host}/${github.owner}/${github.repo}/compare/${base}...${request.branch}`;
   let prUrl: string | undefined;
@@ -111,6 +138,7 @@ export async function publishIntegration(
       // Titles and bodies leave the Mac: redact anything that looks like a secret.
       title: redactSecrets(request.title).slice(0, 256),
       body: redactSecrets(request.body).slice(0, 60_000),
+      ...(authentication ? { authentication } : {}),
     });
   } catch {
     throw new Error("PUBLISH_PR_FAILED");
@@ -120,10 +148,16 @@ export async function publishIntegration(
   return { remoteBranch: request.branch, base, compareUrl, ...(prUrl ? { prUrl } : {}) };
 }
 
-function gh(args: readonly string[], input?: string): string {
+function gh(args: readonly string[], input?: string, authentication?: GithubCredential): string {
   return execFileSync("gh", args, {
     encoding: "utf8",
-    env: { ...process.env, GH_PROMPT_DISABLED: "1", GH_NO_UPDATE_NOTIFIER: "1", NO_COLOR: "1" },
+    env: {
+      ...process.env,
+      GH_PROMPT_DISABLED: "1",
+      GH_NO_UPDATE_NOTIFIER: "1",
+      NO_COLOR: "1",
+      ...(authentication ? { GH_TOKEN: authentication.token } : {}),
+    },
     timeout: 60_000,
     maxBuffer: 1024 * 1024,
     input,
@@ -137,27 +171,33 @@ function gh(args: readonly string[], input?: string): string {
  */
 export const ghPullRequestOpener: PullRequestOpener = {
   async open(input) {
-    try {
-      gh(["auth", "status", "--hostname", input.host]);
-    } catch {
-      return undefined;
+    if (!input.authentication) {
+      try {
+        gh(["auth", "status", "--hostname", input.host]);
+      } catch {
+        return undefined;
+      }
     }
     const repository = `${input.host}/${input.owner}/${input.repo}`;
     // A retry after a lost result finds the pull request opened the first time.
-    const existing = gh([
-      "pr",
-      "list",
-      "--repo",
-      repository,
-      "--head",
-      input.head,
-      "--state",
-      "open",
-      "--json",
-      "url",
-      "--jq",
-      '.[0].url // ""',
-    ]);
+    const existing = gh(
+      [
+        "pr",
+        "list",
+        "--repo",
+        repository,
+        "--head",
+        input.head,
+        "--state",
+        "open",
+        "--json",
+        "url",
+        "--jq",
+        '.[0].url // ""',
+      ],
+      undefined,
+      input.authentication,
+    );
     if (existing) return existing;
     const output = gh(
       [
@@ -175,6 +215,7 @@ export const ghPullRequestOpener: PullRequestOpener = {
         "-",
       ],
       input.body,
+      input.authentication,
     );
     return output.split("\n").filter(Boolean).at(-1);
   },

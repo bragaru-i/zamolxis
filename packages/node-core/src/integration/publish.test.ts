@@ -87,6 +87,17 @@ describe("publishing a trusted integration branch", () => {
     const result = await publishIntegration(f.workspaces.inspect("integration"), f.request, {
       pullRequests: f.opener("https://example.invalid/team/repo/pull/7"),
       githubHosts: ["example.invalid"],
+      githubCredentials: {
+        get: async (repository) => {
+          expect(repository).toEqual({
+            repositoryId: "repo",
+            host: "example.invalid",
+            owner: "team",
+            repo: "repo",
+          });
+          return { login: "publisher", token: "test-token" };
+        },
+      },
     });
     expect(f.remoteRef(f.request.branch)).toBe(f.sha);
     expect(f.remoteRef("main")).toBe(f.sha);
@@ -103,6 +114,7 @@ describe("publishing a trusted integration branch", () => {
       repo: "repo",
       base: "main",
       head: f.request.branch,
+      authentication: { login: "publisher", token: "test-token" },
     });
     // Bodies leave the Mac redacted.
     expect(f.opened[0]?.body).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz0123456789");
@@ -130,6 +142,18 @@ describe("publishing a trusted integration branch", () => {
     });
     expect(plain).toEqual({ remoteBranch: f.request.branch, base: "main" });
     expect(f.opened).toHaveLength(1);
+  });
+
+  it("refuses a GitHub publication when the configured repository account is unavailable", async () => {
+    const f = fixture();
+    await expect(
+      publishIntegration(f.workspaces.inspect("integration"), f.request, {
+        pullRequests: f.opener(undefined),
+        githubHosts: ["example.invalid"],
+        githubCredentials: { get: async () => undefined },
+      }),
+    ).rejects.toThrow("PUBLISH_GITHUB_AUTH_REQUIRED");
+    expect(f.remoteRef(f.request.branch)).toBeUndefined();
   });
 
   it("refuses dirty worktrees, other commits, default or foreign branches and plain worktrees", async () => {

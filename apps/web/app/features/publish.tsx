@@ -23,6 +23,8 @@ const PUBLISH_FAILURES: Record<string, string> = {
   PUBLISH_SHA_MISMATCH: "The integration branch on your Mac no longer matches the trusted commit.",
   PUBLISH_PUSH_FAILED:
     "Your Mac couldn't push the branch. Check the repository's sign-in and push hooks, or whether the branch name is already taken.",
+  PUBLISH_GITHUB_AUTH_REQUIRED:
+    "The GitHub account selected for this repository needs to reconnect. Run Zamolxis setup on its Mac and update the repository publishing account.",
   PUBLISH_PR_FAILED:
     "The branch was pushed, but the pull request couldn't be opened. Try again, or open it on GitHub.",
   PUBLISH_NO_REMOTE: "The repository has no origin remote to push to.",
