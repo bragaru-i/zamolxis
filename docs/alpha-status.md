@@ -316,11 +316,17 @@ module aliases exist only when the variable is set.
    approval, sandbox or capacity behaviour. Missing: any cost data source (Codex and
    Claude report tokens only, so the UI says "Subscription"); the share of the Codex
    5-hour and weekly limits a Session used (Codex reports `rate_limits` per account,
-   not per thread, so attributing it to a Session needs a design); the before/after
-   token measurement for the same kind of task that #114 asks for still has to be taken
-   on a real Session (the lean Codex config and the Supervisor guidance shipped without
-   it). Recommended but not enforced: a smaller model or low effort for the Verifier and
-   Supervisor profiles.
+   not per thread, so attributing it to a Session needs a design). Measured for #114
+   (2026-10-06, same one-line prompt, same directory, `codex exec` with a home holding
+   only the login versus the Node's lean `config.toml`): input per model call fell from
+   14,303 to 7,502 tokens; the multi-agent developer blocks disappeared and the skills
+   block shrank from 4,183 to 1,755 characters. The Builder-level before/after on a
+   logo-redesign-sized Session still has to be taken on the Mac: on the Linux dev
+   machine AppArmor blocks unprivileged user namespaces, so Codex's bubblewrap sandbox
+   cannot write files and the "runs text intent" acceptance times out on main and on
+   the branch alike (the read-only Supervisor, Orchestrator and model-catalog
+   acceptances pass there with the lean config). Recommended but not enforced: a
+   smaller model or low effort for the Verifier and Supervisor profiles.
 5. **Identity (#47), mostly shipped.** Signed-in devices show a self-reported label
    ("Safari on iPhone"); a minimal service worker makes the app installable with an
    offline page (no caching of app data or API responses); a second-account isolation

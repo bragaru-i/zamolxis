@@ -200,6 +200,13 @@ against a written contract. When lanes are integrated:
   Codex features Zamolxis agents never use are disabled in the Node's Codex home
   (`codex-home.ts`, `CODEX_CONFIG`); a Node restart rewrites that file.
 - Setup's service reload must wait for launchd to finish unloading (#70).
+- **Linux dev machines:** with `kernel.apparmor_restrict_unprivileged_userns = 1`
+  (Ubuntu default) Codex's bubblewrap sandbox cannot create user namespaces, every
+  file write and command in a Builder fails ("Failed to write file"), and the
+  "runs text intent" real-Codex acceptance times out at 240 s. `codex exec` still
+  answers read-only prompts and the Supervisor/Orchestrator/models acceptances pass.
+  Run the Builder acceptance on macOS (or relax the sysctl as root) before merging
+  runtime changes.
 - GitHub CI sometimes leaves a job queued without a runner until it is cancelled
   after 15 minutes; re-run it before treating it as a failure.
 - "Open pull request" never uses the Mac's active `gh` account or global Git
