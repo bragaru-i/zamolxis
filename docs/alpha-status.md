@@ -68,7 +68,13 @@ planned capability as shipped.
   (`?chat=<id>`, titled after that message, at most 80 characters). Earlier chats are listed in
   the sidebar and can be reopened, renamed or deleted (deleting hides the chat and closes it to
   new messages; its history and any Work Session it opened are kept). Each chat has its own model
-  history; another owner's chat is never readable or continuable. Questions and status requests answer from control-plane state without
+  history; another owner's chat is never readable or continuable.
+- **Settings:** a menu of five pages in order of use (Agents, Macs & repositories, Usage,
+  Storage, People & devices), each row showing its current state in one line (for example the
+  Builder's model, which Mac is online, tokens in the last 7 days). Phones show the menu or one
+  page with a back button; wide screens show the menu as a left column next to the page. Agents
+  is a compact list of roles; tapping one opens its description and editor. Usage and Settings are
+  also at the top of the Home sidebar, and the Mac status in the header opens Macs directly. Questions and status requests answer from control-plane state without
   creating hidden work. Answers persist their route and typed links: Sessions, pending approvals,
   pull requests, Tasks needing the owner with their trust decision, and active Runs (a Run link
   opens Run detail via `?run=`). Every Home message remains conversation: execution language,
