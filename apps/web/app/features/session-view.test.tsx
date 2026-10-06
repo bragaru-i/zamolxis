@@ -3,7 +3,14 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Id } from "../../../../convex/_generated/dataModel";
-import { assistantReply, likelyLongSummary, startsNewSession, usageLine } from "./conversation";
+import {
+  assistantReply,
+  elapsedLabel,
+  likelyLongSummary,
+  startsNewSession,
+  thinkingDetail,
+  usageLine,
+} from "./conversation";
 
 const state = vi.hoisted(() => ({ data: {} as Record<string, unknown> }));
 vi.mock("convex/react", () => ({
@@ -57,6 +64,46 @@ describe("SessionView conversation", () => {
     expect(html).toContain('role="status"');
     expect(html).toContain("Thinking…");
     expect(html).toContain("Reading the repository");
+  });
+
+  it("shows the Supervisor's activity, elapsed time, usage so far and a Stop button", () => {
+    const html = render({ status: "planning" }, [
+      {
+        planStatus: "acknowledged",
+        progress: { activity: "Reading convex/schema.ts", startedAt: Date.now() - 65_000 },
+        supervisor: { totalTokens: 1500 },
+      },
+    ]);
+    expect(html).toContain("Thinking…");
+    expect(html).toContain("Reading convex/schema.ts · 1m 05s");
+    expect(html).toContain("1,500 tokens");
+    expect(html).toContain('aria-label="Stop the Supervisor"');
+    expect(html).toMatch(/aria-label="Stop the Supervisor"[^>]*>Stop</);
+  });
+
+  it("shows a stop in progress and then the stopped state", () => {
+    const stopping = render({ status: "planning" }, [
+      { planStatus: "acknowledged", stopping: true, progress: { startedAt: Date.now() } },
+    ]);
+    expect(stopping).toContain("Stopping… · 0s");
+    expect(stopping).toMatch(
+      /<button[^>]*disabled=""[^>]*aria-label="Stop the Supervisor">Stopping…</,
+    );
+    const stopped = render({ status: "waiting" }, [
+      { planStatus: "failed", planError: "SUPERVISOR_STOPPED", stopped: true },
+    ]);
+    expect(stopped).toContain("Stopped before answering.");
+    expect(stopped).not.toContain("Thinking…");
+    expect(stopped).not.toContain("couldn&#x27;t plan");
+    expect(stopped).not.toContain("Stop the Supervisor");
+  });
+
+  it("offers no Stop once the Supervisor decided", () => {
+    const html = render({ status: "running" }, [
+      { planStatus: "acknowledged", decision: "plan", reply: "Two parts." },
+    ]);
+    expect(html).toContain("Preparing tasks");
+    expect(html).not.toContain("Stop the Supervisor");
   });
 
   it("renders an answer as safe Markdown with usage", () => {
@@ -132,6 +179,39 @@ describe("conversation helpers", () => {
       assistantReply({ ...base, planStatus: "acknowledged", decision: "plan", reply: "ok" }),
     ).toEqual({ kind: "thinking", reply: "ok" });
     expect(assistantReply({ ...base, planStatus: "failed", planError: "x" }).kind).toBe("error");
+    expect(
+      assistantReply({
+        ...base,
+        planStatus: "claimed",
+        progress: { activity: "Running rg", startedAt: 5 },
+      }),
+    ).toEqual({ kind: "thinking", stoppable: true, activity: "Running rg", startedAt: 5 });
+    expect(assistantReply({ ...base, planStatus: "expired", stopped: true })).toEqual({
+      kind: "stopped",
+    });
+    expect(
+      assistantReply({ ...base, planStatus: "failed", planError: "SUPERVISOR_STOPPED" }),
+    ).toEqual({ kind: "stopped" });
+    // An answer that finished before the stop wins.
+    expect(
+      assistantReply({ ...base, planned: true, decision: "answer", reply: "Hi", stopping: true }),
+    ).toEqual({ kind: "answer", reply: "Hi" });
+  });
+
+  it("formats the elapsed time and the thinking line", () => {
+    expect(elapsedLabel(-5)).toBe("0s");
+    expect(elapsedLabel(12_400)).toBe("12s");
+    expect(elapsedLabel(65_000)).toBe("1m 05s");
+    expect(elapsedLabel(3_720_000)).toBe("1h 02m");
+    expect(thinkingDetail({ kind: "thinking" }, "Reading the repository", 0)).toBe(
+      "Reading the repository",
+    );
+    expect(
+      thinkingDetail({ kind: "thinking", activity: "Reading a.ts", startedAt: 0 }, "x", 3000),
+    ).toBe("Reading a.ts · 3s");
+    expect(
+      thinkingDetail({ kind: "thinking", activity: "a", stopping: true, startedAt: 0 }, "x", 0),
+    ).toBe("Stopping… · 0s");
   });
 
   it("formats usage only when reported", () => {
