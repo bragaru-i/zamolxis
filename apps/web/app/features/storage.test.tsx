@@ -94,7 +94,7 @@ describe("StorageSettings", () => {
     state.data = { "workspaces:storage": summary([], 1) };
     const html = render();
     expect(html).toContain("No Mac paired yet.");
-    expect(html).toMatch(/<option value="1" selected="">1 day<\/option>/);
+    expect(html).toMatch(/class="z-picker__value">1 day/);
   });
 
   it("pluralizes counts", () => {
