@@ -475,3 +475,22 @@ it.skipIf(process.env.ZAMOLXIS_CODEX_RESTART_ACCEPTANCE !== "1")(
   },
   300_000,
 );
+
+it("lets the owner dismiss a lost run, releasing its workspace and capacity", {
+  timeout: 60_000,
+}, async () => {
+  const f = await fixture();
+  const { runId, workspaceId } = await f.interruptedRun();
+  const second = await f.boot({ native: new FakeNativeStore() });
+  await second.driver.tick();
+  await second.driver.idle();
+  expect((await f.user.query(api.runs.get, { runId: runId as never })).status).toBe("lost");
+  await f.user.mutation(api.runs.stop, { runId: runId as never });
+  const run = await f.user.query(api.runs.get, { runId: runId as never });
+  expect(run.status).toBe("stopped");
+  expect(run.completedAt).toBeDefined();
+  const workspace = await f.t.run((ctx) => ctx.db.get(workspaceId as never));
+  expect(workspace).not.toMatchObject({ ownerRunId: runId });
+  // A best-effort stop still reaches the Node in case the session is alive after all.
+  expect((await f.commands()).some((command) => command.type === "runtime.stop")).toBe(true);
+});

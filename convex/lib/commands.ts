@@ -1,8 +1,8 @@
-import { valueKey } from "./value";
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
-import { settleRun } from "./settlement";
 import { fail, load } from "./access";
+import { settleRun } from "./settlement";
+import { valueKey } from "./value";
 export async function enqueue(
   ctx: MutationCtx,
   workstationId: Id<"workstations">,
@@ -41,7 +41,10 @@ export async function enqueue(
 export async function stopRun(ctx: MutationCtx, runId: Id<"agentRuns">) {
   const run = await load(ctx, "agentRuns", runId);
   if (["completed", "failed", "stopped"].includes(run.status)) return;
-  const next = run.status === "queued" ? "stopped" : "stopping";
+  // A lost run has no live session the Node can interrupt; the owner's stop is the human
+  // reconciliation that settles it and releases its capacity. The stop command below still
+  // reaches the Node in case the session turns out to be alive.
+  const next = run.status === "queued" || run.status === "lost" ? "stopped" : "stopping";
   const { assertRunTransition } = await import("@zamolxis/domain");
   if (run.status !== next) assertRunTransition(run.status, next);
   await ctx.db.patch("agentRuns", runId, { status: next });
@@ -59,6 +62,6 @@ export async function stopRun(ctx: MutationCtx, runId: Id<"agentRuns">) {
       changedFileCount: workspace.changedFileCount,
     });
   }
-  if (next === "stopping")
+  if (next === "stopping" || run.status === "lost")
     await enqueue(ctx, run.workstationId, "runtime.stop", "run", runId, { runId }, `stop:${runId}`);
 }
