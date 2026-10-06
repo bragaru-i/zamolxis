@@ -118,6 +118,14 @@ shipped or a tested implementation as proven in production.
   activity, elapsed time, tokens so far and cost when a provider reported one; tapping opens the
   Session or Run detail, Stop stops a run. Session task cards use the same agent rows. Cost is
   still never reported by Codex or Claude (see Usage).
+- **Run on (2026-10-06):** when more than one computer has the repository, the proposal review
+  offers which computer runs the Session (`repositories.computers`: online state and agents per
+  computer; `supervisor.submit`/`orchestrator.openProposal` take `workstationId`). The chosen
+  computer must have the repository and be online with the Builder's runtime, else
+  `INVALID_ARGUMENT`/`NODE_OR_RUNTIME_OFFLINE`. Every new Session stores `workstationId`;
+  follow-ups stay on it and the Session header says "Runs on …". Sessions from before have no
+  computer recorded and keep the old first-online choice per message. Not yet: a per-Product
+  default, and choosing in the Session composer when an ended Session starts a new one.
 - **Owner-friendly UI:** choices use a styled `Picker` (a popover list on wide screens, a bottom
   drawer on phones) and dialogs are centered on wide screens and drawers with a grab handle on
   phones; a drawer inside a drawer (a Picker in Settings → Agents on a phone) no longer closes
