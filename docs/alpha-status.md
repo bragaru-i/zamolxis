@@ -76,8 +76,9 @@ planned capability as shipped.
    applies to runtimes that pause. Native sessions live in Node memory: a Node
    restart loses runs left waiting or in `needs_approval` (reconciled through their
    start command). A follow-up message in the composer is a new Supervisor turn in
-   the same session; a reopened *failed* session can return to failed on the next
-   lifecycle refresh (`convex/lib/lifecycle.ts`).
+   the same session. A reopened session is judged only by work planned since it
+   reopened (`workSessions.reopenedAt`), so an earlier failed task no longer pulls it
+   back to failed.
 4. **Profiles and usage (#48), mostly shipped.** Missing: editing profile name and
    max concurrency in the UI, instruction/policy references on profiles, any cost data
    source.

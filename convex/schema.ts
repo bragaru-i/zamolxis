@@ -231,6 +231,8 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
     completedAt: v.optional(v.number()),
+    // Set when a follow-up reopens a finished Session; earlier tasks no longer decide its outcome.
+    reopenedAt: v.optional(v.number()),
   })
     .index("by_owner_activity", ["ownerId", "lastActivityAt"])
     .index("by_owner_status_activity", ["ownerId", "status", "lastActivityAt"])

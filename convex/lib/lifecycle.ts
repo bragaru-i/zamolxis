@@ -1,9 +1,9 @@
 import { evaluateTrust } from "@zamolxis/application";
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
+import { allocateWorkspace } from "../workspaces";
 import { fail, load } from "./access";
 import { enqueue } from "./commands";
-import { allocateWorkspace } from "../workspaces";
 export const MAX_REPAIR_ATTEMPTS = 2;
 export async function refreshSession(ctx: MutationCtx, sessionId: Id<"workSessions">) {
   const session = await load(ctx, "workSessions", sessionId);
@@ -12,11 +12,14 @@ export async function refreshSession(ctx: MutationCtx, sessionId: Id<"workSessio
     .withIndex("by_session", (q) => q.eq("workSessionId", sessionId))
     .take(101);
   if (tasks.length > 100) fail("LIMIT_EXCEEDED");
+  // After a reopen, only work planned since then decides failure or completion; tasks
+  // that still need the user keep the Session waiting on them.
+  const current = tasks.filter((task) => task.createdAt >= (session.reopenedAt ?? 0));
   const complete =
-    tasks.length > 0 &&
-    tasks.every((task) => task.status === "completed" && task.phase === "completed");
+    current.length > 0 &&
+    current.every((task) => task.status === "completed" && task.phase === "completed");
   const needsInput = tasks.some((task) => task.phase === "needs_input");
-  const failed = tasks.some((task) => task.status === "failed");
+  const failed = current.some((task) => task.status === "failed");
   const active = session.activeRunCount;
   await ctx.db.patch("workSessions", sessionId, {
     status:
