@@ -605,7 +605,7 @@ it("stores bounded Supervisor progress only from the planning Node while in flig
     activity: "Reading convex/schema.ts",
   });
   expect(message?.supervisor).toEqual({ modelActual: "gpt-5", totalTokens: 50 });
-  const startedAt = message?.progress.startedAt as number;
+  const startedAt = message?.progress?.startedAt as number;
   // Reports closer than half a second apart are dropped.
   await report({ activity: "Running rg TODO" });
   stored = await f.t.run((ctx) => ctx.db.get("textCommands", textCommandId));
