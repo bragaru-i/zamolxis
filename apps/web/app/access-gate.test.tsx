@@ -57,7 +57,8 @@ it("renders the sessions workspace only after a database grant", () => {
   state.accessStatus = "allowed";
   const html = renderToStaticMarkup(createElement(HomePage));
   expect(html).toContain("Sessions");
-  expect(html).toContain("Ask Zamolxis, or tell it to start work");
+  expect(html).toContain("Ask Zamolxis");
+  expect(html).toContain("Sending a message does not start work");
   expect(html).not.toContain("Access pending");
 });
 it("offers Google sign-in to signed-out users", () => {
