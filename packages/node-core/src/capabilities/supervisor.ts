@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { type PlannedTask, validatePlan } from "@zamolxis/application";
 import type { RepositoryContext } from "@zamolxis/contracts";
+import { redactSecrets } from "@zamolxis/runtime-core";
 
 export type SupervisorDecisionKind = "answer" | "plan" | "ask";
 export interface SupervisorDecision {
@@ -144,8 +145,8 @@ function normalizeTask(value: unknown, checks: RepositoryChecks): PlannedTask {
   const modalities = strings(value.requiredModalities);
   return {
     key: value.key,
-    title: value.title.trim().slice(0, 200),
-    description: value.description,
+    title: redactSecrets(value.title).trim().slice(0, 200),
+    description: redactSecrets(value.description),
     dependencies: strings(value.dependencies) ?? [],
     verificationScripts: known?.length ? [...new Set(known)] : [...checks.verificationScripts],
     requiredModalities: modalities?.length
@@ -167,8 +168,9 @@ function ordered(tasks: PlannedTask[]): PlannedTask[] {
   }
   return result;
 }
+// The runtime passes the Supervisor's raw reply; redact every text that leaves the Node.
 function bounded(text: string): string {
-  return text.trim().slice(0, REPLY_LIMIT);
+  return redactSecrets(text).trim().slice(0, REPLY_LIMIT);
 }
 
 // Never starts builders on doubtful output: anything unusable becomes an answer.

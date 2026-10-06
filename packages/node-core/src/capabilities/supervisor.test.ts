@@ -35,6 +35,27 @@ describe("parseSupervisorDecision", () => {
       ),
     ).toEqual({ decision: "answer", reply: "The build uses turbo.", tasks: [] });
   });
+  it("keeps task keys and redacts secrets in the reply and task text", () => {
+    const decision = parseSupervisorDecision(
+      JSON.stringify({
+        decision: "plan",
+        reply: "Deploy with GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz012345 set.",
+        tasks: [
+          {
+            ...task("outcome"),
+            title: "Use password: hunter2",
+            description: "Call the API with Authorization: Bearer abc.def.ghi",
+          },
+        ],
+      }),
+      checks,
+    );
+    expect(decision.decision).toBe("plan");
+    expect(decision.tasks[0]?.key).toBe("outcome");
+    expect(decision.reply).toBe("Deploy with GITHUB_TOKEN=*** set.");
+    expect(decision.tasks[0]?.title).toBe("Use password: ***");
+    expect(decision.tasks[0]?.description).not.toContain("abc.def.ghi");
+  });
   it("accepts a fenced ask decision surrounded by prose", () => {
     const raw = `Here is my decision:\n\`\`\`json\n${JSON.stringify({ decision: "ask", reply: "Which page?" })}\n\`\`\`\n`;
     expect(parseSupervisorDecision(raw, checks)).toEqual({

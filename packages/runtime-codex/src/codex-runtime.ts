@@ -16,6 +16,7 @@ import {
   maxRisk,
   type ResumeRunInput,
   type RuntimeSessionSnapshot,
+  boundText,
   redactSecrets,
   type StartRunInput,
 } from "@zamolxis/runtime-core";
@@ -370,7 +371,12 @@ export class CodexRuntime implements AgentRuntime {
         this.#emit(session, "files.changed", { paths });
       } else if (item.type === "agentMessage" && done) {
         if (typeof item.text === "string" && item.text.trim())
-          session.reply = redactedText(item.text, REPLY_LIMIT);
+          // The Supervisor's reply is structured JSON that the Node parses and redacts
+          // field by field; redacting it here would corrupt values such as task keys.
+          session.reply =
+            session.input.role === "supervisor"
+              ? boundText(item.text, REPLY_LIMIT)
+              : redactedText(item.text, REPLY_LIMIT);
       }
       const activity = describeItem(item, done);
       if (activity?.kind === "activity")
