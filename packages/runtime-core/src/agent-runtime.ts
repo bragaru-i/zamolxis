@@ -6,6 +6,7 @@ import type {
   WorkspaceId,
   WorkstationId,
 } from "@zamolxis/contracts";
+import type { RuntimeModelDto } from "./models";
 
 // "supervisor" is a Node-local, read-only planning run; it is never reported as a backend agent run.
 export type AgentRole = "builder" | "verifier" | "repair" | "supervisor";
@@ -96,6 +97,11 @@ export interface AgentRuntime {
     readonly decision: ApprovalDecision;
   }): Promise<void>;
   inspect(nativeSessionId: string): Promise<RuntimeSessionSnapshot>;
+  /**
+   * The models this runtime offers, bounded by RUNTIME_MODEL_LIMITS. Adapters that cannot
+   * enumerate models omit it. Throws on failure; callers keep their previous list.
+   */
+  listModels?(): Promise<RuntimeModelDto[]>;
   subscribe(input: {
     readonly nativeSessionId: string;
     readonly afterSequence?: number;

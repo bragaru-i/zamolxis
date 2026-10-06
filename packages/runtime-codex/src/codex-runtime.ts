@@ -1,4 +1,6 @@
-import { isAbsolute, relative, resolve } from "node:path";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import type {
   ApprovalDecision,
   ApprovalKind,
@@ -11,6 +13,7 @@ import {
   type AgentRuntime,
   approvalIdFor,
   approvalSummary,
+  boundRuntimeModels,
   boundText,
   classifyCommandRisk,
   insideWorkspace,
@@ -18,6 +21,8 @@ import {
   RESTART_CONTINUATION,
   RESTART_INTERRUPTED_CODE,
   type ResumeRunInput,
+  RUNTIME_MODEL_LIMITS,
+  type RuntimeModelDto,
   type RuntimeSessionSnapshot,
   redactSecrets,
   type StartRunInput,
@@ -83,6 +88,8 @@ interface PendingApproval {
   answer: (decision: ApprovalDecision) => Record<string, unknown>;
 }
 const REPLY_LIMIT = 8000;
+// `model/list` pages read before the catalog is considered complete.
+const MODEL_PAGES = 5;
 const APPROVAL_TIMEOUT_MS = 30 * 60 * 1000;
 const COMMAND_APPROVAL = "item/commandExecution/requestApproval";
 const FILE_APPROVAL = "item/fileChange/requestApproval";
@@ -156,6 +163,57 @@ export class CodexRuntime implements AgentRuntime {
       supportsSubagents: false,
       canApprove: true,
     };
+  }
+  /**
+   * The models app-server lists (`model/list`), hidden ones excluded. The connection runs
+   * in a private scratch directory, never a workspace, and is closed afterwards.
+   */
+  async listModels(): Promise<RuntimeModelDto[]> {
+    const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "zamolxis-models-")));
+    let client: CodexConnection | undefined;
+    try {
+      client =
+        this.options.connect?.(scratch) ??
+        new AppServerClient({
+          cwd: scratch,
+          ...(this.options.executable ? { executable: this.options.executable } : {}),
+        });
+      await client.initialize();
+      const models: unknown[] = [];
+      let cursor: string | undefined;
+      for (let page = 0; page < MODEL_PAGES; page++) {
+        const result = record(await client.request("model/list", cursor ? { cursor } : {}));
+        if (!Array.isArray(result.data)) throw new Error("CODEX_INVALID_RESPONSE");
+        for (const entry of result.data) {
+          if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+          const model = entry as Record<string, unknown>;
+          if (model.hidden === true) continue;
+          models.push({
+            id: typeof model.model === "string" && model.model ? model.model : model.id,
+            displayName: model.displayName,
+            description: model.description,
+            isDefault: model.isDefault,
+            efforts: Array.isArray(model.supportedReasoningEfforts)
+              ? model.supportedReasoningEfforts.map((effort: unknown) =>
+                  effort && typeof effort === "object"
+                    ? (effort as Record<string, unknown>).reasoningEffort
+                    : effort,
+                )
+              : undefined,
+            defaultEffort: model.defaultReasoningEffort,
+          });
+        }
+        cursor =
+          typeof result.nextCursor === "string" && result.nextCursor
+            ? result.nextCursor
+            : undefined;
+        if (!cursor || models.length >= RUNTIME_MODEL_LIMITS.models) break;
+      }
+      return boundRuntimeModels(models);
+    } finally {
+      client?.close();
+      rmSync(scratch, { recursive: true, force: true });
+    }
   }
   start(input: StartRunInput): Promise<RuntimeSessionSnapshot> {
     if (!isAbsolute(input.workspace.cwd) || !input.workspace.branch || !input.workspace.headSha)

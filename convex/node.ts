@@ -1,6 +1,7 @@
 import { applyRunEvent } from "@zamolxis/application";
 import { assertRunTransition, type RunStatus } from "@zamolxis/domain";
 import { v } from "convex/values";
+import { boundRuntimeModels, RUNTIME_MODEL_LIMITS } from "@zamolxis/runtime-core";
 import { mutation, query } from "./_generated/server";
 import { applyApprovalEvent, expireRunApprovals } from "./approvals";
 import { failPublish, publishRecorded } from "./integration";
@@ -13,6 +14,7 @@ import { settleStoppedText } from "./supervisor";
 import { settleRun } from "./lib/settlement";
 import { recordIntegrationStep } from "./traces";
 import { valueKey } from "./lib/value";
+import { runtimeModel } from "./schema";
 
 const deviceArgs = { workstationId: v.id("workstations") };
 // Mirrors RUN_MESSAGE_LIMIT in packages/contracts/src/events/event.ts.
@@ -26,6 +28,7 @@ export const heartbeat = mutation({
         runtime: v.string(),
         capabilities: v.array(v.string()),
         version: v.optional(v.string()),
+        models: v.optional(v.array(runtimeModel)),
       }),
     ),
   },
@@ -33,6 +36,8 @@ export const heartbeat = mutation({
   handler: async (ctx, args) => {
     await requireNode(ctx, args.workstationId);
     if (args.runtimeCapabilities.length > 32) fail("INVALID_ARGUMENT");
+    for (const advertised of args.runtimeCapabilities)
+      if ((advertised.models?.length ?? 0) > RUNTIME_MODEL_LIMITS.models) fail("INVALID_ARGUMENT");
     await ctx.db.patch("workstations", args.workstationId, {
       nodeInstanceId: args.instanceId,
       status: "online",
@@ -63,6 +68,16 @@ export const heartbeat = mutation({
         ...(advertised.version ? { version: advertised.version } : {}),
         status: "available" as const,
         detectedAt: Date.now(),
+        // Only a heartbeat that reports models replaces the stored list.
+        ...(advertised.models
+          ? {
+              models: boundRuntimeModels(advertised.models).map(({ efforts, ...model }) => ({
+                ...model,
+                ...(efforts ? { efforts: [...efforts] } : {}),
+              })),
+              modelsUpdatedAt: Date.now(),
+            }
+          : {}),
       };
       if (existing) await ctx.db.patch("runtimeInstallations", existing._id, patch);
       else

@@ -11,6 +11,15 @@ export const supervisorLogKind = v.union(
   v.literal("message"),
   v.literal("approval"),
 );
+// A model a runtime offers (mirrors RuntimeModelDto in packages/runtime-core/src/models.ts).
+export const runtimeModel = v.object({
+  id: v.string(),
+  displayName: v.string(),
+  description: v.optional(v.string()),
+  isDefault: v.optional(v.boolean()),
+  efforts: v.optional(v.array(v.string())),
+  defaultEffort: v.optional(v.string()),
+});
 export const supervisorLogStatus = v.union(
   v.literal("started"),
   v.literal("passed"),
@@ -229,6 +238,9 @@ export default defineSchema({
     capabilities: v.array(v.string()),
     detectedAt: v.number(),
     metadata: v.optional(v.any()),
+    // Replaced only by a heartbeat that reports models for this runtime.
+    models: v.optional(v.array(runtimeModel)),
+    modelsUpdatedAt: v.optional(v.number()),
   })
     .index("by_workstation", ["workstationId"])
     .index("by_workstation_runtime", ["workstationId", "runtime"]),

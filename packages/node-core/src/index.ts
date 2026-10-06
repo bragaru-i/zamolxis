@@ -11,6 +11,7 @@ export * from "./capabilities/supervisor";
 export * from "./control-plane/driver";
 export * from "./persistence/local-state";
 export * from "./repository/repository-registry";
+export * from "./runtime/model-catalog";
 export * from "./runtime/runtime-manager";
 export * from "./trace/recorder";
 export * from "./trace/steps";

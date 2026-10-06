@@ -1724,3 +1724,42 @@ it.skipIf(process.env.ZAMOLXIS_CODEX_ACCEPTANCE !== "1")(
   },
   900_000,
 );
+
+it.skipIf(process.env.ZAMOLXIS_CODEX_ACCEPTANCE !== "1")(
+  "real Codex lists its models with reasoning efforts",
+  async () => {
+    const profile = mkdtempSync(join(tmpdir(), "zamolxis-models-native-"));
+    cleanup.push(() => rmSync(profile, { recursive: true, force: true }));
+    chmodSync(profile, 0o700);
+    copyFileSync(
+      join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "auth.json"),
+      join(profile, "auth.json"),
+    );
+    chmodSync(join(profile, "auth.json"), 0o600);
+    const children: ReturnType<typeof spawn>[] = [];
+    cleanup.push(() => {
+      for (const child of children) child.kill();
+    });
+    const runtime = new CodexRuntime({
+      connect: (cwd) =>
+        new AppServerClient({
+          cwd,
+          launch: (executable, assignedCwd) => {
+            const child = spawn(executable, ["app-server", "--listen", "stdio://"], {
+              cwd: assignedCwd,
+              env: { ...process.env, CODEX_HOME: profile },
+              shell: false,
+              stdio: ["pipe", "pipe", "ignore"],
+            });
+            children.push(child);
+            return child;
+          },
+        }),
+    });
+    const models = await runtime.listModels();
+    expect(models.length).toBeGreaterThan(0);
+    expect(models.every((model) => model.id && model.displayName)).toBe(true);
+    expect(models.some((model) => (model.efforts?.length ?? 0) > 0)).toBe(true);
+  },
+  120_000,
+);

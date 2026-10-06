@@ -32,6 +32,17 @@ interface Product {
   _id: Id<"products">;
   name: string;
 }
+interface RuntimeModels {
+  runtime: string;
+  models: Array<{
+    id: string;
+    displayName: string;
+    description?: string;
+    isDefault?: boolean;
+    efforts?: string[];
+    defaultEffort?: string;
+  }>;
+}
 interface DeviceRuntimes {
   status: string;
   runtimes: Array<{ runtime: string; status: string }>;
@@ -59,9 +70,12 @@ export const ROLES: Array<{ role: Role; label: string; help: string }> = [
 ];
 const EFFORTS = ["low", "medium", "high"];
 const EFFORT_HELP: Record<string, string> = {
+  minimal: "Quickest, almost no extra thinking.",
   low: "Fastest replies, lighter thinking.",
   medium: "Balanced speed and depth.",
   high: "Slower, for complex problems.",
+  xhigh: "Even deeper thinking, slower.",
+  max: "Deepest thinking, slowest.",
 };
 // Only roles that start runs can be limited in how many run at once.
 const RUN_ROLES: readonly Role[] = ["builder", "verifier", "repair"];
@@ -362,7 +376,30 @@ export function ProfileEditor({
   const [enabled, setEnabled] = useState(existing?.enabled ?? true);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState("");
-  const efforts = effort && !EFFORTS.includes(effort) ? [...EFFORTS, effort] : EFFORTS;
+  // The models this runtime reports on the owner's Macs; empty until a Mac reports them.
+  const catalogs = useQuery(api.agentProfiles.models, {}) as RuntimeModels[] | undefined;
+  const catalog = catalogs?.find((item) => item.runtime === runtime)?.models ?? [];
+  const chosen = catalog.find((item) => item.id === model);
+  const defaultModel = catalog.find((item) => item.isDefault);
+  const modelOptions = [
+    {
+      value: "",
+      label: "Default",
+      description: defaultModel ? `Currently ${defaultModel.displayName}.` : "The agent's default.",
+    },
+    ...catalog.map((item) => ({
+      value: item.id,
+      label: item.displayName,
+      ...(item.description ? { description: item.description } : {}),
+    })),
+    // A saved model the Macs no longer report stays visible instead of silently changing.
+    ...(model && !chosen
+      ? [{ value: model, label: model, description: "Not reported by your Mac right now." }]
+      : []),
+  ];
+  const offered = (chosen ?? (model ? undefined : defaultModel))?.efforts;
+  const baseEfforts = offered?.length ? offered : EFFORTS;
+  const efforts = effort && !baseEfforts.includes(effort) ? [...baseEfforts, effort] : baseEfforts;
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true);
     setProblem("");
@@ -422,21 +459,35 @@ export function ProfileEditor({
         options={runtimes.map((choice) => ({ value: choice, label: runtimeLabel(choice) }))}
         onChange={setRuntime}
       />
-      <label className="z-field" htmlFor={modelId}>
-        Model
-        <TextInput
-          id={modelId}
+      {catalog.length ? (
+        <Picker
+          label="Model"
           value={model}
-          maxLength={128}
-          autoCapitalize="off"
-          autoCorrect="off"
-          spellCheck={false}
-          placeholder={
-            runtime === "codex" ? "Runtime default, e.g. gpt-5-codex" : "Runtime default"
-          }
-          onChange={(event) => setModel(event.target.value)}
+          options={modelOptions}
+          onChange={(next) => {
+            setModel(next);
+            const supported = catalog.find((item) => item.id === next)?.efforts;
+            if (effort && supported && !supported.includes(effort)) setEffort("");
+          }}
         />
-      </label>
+      ) : (
+        <label className="z-field" htmlFor={modelId}>
+          Model
+          <TextInput
+            id={modelId}
+            value={model}
+            maxLength={128}
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
+            placeholder="Default model"
+            onChange={(event) => setModel(event.target.value)}
+          />
+          <span className="z-xsmall z-muted">
+            Your Mac lists the available models once it is online with the latest Zamolxis.
+          </span>
+        </label>
+      )}
       <Picker
         label="Thinking effort"
         value={effort}
