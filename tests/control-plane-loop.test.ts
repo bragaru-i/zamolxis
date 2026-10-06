@@ -1378,7 +1378,10 @@ it.skipIf(process.env.ZAMOLXIS_CODEX_ACCEPTANCE !== "1")(
     expect(answeredLog.at(-1)).toMatchObject({ kind: "supervisor", label: "Answered" });
     console.log(
       `Supervisor log (answer): ${answeredLog.length} steps; ${answeredLog
-        .map((step) => `${step.kind}:${step.label}${step.detail?.startsWith("Read ") ? ` [${step.detail}]` : ""}`)
+        .map(
+          (step) =>
+            `${step.kind}:${step.label}${step.detail?.startsWith("Read ") ? ` [${step.detail}]` : ""}`,
+        )
         .join(" | ")
         .slice(0, 2000)}`,
     );

@@ -49,7 +49,8 @@ function count(value: number, one: string, many = `${one}s`): string {
 function usageLine(usage: SupervisorLogUsage): string | undefined {
   if (usage.totalTokens === undefined) return undefined;
   const parts: string[] = [];
-  if (usage.inputTokens !== undefined) parts.push(`${usage.inputTokens.toLocaleString("en-US")} in`);
+  if (usage.inputTokens !== undefined)
+    parts.push(`${usage.inputTokens.toLocaleString("en-US")} in`);
   if (usage.cachedInputTokens)
     parts.push(`${usage.cachedInputTokens.toLocaleString("en-US")} cached`);
   if (usage.outputTokens !== undefined)
@@ -221,9 +222,7 @@ export class SupervisorLog {
         if (index < 0) index = this.#openTools.findIndex((open) => open.tool === tool);
         const [open] = index >= 0 ? this.#openTools.splice(index, 1) : [];
         if (open && !open.stepId) return;
-        const previous = open?.stepId
-          ? this.#steps[this.#index.get(open.stepId) ?? -1]
-          : undefined;
+        const previous = open?.stepId ? this.#steps[this.#index.get(open.stepId) ?? -1] : undefined;
         this.record({
           stepId: open?.stepId ?? this.#id("tool"),
           kind: "tool",

@@ -465,12 +465,22 @@ describe("Codex native lifecycle", () => {
     };
     // Unknown phase: held until something follows it.
     h.connection.emit("item/completed", {
-      item: { id: "m1", type: "agentMessage", text: "Looking at src first.\nToken: sk-abcdefghijklmnopqrstuvwxyz", phase: null },
+      item: {
+        id: "m1",
+        type: "agentMessage",
+        text: "Looking at src first.\nToken: sk-abcdefghijklmnopqrstuvwxyz",
+        phase: null,
+      },
     });
     h.connection.emit("item/started", { item: { ...reasoning, status: "inProgress" } });
     h.connection.emit("item/completed", { item: reasoning });
     h.connection.emit("item/completed", {
-      item: { id: "m2", type: "agentMessage", text: `Commentary ${"x".repeat(5000)}`, phase: "commentary" },
+      item: {
+        id: "m2",
+        type: "agentMessage",
+        text: `Commentary ${"x".repeat(5000)}`,
+        phase: "commentary",
+      },
     });
     h.connection.emit("item/completed", {
       item: { id: "m3", type: "agentMessage", text: "All done.", phase: "final_answer" },
@@ -526,7 +536,12 @@ describe("Codex native lifecycle", () => {
       commandActions: [
         { type: "read", command: "cat src/a.ts", name: "a.ts", path: "src/a.ts" },
         { type: "read", command: "cat", name: "x", path: "/assigned/worktree/src/a.ts" },
-        { type: "read", command: "cat", name: "e", path: "/home/me/ghp_abcdefghijklmnopqrstuvwxyz0123/hosts.yml" },
+        {
+          type: "read",
+          command: "cat",
+          name: "e",
+          path: "/home/me/ghp_abcdefghijklmnopqrstuvwxyz0123/hosts.yml",
+        },
         { type: "search", command: "rg x", query: "x", path: null },
       ],
     };

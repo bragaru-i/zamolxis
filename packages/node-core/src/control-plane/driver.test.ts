@@ -98,7 +98,7 @@ function fixture(
   const deliveries: Delivery[] = [];
   const progress: SupervisorProgress[] = [];
   const logs: SupervisorLogBatch[] = [];
-  const state ={ pending: [] as ExecutionCommand[] };
+  const state = { pending: [] as ExecutionCommand[] };
   const transport: ControlPlaneTransport = {
     listPending: async () => state.pending,
     claim: async () => {},

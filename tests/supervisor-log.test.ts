@@ -178,8 +178,9 @@ describe("supervisor.appendLog and supervisor.log", () => {
       finishedAt: 9000,
       detail: "Codex · model gpt\n15 tokens",
     };
-    expect(await append([finished, step("c:decision", { kind: "supervisor", label: "Answered" })]))
-      .toEqual({ inserted: 1, settled: 1, dropped: 0 });
+    expect(
+      await append([finished, step("c:decision", { kind: "supervisor", label: "Answered" })]),
+    ).toEqual({ inserted: 1, settled: 1, dropped: 0 });
     expect(await append([{ ...finished, status: "failed" }])).toEqual({
       inserted: 0,
       settled: 0,
@@ -204,9 +205,9 @@ describe("supervisor.appendLog and supervisor.log", () => {
     await expect(
       f.node.query(api.supervisor.log, { textCommandId: f.textCommandId }),
     ).rejects.toThrow(/FORBIDDEN/);
-    expect(
-      await f.alice.user.query(api.supervisor.log, { textCommandId: f.unplannedId }),
-    ).toEqual([]);
+    expect(await f.alice.user.query(api.supervisor.log, { textCommandId: f.unplannedId })).toEqual(
+      [],
+    );
   });
 
   it("accepts steps only from the Node the plan was sent to", async () => {
@@ -218,9 +219,7 @@ describe("supervisor.appendLog and supervisor.log", () => {
     });
     // Another Mac of the same owner did not run this Supervisor.
     await expect(
-      f
-        .nodeAs("alice-other-device")
-        .mutation(api.supervisor.appendLog, args(f.otherWorkstationId)),
+      f.nodeAs("alice-other-device").mutation(api.supervisor.appendLog, args(f.otherWorkstationId)),
     ).rejects.toThrow(/FORBIDDEN/);
     // A credential for one workstation cannot write as another.
     await expect(
@@ -241,9 +240,9 @@ describe("supervisor.appendLog and supervisor.log", () => {
     ).rejects.toThrow(/FORBIDDEN/);
     // A revoked Node is refused.
     await f.t.run((ctx) => ctx.db.patch("workstations", f.workstationId, { status: "revoked" }));
-    await expect(
-      f.node.mutation(api.supervisor.appendLog, args(f.workstationId)),
-    ).rejects.toThrow(/FORBIDDEN/);
+    await expect(f.node.mutation(api.supervisor.appendLog, args(f.workstationId))).rejects.toThrow(
+      /FORBIDDEN/,
+    );
   });
 
   it("enforces the trace step bounds and keeps at most 300 steps per message", async () => {
