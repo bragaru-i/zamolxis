@@ -163,10 +163,10 @@ describe("credential helpers", () => {
     );
     expect(classifyCredentialError(new Error("fetch failed"))).toBeUndefined();
   });
-  it("offers rename only as unavailable and defaults to check and repair", () => {
+  it("offers every action, including rename, and defaults to check and repair", () => {
     const choices = menuChoices();
     expect(choices[0]?.value).toBe("repair");
-    expect(choices.find(({ value }) => value === "rename")?.disabled).toBeTruthy();
+    expect(choices.some(({ disabled }) => disabled)).toBe(false);
     expect(choices.map(({ value }) => value)).toEqual([
       "repair",
       "repositories",
@@ -190,9 +190,16 @@ interface Harness {
     select: MenuAction[];
     confirm: boolean[];
     checkbox: string[][];
+    input: string[];
   };
-  control: { refresh: (credential: string) => Promise<{ token: string; workstationId: string }> };
+  control: {
+    refresh: (credential: string) => Promise<{ token: string; workstationId: string }>;
+    removeOwnLocation: (repositoryId: string) => Promise<"removed" | "absent">;
+    retireReplaced: (workstationId: string, replacementId: string) => Promise<void>;
+  };
   service: { plist: ServicePlistState; loaded: boolean; pids: Array<number | undefined> };
+  /** The Node process the service runs; a restart starts a new instance unless `stuck`. */
+  node: { instanceId: string | null; heartbeatAt: number | null; stuck: boolean };
   config(): NodeConfig;
 }
 let harness: Harness;
@@ -226,17 +233,25 @@ beforeEach(() => {
   const logs: string[] = [];
   const calls: string[] = [];
   const registered: Harness["registered"] = [];
-  const answers: Harness["answers"] = { select: [], confirm: [], checkbox: [] };
+  const answers: Harness["answers"] = { select: [], confirm: [], checkbox: [], input: [] };
   const service: Harness["service"] = {
     plist: { status: "current" },
     loaded: true,
     pids: [100],
+  };
+  const node: Harness["node"] = { instanceId: "instance-1", heartbeatAt: 1000, stuck: false };
+  const startNode = () => {
+    if (node.stuck) return;
+    node.instanceId = `instance-${Number(node.instanceId?.split("-")[1] ?? 0) + 1}`;
+    node.heartbeatAt = (node.heartbeatAt ?? 0) + 15_000;
   };
   const control: Harness["control"] = {
     refresh: async (credential) => {
       if (credential !== OLD_SECRET) throw new ConvexError({ code: "FORBIDDEN" });
       return { token: "jwt", workstationId: "ws1" };
     },
+    removeOwnLocation: async () => "removed",
+    retireReplaced: async () => undefined,
   };
   const store = new MemoryCredentialStore();
   let secrets = 0;
@@ -256,8 +271,12 @@ beforeEach(() => {
       if (!answer) throw new Error("unexpected checkbox");
       return answer;
     },
-    input: async () => {
-      throw new Error("unexpected input");
+    input: async (_message, options) => {
+      const answer = answers.input.shift();
+      if (answer === undefined) throw new Error("unexpected input");
+      const valid = options?.validate?.(answer) ?? true;
+      if (valid !== true) throw new Error(`invalid input: ${valid}`);
+      return answer;
     },
     confirm: async () => {
       const answer = answers.confirm.shift();
@@ -278,14 +297,31 @@ beforeEach(() => {
     },
     refresh: (credential) => control.refresh(credential),
     setAuth: (token) => calls.push(`auth:${token}`),
-    registerRepositories: async (_workstationId, repositories) => {
+    registerRepositories: async (_workstationId, repositories, options) => {
       registered.push(repositories);
+      if (options?.reactivate) calls.push("reactivate");
       return repositories.map(({ remoteUrl }) => ({
         remoteUrl,
         repositoryId: `r-${remoteUrl.split("/").pop()?.replace(".git", "")}`,
       }));
     },
-    health: async () => ({ online: true, runtimeAvailable: true }),
+    health: async () => ({
+      online: node.instanceId !== null,
+      runtimeAvailable: true,
+      instanceId: node.instanceId,
+      lastHeartbeatAt: node.heartbeatAt,
+    }),
+    renameSelf: async (workstationId, name) => {
+      calls.push(`rename:${workstationId}:${name}`);
+    },
+    removeOwnLocation: async (workstationId, repositoryId) => {
+      calls.push(`remove:${workstationId}:${repositoryId}`);
+      return control.removeOwnLocation(repositoryId);
+    },
+    retireReplaced: async (workstationId, replacementId) => {
+      calls.push(`retire:${workstationId}->${replacementId}`);
+      return control.retireReplaced(workstationId, replacementId);
+    },
   };
   const env: SetupEnvironment = {
     io,
@@ -299,10 +335,12 @@ beforeEach(() => {
       install: () => {
         calls.push("install");
         service.pids = [200];
+        startNode();
       },
       restart: () => {
         calls.push("restart");
         service.pids = [300];
+        startNode();
       },
       pid: () => (service.pids.length > 1 ? service.pids.shift() : service.pids[0]),
     },
@@ -331,6 +369,7 @@ beforeEach(() => {
     answers,
     control,
     service,
+    node,
     config: () => readConfig(configPath),
   };
 });
@@ -446,12 +485,107 @@ describe("rerunning setup", () => {
     expect(harness.store.read("ws1")).toBe(OLD_SECRET);
     expect(harness.calls).not.toContain("connect");
 
-    harness.control.refresh = async () => ({ token: "jwt2", workstationId: "ws2" });
+    // The old credential is still valid: it proves the previous entry, which is retired.
+    harness.control.refresh = async (credential) =>
+      credential === OLD_SECRET
+        ? { token: "jwt-old", workstationId: "ws1" }
+        : { token: "jwt2", workstationId: "ws2" };
     harness.answers.select.push("pair");
     harness.answers.confirm.push(true);
     await runSetup({}, harness.env);
     expect(harness.store.read("ws1")).toBeUndefined();
     expect(harness.store.read("ws2")).toBe(NEW_SECRET);
+    expect(harness.calls).toEqual(
+      expect.arrayContaining(["auth:jwt2", "auth:jwt-old", "retire:ws1->ws2"]),
+    );
+    expect(harness.logs).toContain("✓ Revoked this Mac's previous entry");
+    expect(harness.logs.join("\n")).not.toContain(OLD_SECRET);
+  });
+
+  it("leaves the previous entry and says so when its credential is no longer accepted", async () => {
+    saveConfig(baseConfig(harness.root), harness.env.configPath);
+    harness.store.write("ws1", "9".repeat(64));
+    harness.control.refresh = async (credential) => {
+      if (credential !== NEW_SECRET) throw new ConvexError({ code: "FORBIDDEN" });
+      return { token: "jwt2", workstationId: "ws2" };
+    };
+    // Explicit "Pair again" with a rejected old credential: it cannot prove the old entry.
+    harness.answers.select.push("pair");
+    harness.answers.confirm.push(true);
+    await runSetup({}, harness.env);
+    expect(harness.calls.some((call) => call.startsWith("retire:"))).toBe(false);
+    expect(harness.logs.join("\n")).toContain("previous entry for this Mac was left as it is");
+  });
+
+  it("reports the previous entry when repair has to pair again", async () => {
+    saveConfig(baseConfig(harness.root), harness.env.configPath);
+    harness.store.write("ws1", "8".repeat(64));
+    harness.control.refresh = async (credential) => {
+      if (credential !== NEW_SECRET) throw new ConvexError({ code: "FORBIDDEN" });
+      return { token: "jwt2", workstationId: "ws2" };
+    };
+    // The rejected credential is reported, never used to revoke anything.
+    harness.answers.select.push("repair");
+    harness.answers.confirm.push(true);
+    await runSetup({}, harness.env);
+    expect(harness.calls.some((call) => call.startsWith("retire:"))).toBe(false);
+    expect(harness.logs.join("\n")).toContain("previous entry for this Mac was left as it is");
+  });
+
+  it("reports a failed retirement without failing setup", async () => {
+    saveConfig(baseConfig(harness.root), harness.env.configPath);
+    harness.store.write("ws1", OLD_SECRET);
+    harness.control.refresh = async (credential) =>
+      credential === OLD_SECRET
+        ? { token: "jwt-old", workstationId: "ws1" }
+        : { token: "jwt2", workstationId: "ws2" };
+    harness.control.retireReplaced = async () => {
+      throw new Error("fetch failed");
+    };
+    harness.answers.select.push("pair");
+    harness.answers.confirm.push(true);
+    await runSetup({}, harness.env);
+    expect(harness.logs.join("\n")).toContain("Could not revoke this Mac's previous entry");
+    expect(harness.logs.at(-1)).toContain("Node online");
+  });
+
+  it("renames this Mac in Zamolxis with its own credential and in config.json", async () => {
+    saveConfig(baseConfig(harness.root), harness.env.configPath);
+    harness.store.write("ws1", OLD_SECRET);
+    harness.answers.select.push("rename");
+    harness.answers.input.push("  Studio Mac  ");
+    await runSetup({}, harness.env);
+    expect(harness.calls).toEqual(["connect", "auth:jwt", "rename:ws1:Studio Mac"]);
+    expect(harness.config().name).toBe("Studio Mac");
+    expect(harness.calls).not.toContain("restart");
+
+    harness.answers.select.push("rename");
+    harness.answers.input.push("x".repeat(65));
+    await expect(runSetup({}, harness.env)).rejects.toThrow("at most 64");
+
+    // A rejected credential changes nothing.
+    harness.store.write("ws1", NEW_SECRET);
+    harness.answers.select.push("rename");
+    harness.answers.input.push("Other");
+    await expect(runSetup({}, harness.env)).rejects.toThrow("name was not changed");
+    expect(harness.config().name).toBe("Studio Mac");
+  });
+
+  it("verifies the heartbeat of the restarted Node process, not the previous one", async () => {
+    saveConfig(baseConfig(harness.root), harness.env.configPath);
+    harness.store.write("ws1", OLD_SECRET);
+    harness.service.plist = { status: "outdated" };
+    await runSetup({ repair: true }, harness.env);
+    expect(harness.node.instanceId).toBe("instance-2");
+    expect(harness.logs.at(-1)).toContain("heartbeat from the restarted service");
+
+    // The old process keeps heartbeating while the new one never reports.
+    harness.service.plist = { status: "outdated" };
+    harness.service.pids = [100];
+    harness.node.stuck = true;
+    await expect(runSetup({ repair: true }, harness.env)).rejects.toThrow(
+      "Only the previous Node process reported a heartbeat",
+    );
   });
 
   it("adds and removes repositories, keeps existing registrations and restarts the service", async () => {
@@ -497,7 +631,43 @@ describe("rerunning setup", () => {
     ]);
     expect(harness.registered.at(-1)?.map(({ name }) => name)).toEqual(["one", "two"]);
     expect(harness.calls).toContain("restart");
-    expect(harness.logs.join("\n")).toContain("stay registered");
+    // The removal is recorded for this Mac; the kept grants are confirmed again.
+    expect(harness.calls).toContain("remove:ws1:r-three");
+    expect(harness.calls).toContain("reactivate");
+    expect(harness.logs.join("\n")).toContain("no longer receives new work on this Mac");
+  });
+
+  it("keeps a repository granted while work still runs in it", async () => {
+    const three = {
+      path: join(harness.root, "three"),
+      remoteUrl: "https://example.invalid/three.git",
+      name: "three",
+      repositoryId: "r-three",
+    };
+    saveConfig(
+      {
+        ...baseConfig(harness.root),
+        repositories: [...baseConfig(harness.root).repositories, three],
+      },
+      harness.env.configPath,
+    );
+    harness.store.write("ws1", OLD_SECRET);
+    harness.control.removeOwnLocation = async () => {
+      throw new ConvexError({ code: "LOCATION_BUSY" });
+    };
+    harness.answers.select.push("repositories");
+    harness.answers.checkbox.push([join(harness.root, "one")]);
+    await runSetup({}, harness.env);
+    expect(harness.config().repositories.map(({ name }) => name)).toEqual(["one", "three"]);
+    expect(harness.registered.at(-1)?.map(({ name }) => name)).toEqual(["one", "three"]);
+    expect(harness.logs.join("\n")).toContain("still has work running on this Mac");
+  });
+
+  it("does not re-grant removed repositories on a plain repair", async () => {
+    saveConfig(baseConfig(harness.root), harness.env.configPath);
+    harness.store.write("ws1", OLD_SECRET);
+    await runSetup({ repair: true }, harness.env);
+    expect(harness.calls).not.toContain("reactivate");
   });
 
   it("exits without contacting the control plane and refuses --repair before first setup", async () => {
