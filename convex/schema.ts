@@ -102,6 +102,13 @@ export default defineSchema({
     cachedInputTokens: v.optional(v.number()),
     outputTokens: v.optional(v.number()),
     totalTokens: v.optional(v.number()),
+    // Progress reported by the planning Node while the Supervisor works (bounded).
+    supervisorActivity: v.optional(v.string()),
+    supervisorStartedAt: v.optional(v.number()),
+    supervisorProgressAt: v.optional(v.number()),
+    // The owner asked to stop the Supervisor; stoppedAt once it stopped before answering.
+    stopRequestedAt: v.optional(v.number()),
+    stoppedAt: v.optional(v.number()),
   })
     .index("by_owner_key", ["ownerId", "idempotencyKey"])
     .index("by_session", ["workSessionId"]),

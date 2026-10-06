@@ -78,6 +78,12 @@ Resolve effective enabled profiles Product -> owner/global -> Alpha fallback;
 snapshot configuration on each Run. Do not hardcode Supervisor runtime/model.
 Persist actual model, tokens and cost only when the provider reports them.
 
+Before merging any change to `packages/runtime-*`, `packages/node-core` or
+`apps/node`, run the authenticated real-Codex acceptance
+(`ZAMOLXIS_CODEX_ACCEPTANCE=1 pnpm exec vitest run tests/control-plane-loop.test.ts -t "runs text intent"`)
+when a Codex login is available: fake runtimes do not exercise the Codex adapter
+(a redaction change once broke every real Supervisor plan while all tests passed).
+
 Discover commands from package.json and CI. Run lint, boundaries, typechecks,
 unit/integration tests and production build. Test authorization, concurrency,
 provenance, replay, DAG, repair limits and trust-aware completion. Use disposable

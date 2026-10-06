@@ -1,7 +1,7 @@
 import { validatePlan } from "@zamolxis/application";
 import { v } from "convex/values";
-import type { Doc } from "./_generated/dataModel";
-import { mutation, query } from "./_generated/server";
+import type { Doc, Id } from "./_generated/dataModel";
+import { type MutationCtx, mutation, type QueryCtx, query } from "./_generated/server";
 import { fail, load, ownSession, requireNode, requireUser } from "./lib/access";
 import { resolveAgentProfile } from "./lib/agentProfiles";
 import { enqueue } from "./lib/commands";
@@ -54,6 +54,22 @@ export const messages = query({
                   ...(row.totalTokens !== undefined ? { totalTokens: row.totalTokens } : {}),
                 },
               }
+            : {}),
+          ...(row.supervisorStartedAt !== undefined
+            ? {
+                progress: {
+                  startedAt: row.supervisorStartedAt,
+                  ...(row.supervisorActivity !== undefined
+                    ? { activity: row.supervisorActivity }
+                    : {}),
+                },
+              }
+            : {}),
+          ...(row.stoppedAt !== undefined ? { stopped: true } : {}),
+          ...(row.stopRequestedAt !== undefined &&
+          row.stoppedAt === undefined &&
+          row.planDigest === undefined
+            ? { stopping: true }
             : {}),
         };
       }),
@@ -239,6 +255,160 @@ export const submit = mutation({
 const CONVERSATION_LIMIT = 20;
 const CONVERSATION_TEXT_LIMIT = 4000;
 const REPLY_LIMIT = 8000;
+const ACTIVITY_LIMIT = 200;
+// Progress writes closer together than this are dropped (the Node sends every 2 s at most).
+const PROGRESS_MIN_INTERVAL_MS = 500;
+const IN_FLIGHT = ["claimed", "acknowledged"];
+const usageArgs = v.object({
+  modelActual: v.optional(v.string()),
+  inputTokens: v.optional(v.number()),
+  cachedInputTokens: v.optional(v.number()),
+  outputTokens: v.optional(v.number()),
+  totalTokens: v.optional(v.number()),
+});
+type Usage = typeof usageArgs.type;
+function assertUsage(usage: Usage) {
+  if (usage.modelActual !== undefined && (!usage.modelActual || usage.modelActual.length > 256))
+    fail("INVALID_ARGUMENT");
+  for (const value of [
+    usage.inputTokens,
+    usage.cachedInputTokens,
+    usage.outputTokens,
+    usage.totalTokens,
+  ])
+    if (value !== undefined && (!Number.isSafeInteger(value) || value < 0))
+      fail("INVALID_ARGUMENT");
+}
+async function planCommandFor(ctx: QueryCtx, textCommandId: Id<"textCommands">) {
+  return ctx.db
+    .query("commands")
+    .withIndex("by_idempotency_key", (q) => q.eq("idempotencyKey", `plan:${textCommandId}`))
+    .unique();
+}
+/**
+ * Records that the Supervisor stopped before answering and idles the Session unless
+ * other work (runs, tasks or another message being planned) is still active.
+ */
+export async function settleStoppedText(ctx: MutationCtx, textCommandId: Id<"textCommands">) {
+  const text = await load(ctx, "textCommands", textCommandId);
+  if (text.planDigest !== undefined || text.stoppedAt !== undefined) return;
+  const now = Date.now();
+  await ctx.db.patch("textCommands", text._id, {
+    stoppedAt: now,
+    stopRequestedAt: text.stopRequestedAt ?? now,
+  });
+  const session = await load(ctx, "workSessions", text.workSessionId);
+  if (["completed", "cancelled", "failed"].includes(session.status)) return;
+  const tasks = await ctx.db
+    .query("tasks")
+    .withIndex("by_session", (q) => q.eq("workSessionId", session._id))
+    .take(101);
+  const texts = await ctx.db
+    .query("textCommands")
+    .withIndex("by_session", (q) => q.eq("workSessionId", session._id))
+    .take(101);
+  let planning = false;
+  for (const other of texts) {
+    if (other._id === text._id || other.planDigest !== undefined || other.stoppedAt !== undefined)
+      continue;
+    const plan = await planCommandFor(ctx, other._id);
+    if (plan && ["pending", ...IN_FLIGHT].includes(plan.status)) planning = true;
+  }
+  const active =
+    session.activeRunCount > 0 ||
+    tasks.length > 100 ||
+    tasks.some((task) => ["planned", "ready", "running", "waiting"].includes(task.status));
+  await ctx.db.patch("workSessions", session._id, {
+    ...(planning
+      ? {}
+      : active
+        ? session.status === "planning"
+          ? { status: "running" as const }
+          : {}
+        : { status: "waiting" as const }),
+    updatedAt: now,
+    lastActivityAt: now,
+  });
+}
+/**
+ * Stops the Supervisor working on one of the owner's messages. Idempotent; once the
+ * Supervisor finished (answered, planned or failed) the stop changes nothing.
+ */
+export const stop = mutation({
+  args: { textCommandId: v.id("textCommands") },
+  returns: v.union(v.literal("stopping"), v.literal("stopped"), v.literal("finished")),
+  handler: async (ctx, args) => {
+    const owner = await requireUser(ctx);
+    const text = await load(ctx, "textCommands", args.textCommandId);
+    if (text.ownerId !== owner._id) fail("FORBIDDEN");
+    if (text.stoppedAt !== undefined) return "stopped";
+    const plan = await planCommandFor(ctx, text._id);
+    if (text.planDigest !== undefined || !plan || !["pending", ...IN_FLIGHT].includes(plan.status))
+      return "finished";
+    if (plan.status === "pending") {
+      // Not claimed by the Node yet: withdraw it so the Supervisor never starts.
+      await ctx.db.patch("commands", plan._id, { status: "expired", completedAt: Date.now() });
+      await settleStoppedText(ctx, text._id);
+      return "stopped";
+    }
+    if (text.stopRequestedAt === undefined)
+      await ctx.db.patch("textCommands", text._id, { stopRequestedAt: Date.now() });
+    await enqueue(
+      ctx,
+      plan.workstationId,
+      "supervisor.stop",
+      "textCommand",
+      text._id,
+      { textCommandId: text._id },
+      `supervisor-stop:${text._id}`,
+    );
+    return "stopping";
+  },
+});
+/**
+ * Node-only: bounded progress of the Supervisor planning a text command. Reports for a
+ * command that is no longer in flight on this Node are ignored, never stored.
+ */
+export const reportProgress = mutation({
+  args: {
+    workstationId: v.id("workstations"),
+    textCommandId: v.id("textCommands"),
+    activity: v.optional(v.string()),
+    usage: v.optional(usageArgs),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await requireNode(ctx, args.workstationId);
+    if (
+      args.activity !== undefined &&
+      (!args.activity.trim() || args.activity.length > ACTIVITY_LIMIT)
+    )
+      fail("INVALID_ARGUMENT");
+    assertUsage(args.usage ?? {});
+    const text = await load(ctx, "textCommands", args.textCommandId);
+    const plan = await planCommandFor(ctx, text._id);
+    if (!plan || plan.workstationId !== args.workstationId) fail("FORBIDDEN");
+    if (
+      !IN_FLIGHT.includes(plan.status) ||
+      text.planDigest !== undefined ||
+      text.stoppedAt !== undefined
+    )
+      return null;
+    const now = Date.now();
+    if (
+      text.supervisorProgressAt !== undefined &&
+      now - text.supervisorProgressAt < PROGRESS_MIN_INTERVAL_MS
+    )
+      return null;
+    await ctx.db.patch("textCommands", text._id, {
+      supervisorStartedAt: text.supervisorStartedAt ?? now,
+      supervisorProgressAt: now,
+      ...(args.activity !== undefined ? { supervisorActivity: args.activity.trim() } : {}),
+      ...args.usage,
+    });
+    return null;
+  },
+});
 const planTask = v.object({
   key: v.string(),
   title: v.string(),
@@ -257,15 +427,7 @@ export const acceptPlan = mutation({
     // Optional for compatibility: older Nodes send only a plan.
     decision: v.optional(v.union(v.literal("answer"), v.literal("plan"), v.literal("ask"))),
     reply: v.optional(v.string()),
-    usage: v.optional(
-      v.object({
-        modelActual: v.optional(v.string()),
-        inputTokens: v.optional(v.number()),
-        cachedInputTokens: v.optional(v.number()),
-        outputTokens: v.optional(v.number()),
-        totalTokens: v.optional(v.number()),
-      }),
-    ),
+    usage: v.optional(usageArgs),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -276,16 +438,7 @@ export const acceptPlan = mutation({
     if (decision !== "plan" && (args.tasks.length > 0 || args.reply === undefined))
       fail("INVALID_ARGUMENT");
     const usage = args.usage ?? {};
-    if (usage.modelActual !== undefined && (!usage.modelActual || usage.modelActual.length > 256))
-      fail("INVALID_ARGUMENT");
-    for (const value of [
-      usage.inputTokens,
-      usage.cachedInputTokens,
-      usage.outputTokens,
-      usage.totalTokens,
-    ])
-      if (value !== undefined && (!Number.isSafeInteger(value) || value < 0))
-        fail("INVALID_ARGUMENT");
+    assertUsage(usage);
     const command = await load(ctx, "textCommands", args.textCommandId);
     const workspace = await load(ctx, "workspaces", command.planningWorkspaceId!);
     if (

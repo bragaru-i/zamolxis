@@ -11,13 +11,29 @@ export interface ConversationMessage {
   decision?: Decision;
   reply?: string;
   supervisor?: { modelActual?: string; totalTokens?: number };
+  /** Reported by the Mac while the Supervisor works. */
+  progress?: { activity?: string; startedAt: number };
+  /** The owner asked to stop the Supervisor and the Mac has not confirmed yet. */
+  stopping?: boolean;
+  /** The Supervisor stopped before answering. */
+  stopped?: boolean;
 }
 
 export type AssistantReply =
-  | { kind: "thinking"; reply?: string }
+  | {
+      kind: "thinking";
+      reply?: string;
+      /** What the Supervisor is doing now, and since when (only while it works). */
+      activity?: string;
+      startedAt?: number;
+      /** The Supervisor is still deciding, so it can be stopped. */
+      stoppable?: true;
+      stopping?: true;
+    }
   | { kind: "answer"; reply: string }
   | { kind: "ask"; reply: string }
   | { kind: "plan"; reply?: string; taskCount: number }
+  | { kind: "stopped" }
   | { kind: "error"; text: string };
 
 const IN_FLIGHT = ["pending", "claimed", "acknowledged"];
@@ -25,6 +41,12 @@ const IN_FLIGHT = ["pending", "claimed", "acknowledged"];
 /** What the Zamolxis message under a user message should show. */
 export function assistantReply(message: ConversationMessage): AssistantReply {
   const reply = message.reply?.trim() ? message.reply : undefined;
+  if (
+    message.stopped ||
+    (message.planStatus === "failed" && message.planError === "SUPERVISOR_STOPPED")
+  ) {
+    return { kind: "stopped" };
+  }
   if (message.planStatus === "failed") {
     return {
       kind: "error",
@@ -45,7 +67,42 @@ export function assistantReply(message: ConversationMessage): AssistantReply {
       ? { kind: "thinking" }
       : { kind: "answer", reply: "Done." };
   }
-  return { kind: "thinking", ...(reply ? { reply } : {}) };
+  // No decision yet: the Supervisor is still working and can be stopped.
+  const working =
+    !message.planned && message.decision === undefined && IN_FLIGHT.includes(message.planStatus);
+  return {
+    kind: "thinking",
+    ...(reply ? { reply } : {}),
+    ...(working
+      ? {
+          stoppable: true as const,
+          ...(message.stopping ? { stopping: true as const } : {}),
+          ...(message.progress?.activity ? { activity: message.progress.activity } : {}),
+          ...(message.progress ? { startedAt: message.progress.startedAt } : {}),
+        }
+      : {}),
+  };
+}
+
+/** "12s", "1m 05s", "1h 02m": how long the Supervisor has been working. */
+export function elapsedLabel(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${String(seconds % 60).padStart(2, "0")}s`;
+  return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
+}
+
+/** The line under "Thinking…": the current activity and the elapsed time. */
+export function thinkingDetail(
+  state: Extract<AssistantReply, { kind: "thinking" }>,
+  fallback: string,
+  now: number,
+): string {
+  const activity = state.stopping ? "Stopping…" : (state.activity ?? fallback);
+  return state.startedAt === undefined
+    ? activity
+    : `${activity} · ${elapsedLabel(now - state.startedAt)}`;
 }
 
 export function plannedLabel(count: number): string {

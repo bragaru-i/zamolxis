@@ -22,6 +22,7 @@ import {
   likelyLongSummary,
   plannedLabel,
   startsNewSession,
+  thinkingDetail,
   usageLine,
 } from "./conversation";
 import { explainError, explainFailure } from "./errors";
@@ -214,7 +215,10 @@ export function SessionView({
               <Message author="user" label="You">
                 {message.text}
               </Message>
-              <AssistantMessage message={message} />
+              <AssistantMessage
+                message={message}
+                onError={(text) => setNotice({ tone: "danger", text })}
+              />
             </div>
           ))}
           {sortedTasks.length > 0 && (
@@ -321,19 +325,73 @@ export function SessionView({
   );
 }
 
-function AssistantMessage({ message }: { message: UserMessage }) {
+// The current time, refreshed every second while `active`.
+function useNow(active: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [active]);
+  return now;
+}
+
+function AssistantMessage({
+  message,
+  onError,
+}: {
+  message: UserMessage;
+  onError: (text: string) => void;
+}) {
   const state = assistantReply(message);
   const meta = usageLine(message);
+  const stop = useMutation(api.supervisor.stop);
+  const [requested, setRequested] = useState(false);
+  const now = useNow(state.kind === "thinking" && state.startedAt !== undefined);
   return (
     <Message author="assistant" label="Zamolxis" meta={meta}>
       {state.kind === "error" ? (
         state.text
+      ) : state.kind === "stopped" ? (
+        <div className="z-row z-small z-muted">
+          <StatusBadge status="stopped" />
+          <span>Stopped before answering.</span>
+        </div>
       ) : state.kind === "thinking" ? (
         <>
           {state.reply && <Markdown>{state.reply}</Markdown>}
-          <Thinking
-            detail={message.decision === "plan" ? "Preparing tasks" : "Reading the repository"}
-          />
+          <div className="z-row">
+            <Thinking
+              detail={thinkingDetail(
+                requested ? { ...state, stopping: true } : state,
+                message.decision === "plan" ? "Preparing tasks" : "Reading the repository",
+                now,
+              )}
+            />
+            {state.stoppable && (
+              <>
+                <span className="z-spacer" />
+                <Button
+                  variant="ghost"
+                  size="small"
+                  disabled={requested || state.stopping}
+                  aria-label="Stop the Supervisor"
+                  onClick={async () => {
+                    setRequested(true);
+                    try {
+                      await stop({ textCommandId: message._id as Id<"textCommands"> });
+                    } catch (error) {
+                      setRequested(false);
+                      onError(explainError(error, "Could not stop the Supervisor."));
+                    }
+                  }}
+                >
+                  {requested || state.stopping ? "Stopping…" : "Stop"}
+                </Button>
+              </>
+            )}
+          </div>
         </>
       ) : state.kind === "plan" ? (
         <>

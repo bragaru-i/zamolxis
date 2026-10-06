@@ -17,9 +17,12 @@ import { repositoryFixture } from "../testing/git-fixture";
 import { WorkspaceManager } from "../workspace/workspace-manager";
 import {
   ControlPlaneDriver,
+  type ControlPlaneDriverOptions,
   type ControlPlaneTransport,
   type Delivery,
   type ExecutionCommand,
+  type SupervisorProgress,
+  supervisorActivity,
 } from "./driver";
 
 const cleanup: Array<() => void> = [];
@@ -51,7 +54,10 @@ class RecordingRuntime extends FakeRuntime {
   }
 }
 
-function fixture(scenario: (input: StartRunInput) => readonly FakeStep[]) {
+function fixture(
+  scenario: (input: StartRunInput) => readonly FakeStep[],
+  setup: { runtime?: FakeRuntime; options?: ControlPlaneDriverOptions } = {},
+) {
   const repo = repositoryFixture();
   cleanup.push(() => rmSync(repo.root, { recursive: true, force: true }));
   writeFileSync(
@@ -78,47 +84,86 @@ function fixture(scenario: (input: StartRunInput) => readonly FakeStep[]) {
     "instance",
     () => true,
   );
-  const runtime = new RecordingRuntime(scenario);
+  // Tests that pass their own runtime do not read `started`.
+  const runtime = (setup.runtime ?? new RecordingRuntime(scenario)) as RecordingRuntime;
   const runtimes = new RuntimeRegistry();
   runtimes.register(runtime);
   const manager = new RuntimeManager(store, workspaces, runtimes, "node" as never, () => true);
   const deliveries: Delivery[] = [];
-  let pending: ExecutionCommand[] = [];
+  const progress: SupervisorProgress[] = [];
+  const state = { pending: [] as ExecutionCommand[] };
   const transport: ControlPlaneTransport = {
-    listPending: async () => pending,
+    listPending: async () => state.pending,
     claim: async () => {},
     acknowledge: async () => {},
     reconcile: async () => {},
     deliver: async (delivery) => {
       deliveries.push(delivery);
       if (delivery.kind === "command.complete" || delivery.kind === "command.failed")
-        pending = pending.filter((command) => command.commandId !== delivery.commandId);
+        state.pending = state.pending.filter((command) => command.commandId !== delivery.commandId);
+    },
+    reportProgress: async (report) => {
+      progress.push(report);
     },
   };
-  const driver = new ControlPlaneDriver(store, workspaces, runtimes, manager, transport, "node");
+  const driver = new ControlPlaneDriver(
+    store,
+    workspaces,
+    runtimes,
+    manager,
+    transport,
+    "node",
+    setup.options,
+  );
   driver.setRepositoryDiscovery(new RepositoryDiscovery(workspaces));
   for (const workspaceId of ["plan", "build"])
     workspaces.provision({ workspaceId, repositoryLocationId: "location", baseRef: "main" });
   let counter = 0;
+  const planCommand = (
+    text: string,
+    extra: Partial<Extract<ExecutionCommand, { type: "repository.plan" }>["payload"]> = {},
+  ): Extract<ExecutionCommand, { type: "repository.plan" }> => {
+    const id = `command-${++counter}`;
+    return {
+      commandId: id,
+      idempotencyKey: id,
+      workstationId: "node",
+      type: "repository.plan",
+      payload: { textCommandId: `text-${counter}`, workspaceId: "plan", text, ...extra },
+    };
+  };
+  const stopCommand = (textCommandId: string): ExecutionCommand => ({
+    commandId: `stop-${textCommandId}`,
+    idempotencyKey: `supervisor-stop:${textCommandId}`,
+    workstationId: "node",
+    type: "supervisor.stop",
+    payload: { textCommandId },
+  });
   const plan = async (
     text: string,
     extra: Partial<Extract<ExecutionCommand, { type: "repository.plan" }>["payload"]> = {},
   ) => {
-    const id = `command-${++counter}`;
-    pending = [
-      {
-        commandId: id,
-        idempotencyKey: id,
-        workstationId: "node",
-        type: "repository.plan",
-        payload: { textCommandId: `text-${counter}`, workspaceId: "plan", text, ...extra },
-      },
-    ];
+    const command = planCommand(text, extra);
+    state.pending = [command];
     deliveries.length = 0;
     await driver.tick();
-    return { id, textCommandId: `text-${counter}` };
+    return { id: command.commandId, textCommandId: command.payload.textCommandId };
   };
-  return { repo, head, store, workspaces, runtime, deliveries, driver, plan, transport };
+  return {
+    repo,
+    head,
+    store,
+    workspaces,
+    runtime,
+    deliveries,
+    progress,
+    state,
+    driver,
+    plan,
+    planCommand,
+    stopCommand,
+    transport,
+  };
 }
 const answer = (text: string): FakeStep[] => [{ type: "success", summary: text }];
 const json = (value: unknown): FakeStep[] => answer(JSON.stringify(value));
@@ -583,4 +628,179 @@ it("rejects Supervisor approval requests: nobody can approve a Node-local read-o
   expect(resolved).toEqual([
     { approvalId: `supervisor:${textCommandId}:fake-0`, decision: "rejected", reason: "user" },
   ]);
+});
+
+describe("Supervisor progress and stop", { timeout: 30_000 }, () => {
+  it("describes activities and tool calls in one bounded line", () => {
+    const base = {
+      eventId: "e",
+      sequence: 1,
+      runId: "run",
+      workspaceId: "w",
+      workstationId: "node",
+      occurredAt: 0,
+    };
+    expect(
+      supervisorActivity({
+        ...base,
+        type: "run.activity",
+        payload: { label: "  Reading\n convex/schema.ts " },
+      } as NormalizedRunEventDto),
+    ).toBe("Reading convex/schema.ts");
+    expect(
+      supervisorActivity({
+        ...base,
+        type: "tool.started",
+        payload: { tool: "shell", summary: `Running rg ${"x".repeat(300)}` },
+      } as NormalizedRunEventDto),
+    ).toHaveLength(200);
+    expect(
+      supervisorActivity({
+        ...base,
+        type: "tool.started",
+        payload: { tool: "shell", summary: "" },
+      } as NormalizedRunEventDto),
+    ).toBe("shell");
+    expect(
+      supervisorActivity({
+        ...base,
+        type: "run.usage",
+        payload: { totalTokens: 1 },
+      } as NormalizedRunEventDto),
+    ).toBeUndefined();
+  });
+
+  it("reports progress on change, at most once per interval, and never as run events", async () => {
+    const clock = { now: 0 };
+    // Each event takes 700 ms of (injected) time.
+    class SlowRuntime extends RecordingRuntime {
+      override async *subscribe(input: { nativeSessionId: string; afterSequence?: number }) {
+        for await (const event of super.subscribe(input)) {
+          clock.now += 700;
+          yield event;
+        }
+      }
+    }
+    const scenario = () => [
+      { type: "activity" as const, label: "Reading a.ts" },
+      { type: "activity" as const, label: "Running rg TODO" },
+      { type: "activity" as const, label: "Reading b.ts" },
+      { type: "activity" as const, label: "Reading c.ts" },
+      ...json({ decision: "answer", reply: "Done.", tasks: [] }),
+    ];
+    const f = fixture(scenario, {
+      runtime: new SlowRuntime(scenario),
+      options: { now: () => clock.now, progressIntervalMs: 2000 },
+    });
+    const { id, textCommandId } = await f.plan("Question");
+    // Start at t=0 is sent; a.ts (1400) is throttled; rg (2100) is sent; b.ts (2800) is
+    // replaced by c.ts (3500), sent with the usage at 4200; nothing after the outcome.
+    expect(f.progress).toEqual([
+      { textCommandId },
+      { textCommandId, activity: "Running rg TODO" },
+      {
+        textCommandId,
+        activity: "Reading c.ts",
+        usage: { modelActual: "model-x", inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+      },
+    ]);
+    expect(f.deliveries.map((delivery) => delivery.kind)).toEqual([
+      "repository.plan",
+      "command.complete",
+    ]);
+    expect(f.deliveries[1]).toEqual({ kind: "command.complete", commandId: id });
+  });
+
+  it("keeps planning when progress cannot be reported", async () => {
+    const f = fixture(() => json({ decision: "answer", reply: "Still answered.", tasks: [] }));
+    f.transport.reportProgress = async () => {
+      throw new Error("offline");
+    };
+    await f.plan("Question");
+    expect(f.deliveries[0]).toMatchObject({ decision: "answer", reply: "Still answered." });
+  });
+
+  it("stops a streaming Supervisor through the control loop and fails the plan as stopped", async () => {
+    const runtime = new LiveRuntime([{ type: "activity", label: "Reading convex/schema.ts" }]);
+    const f = fixture(() => [], { runtime, options: { progressIntervalMs: 0 } });
+    const command = f.planCommand("Long question");
+    const { textCommandId } = command.payload;
+    f.state.pending = [command];
+    const ticking = f.driver.tick();
+    for (let attempt = 0; attempt < 400; attempt++) {
+      if (f.progress.some((report) => report.activity === "Reading convex/schema.ts")) break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(f.progress.at(-1)).toEqual({ textCommandId, activity: "Reading convex/schema.ts" });
+    const stop = f.stopCommand(textCommandId);
+    f.state.pending = [...f.state.pending, stop];
+    await f.driver.control();
+    await ticking;
+    expect(f.deliveries).toEqual([
+      { kind: "command.complete", commandId: stop.commandId },
+      { kind: "command.failed", commandId: command.commandId, code: "SUPERVISOR_STOPPED" },
+    ]);
+    expect(f.state.pending).toEqual([]);
+    expect((await runtime.inspect(`fake:supervisor:${textCommandId}`)).state).toBe("stopped");
+    expect(f.store.getWorkspaceLease("plan")).toBeUndefined();
+    expect(git(f.repo.path, ["rev-parse", "HEAD"])).toBe(f.head);
+    expect(git(f.repo.path, ["status", "--porcelain"])).toBe("");
+  });
+
+  it("stops a Supervisor whose session is still starting when the stop arrives", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let starting = false;
+    class SlowStart extends LiveRuntime {
+      override async start(input: StartRunInput) {
+        starting = true;
+        await gate;
+        return super.start(input);
+      }
+    }
+    const runtime = new SlowStart([{ type: "activity", label: "Reading" }]);
+    const f = fixture(() => [], { runtime });
+    const command = f.planCommand("Question");
+    f.state.pending = [command];
+    const ticking = f.driver.tick();
+    for (let attempt = 0; !starting && attempt < 400; attempt++)
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    const stop = f.stopCommand(command.payload.textCommandId);
+    f.state.pending = [...f.state.pending, stop];
+    await f.driver.control();
+    release();
+    await ticking;
+    expect(f.deliveries).toEqual([
+      { kind: "command.complete", commandId: stop.commandId },
+      { kind: "command.failed", commandId: command.commandId, code: "SUPERVISOR_STOPPED" },
+    ]);
+    expect(f.store.getWorkspaceLease("plan")).toBeUndefined();
+  });
+
+  it("treats a stop after the Supervisor finished as a no-op", async () => {
+    const f = fixture(() => json({ decision: "answer", reply: "Already answered.", tasks: [] }));
+    const { textCommandId } = await f.plan("Question");
+    expect(f.deliveries[0]).toMatchObject({ decision: "answer", reply: "Already answered." });
+    const stop = f.stopCommand(textCommandId);
+    f.state.pending = [stop];
+    f.deliveries.length = 0;
+    // The control loop leaves it alone: nothing here is planning that text command.
+    await f.driver.control();
+    expect(f.deliveries).toEqual([]);
+    await f.driver.tick();
+    expect(f.deliveries).toEqual([{ kind: "command.complete", commandId: stop.commandId }]);
+    expect(f.runtime.started).toHaveLength(1);
+  });
+
+  it("completes a stop interrupted by a restart instead of blocking the queue", async () => {
+    const f = fixture(() => answer("unused"));
+    const stop = f.stopCommand("text-x");
+    f.store.recordCommand(stop);
+    f.store.markCommandRunning(stop.commandId);
+    await f.driver.tick();
+    expect(f.deliveries).toEqual([{ kind: "command.complete", commandId: stop.commandId }]);
+    expect(f.store.listInterruptedCommands()).toEqual([]);
+  });
 });

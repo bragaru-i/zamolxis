@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { convexTest } from "convex-test";
 import { afterEach, expect, it } from "vitest";
 import { api } from "../convex/_generated/api";
+import type { Id } from "../convex/_generated/dataModel";
 import schema from "../convex/schema";
 import { seedHuman } from "./fixtures/auth";
 import { runFakeLoopOnce } from "../apps/node/src/fake-loop";
@@ -1059,6 +1060,157 @@ it("answers a question through the Supervisor without starting builders", async 
     decision: "answer",
     reply: "It contains `base`.",
   });
+  expect(n.store.listPendingEvents()).toEqual([]);
+  expect(n.store.listInterruptedCommands()).toEqual([]);
+  expect(await n.transport.listPending()).toEqual([]);
+  expect(git(f.path, ["rev-parse", "HEAD"])).toBe(f.originalHead);
+  expect(git(f.path, ["status", "--porcelain"])).toBe(f.originalStatus);
+}, 60_000);
+
+it("parses supervisor.stop only for its own text command", () => {
+  const base = {
+    _id: "command",
+    workstationId: "node",
+    idempotencyKey: "supervisor-stop:text",
+    type: "supervisor.stop",
+    targetType: "textCommand",
+    targetId: "text",
+  };
+  expect(parseExecutionCommand({ ...base, payload: { textCommandId: "text" } })).toEqual({
+    commandId: "command",
+    workstationId: "node",
+    idempotencyKey: "supervisor-stop:text",
+    type: "supervisor.stop",
+    payload: { textCommandId: "text" },
+  });
+  for (const command of [
+    { ...base, payload: { textCommandId: "other" } },
+    { ...base, targetType: "run", payload: { textCommandId: "text" } },
+    { ...base, payload: {} },
+  ])
+    expect(parsePendingCommand(command)?.type).toBe("invalid");
+});
+
+it("shows a blocking Supervisor's progress and stops it from the owner's message", async () => {
+  const f = await fixture();
+  const productId = await f.t.run(async (ctx) => {
+    const session = await ctx.db.get("workSessions", f.workSessionId);
+    const id = await ctx.db.insert("products", {
+      ownerId: session!.ownerId,
+      name: "Stop",
+      slug: "stop",
+      createdAt: 0,
+      updatedAt: 0,
+    });
+    await ctx.db.patch("repositories", f.repositoryId, { productId: id });
+    await ctx.db.patch("repositoryLocations", f.repositoryLocationId, {
+      lastKnownHead: f.originalHead,
+    });
+    return id;
+  });
+  for (const role of ["builder", "verifier", "repair"] as const)
+    await f.user.mutation(api.agentProfiles.upsert, {
+      name: role,
+      role,
+      runtime: "fake",
+      enabled: true,
+    });
+  // A Supervisor that reads the repository and never answers until it is stopped.
+  const roles: Array<string | undefined> = [];
+  class BlockingSupervisor extends FakeRuntime {
+    #release: () => void = () => {};
+    readonly #stopped = new Promise<void>((resolve) => {
+      this.#release = resolve;
+    });
+    override async start(input: StartRunInput) {
+      roles.push(input.role);
+      return super.start(input);
+    }
+    override async *subscribe(input: {
+      nativeSessionId: string;
+      afterSequence?: number;
+    }): AsyncIterable<NormalizedRunEventDto> {
+      let cursor = input.afterSequence ?? 0;
+      for await (const event of super.subscribe({ ...input, afterSequence: cursor })) {
+        cursor = event.sequence;
+        yield event;
+      }
+      await this.#stopped;
+      yield* super.subscribe({ ...input, afterSequence: cursor });
+    }
+    override async stop(input: { nativeSessionId: string }) {
+      await super.stop(input);
+      this.#release();
+    }
+  }
+  const runtime = new BlockingSupervisor([{ type: "activity", label: "Reading source.txt" }]);
+  const n = await f.boot(runtime);
+  const driver = n.driver();
+  const { RepositoryDiscovery } = await import(
+    "../packages/node-core/src/capabilities/repository-discovery"
+  );
+  driver.setRepositoryDiscovery(new RepositoryDiscovery(n.workspaces));
+  const sessionId = await f.user.mutation(api.supervisor.submit, {
+    productId,
+    repositoryId: f.repositoryId,
+    text: "Explain the whole repository",
+    idempotencyKey: "blocking",
+  });
+  const ticking = (async () => {
+    for (let tick = 0; tick < 3; tick++) {
+      await f.node.mutation(api.supervisor.dispatch, { workstationId: f.workstationId });
+      await driver.tick();
+    }
+  })();
+  // The throttled activity reaches the owner while the Supervisor still works.
+  type Message = {
+    _id: Id<"textCommands">;
+    progress?: { activity?: string; startedAt: number };
+    [key: string]: unknown;
+  };
+  let message: Message | undefined;
+  for (let attempt = 0; attempt < 200; attempt++) {
+    [message] = (await f.user.query(api.supervisor.messages, {
+      workSessionId: sessionId,
+    })) as Message[];
+    if (message?.progress?.activity) break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  expect(message?.progress).toEqual({
+    activity: "Reading source.txt",
+    startedAt: expect.any(Number),
+  });
+  expect(message?.planStatus).toBe("acknowledged");
+  expect(await f.user.mutation(api.supervisor.stop, { textCommandId: message!._id })).toBe(
+    "stopping",
+  );
+  await driver.control();
+  await ticking;
+  [message] = (await f.user.query(api.supervisor.messages, {
+    workSessionId: sessionId,
+  })) as Message[];
+  expect(message).toMatchObject({
+    stopped: true,
+    planStatus: "failed",
+    planError: "SUPERVISOR_STOPPED",
+    planned: false,
+  });
+  expect(roles).toEqual(["supervisor"]);
+  const session = await f.user.query(api.sessions.get, { workSessionId: sessionId });
+  expect(session.status).toBe("waiting");
+  expect(session.needsInputCount).toBe(0);
+  expect(await f.user.query(api.tasks.listBySession, { workSessionId: sessionId })).toEqual([]);
+  expect(await f.user.query(api.runs.listBySession, { workSessionId: sessionId })).toEqual([]);
+  const stops = await f.t.run(async (ctx) =>
+    (await ctx.db.query("commands").collect()).filter(
+      (command) => command.type === "supervisor.stop",
+    ),
+  );
+  expect(stops.map((command) => command.status)).toEqual(["completed"]);
+  // A second stop is a no-op once the Supervisor stopped.
+  expect(await f.user.mutation(api.supervisor.stop, { textCommandId: message!._id })).toBe(
+    "stopped",
+  );
   expect(n.store.listPendingEvents()).toEqual([]);
   expect(n.store.listInterruptedCommands()).toEqual([]);
   expect(await n.transport.listPending()).toEqual([]);
