@@ -5,6 +5,12 @@ import { type MutationCtx, mutation, type QueryCtx, query } from "./_generated/s
 import { fail, load, ownSession, requireNode, requireUser } from "./lib/access";
 import { resolveAgentProfile } from "./lib/agentProfiles";
 import { enqueue } from "./lib/commands";
+import {
+  SUPERVISOR_LOG_LIMITS,
+  supervisorLogStep,
+  validLogStep,
+  writeLogSteps,
+} from "./lib/supervisorLog";
 import { queueRun } from "./runs";
 import { allocateWorkspace } from "./workspaces";
 export const products = query({
@@ -738,3 +744,44 @@ export const dispatch = mutation({
 });
 // Compatibility for older Nodes: the dispatch poll performs provisioning.
 export const scheduleVerification = dispatch;
+/**
+ * Node-only: appends steps to the Supervisor log of a message this Node planned. Steps are
+ * already redacted and bounded on the Node; the backend enforces the same bounds, keeps at
+ * most SUPERVISOR_LOG_LIMITS.stepsPerMessage steps and treats replays as no-ops.
+ */
+export const appendLog = mutation({
+  args: {
+    workstationId: v.id("workstations"),
+    textCommandId: v.id("textCommands"),
+    steps: v.array(supervisorLogStep),
+  },
+  returns: v.object({ inserted: v.number(), settled: v.number(), dropped: v.number() }),
+  handler: async (ctx, args) => {
+    await requireNode(ctx, args.workstationId);
+    if (args.steps.length < 1 || args.steps.length > SUPERVISOR_LOG_LIMITS.batch)
+      fail("INVALID_ARGUMENT", "A log batch holds 1..100 steps");
+    for (const step of args.steps)
+      if (!validLogStep(step)) fail("INVALID_ARGUMENT", "Invalid step");
+    const text = await load(ctx, "textCommands", args.textCommandId);
+    // Only the Node the plan command was sent to ran this Supervisor.
+    const plan = await planCommandFor(ctx, text._id);
+    if (!plan || plan.workstationId !== args.workstationId) fail("FORBIDDEN");
+    return writeLogSteps(ctx, text, args.steps);
+  },
+});
+/** Owner-only: the Supervisor log of one message, oldest step first. */
+export const log = query({
+  args: { textCommandId: v.id("textCommands") },
+  returns: v.array(v.any()),
+  handler: async (ctx, args) => {
+    const owner = await requireUser(ctx);
+    const text = await load(ctx, "textCommands", args.textCommandId);
+    if (text.ownerId !== owner._id) fail("FORBIDDEN");
+    const steps = await ctx.db
+      .query("supervisorLogSteps")
+      .withIndex("by_text_sequence", (q) => q.eq("textCommandId", text._id))
+      .order("asc")
+      .take(SUPERVISOR_LOG_LIMITS.stepsPerMessage);
+    return steps.map(({ ownerId: _owner, textCommandId: _text, ...step }) => step);
+  },
+});
