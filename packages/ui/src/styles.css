@@ -755,31 +755,163 @@ code,
   display: flex;
   flex-direction: column;
   gap: var(--z-space-2);
+  min-width: 0;
 }
 .z-composer__box {
   display: flex;
-  align-items: flex-end;
-  gap: var(--z-space-2);
-  padding: var(--z-space-1);
+  flex-direction: column;
+  gap: var(--z-space-1);
+  min-width: 0;
+  padding: var(--z-space-2);
   background: var(--z-surface);
-  border: 1px solid var(--z-input);
-  border-radius: var(--z-radius-lg);
+  border: 1px solid var(--z-border);
+  border-radius: 26px;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 6%);
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
 }
 .z-composer__box:focus-within {
-  outline: 3px solid var(--z-ring);
-  outline-offset: 1px;
+  border-color: var(--z-input);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--z-ring) 28%, transparent);
+}
+.z-composer__box--drop,
+.z-composer__box--drop:focus-within {
+  border-color: transparent;
+  outline: 2px dashed var(--z-ring);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--z-ring) 6%, var(--z-surface));
+}
+.z-composer__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--z-space-2);
+  margin: 0;
+  padding: var(--z-space-1) var(--z-space-1) 0;
+  list-style: none;
+}
+.z-composer__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--z-space-2);
+  max-width: 100%;
+  min-width: 0;
+  padding: var(--z-space-1) var(--z-space-1) var(--z-space-1) var(--z-space-3);
+  font-size: var(--z-text-sm);
+  color: var(--z-fg);
+  background: var(--z-surface-muted);
+  border: 1px solid var(--z-border);
+  border-radius: var(--z-radius-md);
+}
+.z-composer__chip > .z-icon {
+  color: var(--z-muted);
+}
+.z-composer__chip-name {
+  min-width: 0;
+  max-width: 16rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.z-composer__chip-size {
+  flex: none;
+  font-size: var(--z-text-xs);
+  color: var(--z-muted);
+}
+.z-composer__chip-remove {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  color: var(--z-muted);
+  background: transparent;
+  border: 0;
+  border-radius: var(--z-radius-full);
+  cursor: pointer;
+}
+.z-composer__chip-remove .z-icon {
+  width: 16px;
+  height: 16px;
+}
+.z-composer__chip-remove:hover {
+  color: var(--z-fg);
+  background: var(--z-surface);
 }
 .z-composer .z-textarea {
-  flex: 1;
-  min-height: var(--z-touch);
-  max-height: 40vh;
-  padding: 10px var(--z-space-2);
+  display: block;
+  box-sizing: border-box;
+  min-height: 0;
+  /* Eight lines, then the field scrolls. */
+  max-height: calc(8 * 1.5em + 2 * var(--z-space-2));
+  padding: var(--z-space-2) var(--z-space-2);
+  line-height: 1.5;
   border: 0;
+  border-radius: 0;
   resize: none;
+  overflow-y: auto;
   background: transparent;
+}
+.z-composer .z-textarea::placeholder {
+  color: var(--z-muted);
+  opacity: 1;
 }
 .z-composer .z-textarea:focus-visible {
   outline: none;
+}
+.z-composer__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--z-space-2);
+}
+.z-composer__button {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--z-touch);
+  height: var(--z-touch);
+  padding: 0;
+  border: 0;
+  border-radius: var(--z-radius-full);
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    opacity 120ms ease;
+}
+.z-composer__button:focus-visible,
+.z-composer__chip-remove:focus-visible {
+  outline: 3px solid var(--z-ring);
+  outline-offset: 2px;
+}
+.z-composer__button:disabled {
+  cursor: not-allowed;
+}
+.z-composer__attach {
+  color: var(--z-fg);
+  background: transparent;
+}
+.z-composer__attach:hover:not(:disabled) {
+  background: var(--z-surface-muted);
+}
+.z-composer__attach:disabled {
+  color: var(--z-disabled);
+}
+.z-composer__send {
+  color: var(--z-surface);
+  background: var(--z-fg);
+}
+.z-composer__send:hover:not(:disabled) {
+  opacity: 0.85;
+}
+.z-composer__send:disabled {
+  color: var(--z-surface);
+  background: var(--z-disabled);
+  opacity: 0.55;
 }
 .z-composer__hint {
   font-size: var(--z-text-xs);

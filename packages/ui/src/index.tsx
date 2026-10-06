@@ -1,5 +1,6 @@
 import {
   type ButtonHTMLAttributes,
+  type DragEvent,
   type FormEvent,
   type KeyboardEvent,
   type ReactNode,
@@ -152,8 +153,42 @@ const ICON_PATHS: Record<string, ReactNode> = {
       <circle cx="7" cy="14.5" r="2" />
     </>
   ),
+  plus: <path d="M10 4v12M4 10h12" />,
+  send: <path d="M10 16V4M5 9l5-5 5 5" />,
+  stop: <rect x="5.5" y="5.5" width="9" height="9" rx="1.5" fill="currentColor" />,
+  image: (
+    <>
+      <rect x="3" y="4" width="14" height="12" rx="2" />
+      <circle cx="7.5" cy="8.5" r="1.3" />
+      <path d="M17 13l-4-4-7 7" />
+    </>
+  ),
+  "file-text": (
+    <>
+      <path d="M5 2.5h6.5L15 6v11.5H5z" />
+      <path d="M8 10l-1.5 1.75L8 13.5M12 10l1.5 1.75L12 13.5" />
+    </>
+  ),
+  "file-pdf": (
+    <>
+      <path d="M5 2.5h6.5L15 6v11.5H5z" />
+      <path d="M7.5 10h5M7.5 13h3" />
+    </>
+  ),
+  file: <path d="M5 2.5h6.5L15 6v11.5H5zM11.5 2.5V6H15" />,
 };
-export type IconName = "menu" | "back" | "close" | "settings";
+export type IconName =
+  | "menu"
+  | "back"
+  | "close"
+  | "settings"
+  | "plus"
+  | "send"
+  | "stop"
+  | "image"
+  | "file-text"
+  | "file-pdf"
+  | "file";
 
 export function Icon({ name }: { name: IconName }) {
   return (
@@ -333,6 +368,53 @@ export function Collapsible({
   );
 }
 
+/** Attachments are controlled when `files` is given; otherwise the Composer keeps its own list. */
+export type ComposerAttachmentProps = {
+  files?: File[];
+  onAddFiles?: (files: File[]) => void;
+  onRemoveFile?: (index: number) => void;
+};
+
+/** The composer grows with its text up to this many lines, then scrolls. */
+const COMPOSER_MAX_LINES = 8;
+
+/** A short, human-readable size: 512 B, 4.2 KB, 13 MB. */
+export function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb < 10 ? kb.toFixed(1) : Math.round(kb)} KB`;
+  const mb = kb / 1024;
+  return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
+}
+
+const CODE_EXTENSION =
+  /\.(c|cc|cpp|cs|css|go|h|html|java|js|jsx|json|kt|md|mjs|py|rb|rs|sh|sql|swift|toml|ts|tsx|txt|xml|ya?ml)$/i;
+
+function attachmentIcon(file: File): IconName {
+  if (file.type.startsWith("image/")) return "image";
+  if (file.type === "application/pdf" || /\.pdf$/i.test(file.name)) return "file-pdf";
+  if (
+    file.type.startsWith("text/") ||
+    /json|javascript|typescript|xml|yaml/.test(file.type) ||
+    CODE_EXTENSION.test(file.name)
+  ) {
+    return "file-text";
+  }
+  return "file";
+}
+
+/** The textarea's capped height: its CSS max-height, or eight lines plus padding. */
+function composerMaxHeight(element: HTMLTextAreaElement): number {
+  const style = getComputedStyle(element);
+  const fromCss = Number.parseFloat(style.maxHeight);
+  if (Number.isFinite(fromCss)) return fromCss;
+  const line =
+    Number.parseFloat(style.lineHeight) || (Number.parseFloat(style.fontSize) || 16) * 1.5;
+  const padding =
+    (Number.parseFloat(style.paddingTop) || 0) + (Number.parseFloat(style.paddingBottom) || 0);
+  return COMPOSER_MAX_LINES * line + padding;
+}
+
 export function Composer({
   value,
   onChange,
@@ -343,35 +425,136 @@ export function Composer({
   hint,
   above,
   submitLabel = "Send",
+  streaming = false,
+  onStop,
+  files: controlledFiles,
+  onAddFiles,
+  onRemoveFile,
 }: {
   value: string;
   onChange: (value: string) => void;
-  onSubmit: () => void;
+  /** Receives the attached files; callers that only send text can ignore them. */
+  onSubmit: (files: File[]) => void;
   placeholder: string;
   busy?: boolean;
   disabled?: boolean;
   hint?: ReactNode;
   above?: ReactNode;
   submitLabel?: string;
-}) {
+  /** With `onStop`, the send button becomes a Stop button while a reply streams. */
+  streaming?: boolean;
+  onStop?: () => void;
+} & ComposerAttachmentProps) {
   const field = useRef<HTMLTextAreaElement>(null);
-  // Grow with content up to the CSS max-height; the page keeps the composer pinned.
+  const picker = useRef<HTMLInputElement>(null);
+  const [ownFiles, setOwnFiles] = useState<File[]>([]);
+  const files = controlledFiles ?? ownFiles;
+  const [dropping, setDropping] = useState(false);
+  const dragDepth = useRef(0);
+  const [announcement, setAnnouncement] = useState("");
+  const submitted = useRef(false);
+  // Grow with content up to eight lines, then scroll. Measuring and setting the height in one
+  // layout pass keeps the page (which pins the composer) from jumping.
   // biome-ignore lint/correctness/useExhaustiveDependencies: height follows the value.
   useLayoutEffect(() => {
     const element = field.current;
     if (!element) return;
-    element.style.height = "auto";
-    element.style.height = `${element.scrollHeight}px`;
+    const resize = () => {
+      element.style.height = "auto";
+      const max = composerMaxHeight(element);
+      const content = element.scrollHeight;
+      element.style.height = `${Math.min(content, max)}px`;
+      element.style.overflowY = content > max ? "auto" : "hidden";
+    };
+    resize();
+    // A narrower window wraps the same text onto more lines.
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
   }, [value]);
+  // The parent clears the text once a submit succeeds; the attachments go with it.
+  useEffect(() => {
+    if (value === "" && submitted.current && controlledFiles === undefined) setOwnFiles([]);
+    submitted.current = false;
+  }, [value, controlledFiles]);
   const canSend = !busy && !disabled && value.trim().length > 0;
   const submit = (event?: FormEvent) => {
     event?.preventDefault();
-    if (canSend) onSubmit();
+    if (!canSend) return;
+    submitted.current = true;
+    onSubmit(files);
   };
+  const addFiles = (added: File[]) => {
+    if (disabled || added.length === 0) return;
+    if (controlledFiles === undefined) setOwnFiles((current) => [...current, ...added]);
+    onAddFiles?.(added);
+    setAnnouncement(`Attached ${added.map((file) => file.name).join(", ")}`);
+  };
+  const removeFile = (index: number) => {
+    const file = files[index];
+    if (!file) return;
+    if (controlledFiles === undefined) {
+      setOwnFiles((current) => current.filter((_, position) => position !== index));
+    }
+    onRemoveFile?.(index);
+    setAnnouncement(`Removed ${file.name}`);
+    field.current?.focus();
+  };
+  const carriesFiles = (event: DragEvent) =>
+    !disabled && Array.from(event.dataTransfer?.types ?? []).includes("Files");
+  const stopping = streaming && onStop !== undefined;
   return (
     <form className="z-composer" onSubmit={submit}>
       {above}
-      <div className="z-composer__box">
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: dropping files is a pointer shortcut; the + button is the keyboard path. */}
+      <div
+        className={dropping ? "z-composer__box z-composer__box--drop" : "z-composer__box"}
+        onDragEnter={(event) => {
+          if (!carriesFiles(event)) return;
+          event.preventDefault();
+          dragDepth.current += 1;
+          setDropping(true);
+        }}
+        onDragOver={(event) => {
+          if (!carriesFiles(event)) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "copy";
+          setDropping(true);
+        }}
+        onDragLeave={() => {
+          dragDepth.current = Math.max(0, dragDepth.current - 1);
+          if (dragDepth.current === 0) setDropping(false);
+        }}
+        onDrop={(event) => {
+          dragDepth.current = 0;
+          setDropping(false);
+          if (!carriesFiles(event)) return;
+          event.preventDefault();
+          addFiles(Array.from(event.dataTransfer.files));
+        }}
+      >
+        {files.length > 0 && (
+          <ul className="z-composer__chips" aria-label="Attachments">
+            {files.map((file, index) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: the same file may be attached twice; removal is by index.
+              <li key={`${file.name}-${file.size}-${index}`} className="z-composer__chip">
+                <Icon name={attachmentIcon(file)} />
+                <span className="z-composer__chip-name" title={file.name}>
+                  {file.name}
+                </span>
+                <span className="z-composer__chip-size">{formatFileSize(file.size)}</span>
+                <button
+                  type="button"
+                  className="z-composer__chip-remove"
+                  aria-label={`Remove ${file.name}`}
+                  title={`Remove ${file.name}`}
+                  onClick={() => removeFile(index)}
+                >
+                  <Icon name="close" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
         <textarea
           ref={field}
           className="z-textarea"
@@ -383,13 +566,64 @@ export function Composer({
           disabled={disabled}
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={(event: KeyboardEvent<HTMLTextAreaElement>) => {
-            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) submit();
+            if (event.key !== "Enter" || event.shiftKey) return;
+            // An IME uses Enter to confirm a composition; that must not send the message.
+            if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+            event.preventDefault();
+            submit();
           }}
         />
-        <Button type="submit" disabled={!canSend}>
-          {busy ? "Sending…" : submitLabel}
-        </Button>
+        <div className="z-composer__actions">
+          <button
+            type="button"
+            className="z-composer__button z-composer__attach"
+            aria-label="Attach files"
+            title="Attach files"
+            disabled={disabled}
+            onClick={() => picker.current?.click()}
+          >
+            <Icon name="plus" />
+          </button>
+          <input
+            ref={picker}
+            type="file"
+            multiple
+            hidden
+            tabIndex={-1}
+            aria-hidden="true"
+            onChange={(event) => {
+              addFiles(Array.from(event.target.files ?? []));
+              // Lets the same file be picked again after it was removed.
+              event.target.value = "";
+            }}
+          />
+          {stopping ? (
+            <button
+              type="button"
+              className="z-composer__button z-composer__send"
+              aria-label="Stop generating"
+              title="Stop generating"
+              onClick={onStop}
+            >
+              <Icon name="stop" />
+            </button>
+          ) : (
+            <button
+              type="submit"
+              className="z-composer__button z-composer__send"
+              aria-label={submitLabel}
+              title={submitLabel}
+              aria-busy={busy || undefined}
+              disabled={!canSend}
+            >
+              <Icon name="send" />
+            </button>
+          )}
+        </div>
       </div>
+      <p className="z-visually-hidden" aria-live="polite">
+        {announcement}
+      </p>
       {hint && <p className="z-composer__hint">{hint}</p>}
     </form>
   );
