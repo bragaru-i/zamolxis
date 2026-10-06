@@ -1,4 +1,6 @@
+import { spawn } from "node:child_process";
 import { rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { convexTest } from "convex-test";
 import { afterEach, describe, expect, it } from "vitest";
@@ -14,6 +16,10 @@ import { RepositoryRegistry } from "../packages/node-core/src/repository/reposit
 import { RuntimeManager } from "../packages/node-core/src/runtime/runtime-manager";
 import { repositoryFixture } from "../packages/node-core/src/testing/git-fixture";
 import { WorkspaceManager } from "../packages/node-core/src/workspace/workspace-manager";
+import { AppServerClient } from "../packages/runtime-codex/src/app-server-client";
+import { prepareCodexHome, releaseCodexHome } from "../packages/runtime-codex/src/codex-home";
+import { CodexRuntime } from "../packages/runtime-codex/src/codex-runtime";
+import type { AgentRuntime } from "../packages/runtime-core/src/agent-runtime";
 import {
   FakeNativeStore,
   FakeRuntime,
@@ -85,7 +91,7 @@ const scenario: FakeStep[] = [
   { type: "success", summary: "Feature built" },
 ];
 
-async function fixture() {
+async function fixture(runtimeId = "fake", description = "Build a feature") {
   const repo = repositoryFixture();
   cleanup.push(() => rmSync(repo.root, { recursive: true, force: true }));
   const originalHead = git(repo.path, ["rev-parse", "HEAD"]);
@@ -118,15 +124,15 @@ async function fixture() {
   const taskId = await user.mutation(api.tasks.create, {
     workSessionId,
     title: "Task",
-    description: "Build a feature",
+    description,
     kind: "implementation",
     priority: 1,
-    runtimePolicy: { mode: "forced", runtime: "fake" },
+    runtimePolicy: { mode: "forced", runtime: runtimeId },
   });
   const native = new FakeNativeStore();
   const statePath = join(repo.root, "node-state.sqlite");
   /** One Node process: a new instance over the same durable state and native sessions. */
-  const boot = async (options: { native?: FakeNativeStore } = {}) => {
+  const boot = async (options: { native?: FakeNativeStore; runtime?: AgentRuntime } = {}) => {
     const store = new LocalStateStore(statePath);
     cleanup.push(() => {
       try {
@@ -140,7 +146,7 @@ async function fixture() {
       workstationId,
       instanceId: identity.instanceId,
       runtimeCapabilities: [
-        { runtime: "fake", capabilities: ["start", "stop", "message", "approval"] },
+        { runtime: runtimeId, capabilities: ["start", "stop", "message", "approval"] },
       ],
     });
     const repositories = new RepositoryRegistry(store, () => true);
@@ -158,7 +164,7 @@ async function fixture() {
       identity.instanceId,
       () => true,
     );
-    const runtime = new LiveRuntime(scenario, () => 0, options.native ?? native);
+    const runtime = options.runtime ?? new LiveRuntime(scenario, () => 0, options.native ?? native);
     let starts = 0;
     const start = runtime.start.bind(runtime);
     runtime.start = async (input) => {
@@ -183,7 +189,7 @@ async function fixture() {
       transport,
       workstationId,
     );
-    return { store, identity, workspaces, driver, transport, starts: () => starts };
+    return { store, identity, workspaces, driver, transport, runtime, starts: () => starts };
   };
   const until = async (check: () => Promise<boolean>) => {
     for (let attempt = 0; !(await check()) && attempt < 400; attempt++)
@@ -231,6 +237,8 @@ async function fixture() {
     expect(git(repo.path, ["status", "--porcelain"])).toBe(originalStatus);
   };
   return {
+    repo,
+    repositoryLocationId,
     t,
     user,
     node,
@@ -362,3 +370,108 @@ describe("Node restart recovery through Convex", { timeout: 60_000 }, () => {
     expect(stored).toMatchObject({ status: "failed", error: "WORKSPACE_INTERRUPTED" });
   });
 });
+
+// Opt-in: a real authenticated Codex builder is killed mid-command with its Node, then a new
+// Node process resumes the thread from the persistent CODEX_HOME and completes the run.
+it.skipIf(process.env.ZAMOLXIS_CODEX_RESTART_ACCEPTANCE !== "1")(
+  "real Codex: a builder killed mid-turn by a Node restart is resumed and completes",
+  async () => {
+    const f = await fixture(
+      "codex",
+      "Run the shell command `sleep 15 && echo resumed > restart.txt` in the workspace (do not run anything else), then reply with exactly DONE.",
+    );
+    const profile = join(f.repo.root, "codex-home");
+    prepareCodexHome(profile, {
+      authSource: join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "auth.json"),
+    });
+    const children: ReturnType<typeof spawn>[] = [];
+    cleanup.push(() => {
+      for (const child of children) child.kill("SIGKILL");
+      releaseCodexHome(profile);
+    });
+    // Each Node process launches its own app-servers over the same persistent CODEX_HOME.
+    const codex = (owned: ReturnType<typeof spawn>[]) =>
+      new CodexRuntime({
+        connect: (cwd) =>
+          new AppServerClient({
+            cwd,
+            launch: (executable, assignedCwd) => {
+              const child = spawn(executable, ["app-server", "--listen", "stdio://"], {
+                cwd: assignedCwd,
+                env: { ...process.env, CODEX_HOME: profile },
+                shell: false,
+                stdio: ["pipe", "pipe", "ignore"],
+              });
+              owned.push(child);
+              children.push(child);
+              return child;
+            },
+          }),
+      });
+    const firstChildren: ReturnType<typeof spawn>[] = [];
+    const firstRuntime = codex(firstChildren);
+    const first = await f.boot({ runtime: firstRuntime });
+    const workspaceId = await f.user.mutation(api.workspaces.request, {
+      taskId: f.taskId,
+      repositoryLocationId: f.repositoryLocationId,
+      baseRef: "main",
+    });
+    await first.driver.tick();
+    const runId = await f.user.mutation(api.runs.request, {
+      taskId: f.taskId,
+      workspaceId,
+      runtime: "codex",
+    });
+    const ticking = first.driver.tick().catch((error: unknown) => error);
+    // Wait until the agent is running its command, then the Node dies with its app-server.
+    let nativeSessionId: string | undefined;
+    for (let attempt = 0; attempt < 600 && !nativeSessionId; attempt++) {
+      nativeSessionId = first.store.getRuntimeSession(runId)?.nativeSessionId;
+      if (!nativeSessionId) await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (!nativeSessionId) throw new Error("Codex did not start");
+    let commandStarted = false;
+    for await (const event of firstRuntime.subscribe({ nativeSessionId })) {
+      if (event.type === "tool.started" && event.payload.tool === "command") {
+        commandStarted = true;
+        break;
+      }
+      if (["run.completed", "run.failed", "run.stopped"].includes(event.type)) break;
+    }
+    expect(commandStarted).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    for (const child of firstChildren) child.kill("SIGKILL");
+    expect(await ticking).toBeInstanceOf(Error);
+    first.store.close();
+
+    const second = await f.boot({ runtime: codex([]) });
+    await second.driver.tick();
+    await second.driver.idle();
+    const run = await f.user.query(api.runs.get, { runId: runId as never });
+    const events = await f.events(runId);
+    console.log(
+      "REAL CODEX RESTART",
+      JSON.stringify({
+        status: run.status,
+        resultSummary: run.resultSummary,
+        events: events.map((event) => [
+          event.sequence,
+          event.type,
+          event.payload.label ?? event.payload.summary ?? "",
+        ]),
+      }),
+    );
+    expect(run.status).toBe("completed");
+    expect(events.map((event) => event.sequence)).toEqual(events.map((_, index) => index + 1));
+    expect(events.some((event) => event.payload.label === "Continuing after a restart")).toBe(true);
+    expect(second.starts()).toBe(0);
+    const path = second.workspaces.inspect(workspaceId).path;
+    console.log(
+      "REAL CODEX RESTART candidate files",
+      git(path, ["show", "--name-only", "--format=", "HEAD"]) || "(none)",
+    );
+    expect(second.store.listPendingEvents()).toEqual([]);
+    f.canonicalUnchanged();
+  },
+  300_000,
+);
