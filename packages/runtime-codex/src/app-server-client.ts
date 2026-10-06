@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
+import { withoutGitHubTokens } from "@zamolxis/runtime-core";
 
 export interface AppServerProcess {
   readonly stdout: Readable;
@@ -38,6 +39,17 @@ interface PendingRequest {
 }
 
 /**
+ * The Codex app-server environment: the Node's own plus `overrides`, without GitHub
+ * tokens. Agents never publish; only the Node does, with each repository's own token.
+ */
+export function codexEnv(
+  overrides: NodeJS.ProcessEnv = {},
+  env: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  return withoutGitHubTokens({ ...env, ...overrides });
+}
+
+/**
  * Local stdio only. Server-initiated requests are refused unless a handler explicitly holds
  * them; credential requests are always refused. Nothing is answered automatically with an
  * approval.
@@ -60,6 +72,7 @@ export class AppServerClient {
       ((executable, cwd) =>
         spawn(executable, ["app-server", "--listen", "stdio://"], {
           cwd,
+          env: codexEnv(),
           shell: false,
           stdio: ["pipe", "pipe", "ignore"],
         }))

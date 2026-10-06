@@ -17,6 +17,7 @@ import { ClaudeCliProcess, ClaudeRuntime, claudeEnv } from "@zamolxis/runtime-cl
 import {
   AppServerClient,
   CodexRuntime,
+  codexEnv,
   prepareCodexHome,
   releaseCodexHome,
 } from "@zamolxis/runtime-codex";
@@ -69,7 +70,8 @@ try {
           launch: (executable, assignedCwd) => {
             const child = spawn(executable, ["app-server", "--listen", "stdio://"], {
               cwd: assignedCwd,
-              env: { ...process.env, CODEX_HOME: profile },
+              // No GitHub tokens: only the Node publishes, with each repository's own.
+              env: codexEnv({ CODEX_HOME: profile }),
               shell: false,
               stdio: ["pipe", "pipe", "ignore"],
             });

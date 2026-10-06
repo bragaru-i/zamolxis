@@ -5,3 +5,4 @@ export * from "./models";
 export * from "./payload";
 export * from "./redaction";
 export * from "./runtime-registry";
+export * from "./agent-env";

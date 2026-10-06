@@ -7,7 +7,7 @@ export type {
   AppServerRequestHandler,
   AppServerRequestId,
 } from "./app-server-client";
-export { AppServerClient, isCredentialRequest } from "./app-server-client";
+export { AppServerClient, codexEnv, isCredentialRequest } from "./app-server-client";
 export type { CodexHomeOptions } from "./codex-home";
 export { prepareCodexHome, ROLLOUT_RETENTION_MS, releaseCodexHome } from "./codex-home";
 export type { CodexConnection, CodexRuntimeOptions } from "./codex-runtime";

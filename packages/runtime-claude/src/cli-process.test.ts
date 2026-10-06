@@ -41,6 +41,18 @@ describe("claudeEnv", () => {
       }),
     ).toEqual({ PATH: "/bin", HOME: "/h" });
   });
+  it("never passes GitHub tokens to the agent", () => {
+    expect(
+      claudeEnv({
+        PATH: "/bin",
+        GH_TOKEN: "ghp_x",
+        GITHUB_TOKEN: "ghp_y",
+        GH_ENTERPRISE_TOKEN: "e",
+        GITHUB_ENTERPRISE_TOKEN: "f",
+        ZAMOLXIS_PUBLISH_TOKEN: "github_pat_z",
+      }),
+    ).toEqual({ PATH: "/bin" });
+  });
 });
 
 describe("ClaudeCliProcess", () => {
