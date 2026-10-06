@@ -214,12 +214,12 @@ manifest supports standalone use; authenticated offline operation is not provide
 The web app is phone-first and follows `docs/ui-ux-design-system.md`; shared tokens and
 components live in `packages/ui`. It opens with a durable top-level Orchestrator conversation
 outside Work Sessions. Status questions summarize existing control-plane state and return typed
-Session links without creating work. Explicit execution language creates a Session; explicit
+links without creating work: Sessions, pending approvals, pull requests, Tasks that need you
+(with their trust decision) and active Runs. A Run link opens Run detail directly (`?run=<id>`). Explicit execution language creates a Session; explicit
 continuation follows a recent linked Session when its Product and repository match. Each routing
 decision is persisted. Settings → Agents selects the runtime, model, reasoning effort and owner
 instructions for Supervisor, Builder, Verifier, Repair and Integration roles. Current global
-summaries do not yet link external tickets, Tasks, Runs, evidence or pull requests, and the
-top-level answer/router is deterministic rather than a separate model-backed role. An open Session is kept in the URL
+summaries do not link external tickets yet, and the top-level answer/router is deterministic rather than a separate model-backed role. An open Session is kept in the URL
 (`?session=<id>`), so refresh and back navigation keep it. A Session shows
 your messages, the planning outcome for each, Task cards with their Runs (status, live
 activity label, reported token totals) and a Stop control per active Run and per Session.
