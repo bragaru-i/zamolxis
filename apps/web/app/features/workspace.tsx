@@ -16,6 +16,7 @@ import type { Id } from "../../../../convex/_generated/dataModel";
 import { AgentsSettings } from "./agents";
 import { DevicesSection } from "./devices";
 import { errorCode, explainError } from "./errors";
+import { type GithubAccess, GithubAccessRow, type GithubRepository } from "./github-access";
 import { PeopleSection } from "./people";
 import { SessionView } from "./session-view";
 import { SessionList } from "./sessions";
@@ -259,6 +260,9 @@ export interface MacLocation {
   repositoryName: string;
   canonicalPath: string;
   status: string;
+  // GitHub repositories only: where to create the token, and what the Mac last reported.
+  github?: GithubRepository;
+  githubAccess?: GithubAccess;
 }
 
 type MacMode = "idle" | "rename" | "repositories" | "revoke";
@@ -343,7 +347,12 @@ export function MacItem({
         </form>
       )}
       {state !== "revoked" && mode === "repositories" && (
-        <MacRepositories device={device} onDone={() => choose("idle")} onMessage={onMessage} />
+        <MacRepositories
+          device={device}
+          now={now}
+          onDone={() => choose("idle")}
+          onMessage={onMessage}
+        />
       )}
       {state !== "revoked" && mode === "revoke" && (
         <div className="z-row">
@@ -390,10 +399,12 @@ export function MacItem({
 
 function MacRepositories({
   device,
+  now,
   onDone,
   onMessage,
 }: {
   device: Device;
+  now: number;
   onDone: () => void;
   onMessage: (message: string) => void;
 }) {
@@ -413,6 +424,13 @@ function MacRepositories({
           <div className="z-stack" key={location.repositoryLocationId}>
             <span className="z-small">{location.repositoryName}</span>
             <span className="z-xsmall z-muted">{location.canonicalPath}</span>
+            {location.github && (
+              <GithubAccessRow
+                github={location.github}
+                {...(location.githubAccess ? { access: location.githubAccess } : {})}
+                now={now}
+              />
+            )}
             {confirming === location.repositoryLocationId ? (
               <div className="z-row">
                 <Button

@@ -82,6 +82,41 @@ describe("Settings → Macs", () => {
     expect(html).toContain("zamolxis");
     expect(html).toContain("/Users/me/Projects/zamolxis");
     expect(html).toContain("Remove from this Mac…");
+    // Not a GitHub repository: no GitHub row.
+    expect(html).not.toContain("GitHub");
+  });
+
+  it("shows each GitHub repository's publishing access on this Mac", () => {
+    state.data = {
+      "repositories:listLocations": [
+        {
+          repositoryLocationId: "l1",
+          repositoryName: "zamolxis",
+          canonicalPath: "/Users/me/Projects/zamolxis",
+          status: "available",
+          github: {
+            slug: "bragaru-i/zamolxis",
+            tokenUrl:
+              "https://github.com/settings/personal-access-tokens/new?target_name=bragaru-i",
+          },
+          githubAccess: { status: "ok", login: "bragaru-i", checkedAt: NOW - 1000 },
+        },
+        {
+          repositoryLocationId: "l2",
+          repositoryName: "site",
+          canonicalPath: "/Users/me/Projects/site",
+          status: "available",
+          github: {
+            slug: "wellcopy/site",
+            tokenUrl: "https://github.com/settings/personal-access-tokens/new?target_name=wellcopy",
+          },
+        },
+      ],
+    };
+    const html = render({ initialMode: "repositories" });
+    expect(html).toContain("GitHub: publishing as bragaru-i");
+    expect(html).toContain("GitHub not connected");
+    expect(html).toContain("Create a token on GitHub");
   });
 
   it("explains a refused removal in plain language", () => {
