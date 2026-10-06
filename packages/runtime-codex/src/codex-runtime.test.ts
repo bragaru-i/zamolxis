@@ -441,6 +441,19 @@ describe("Codex native lifecycle", () => {
       summary: "Use password: *** next time",
     });
   });
+  it("keeps the Supervisor's structured reply intact for the Node to parse and redact", async () => {
+    const h = harness();
+    await h.runtime.start({ ...input(), role: "supervisor" });
+    const plan = JSON.stringify({
+      decision: "plan",
+      reply: "One task.",
+      tasks: [{ key: "outcome", title: "Create outcome.txt", description: "Write ALPHA_OK" }],
+    });
+    h.connection.emit("item/completed", { item: { id: "m", type: "agentMessage", text: plan } });
+    h.connection.emit("turn/completed", { turn: { id: "turn", status: "completed" } });
+    const all = await events(h.runtime);
+    expect(all.find((e) => e.type === "run.completed")?.payload).toEqual({ summary: plan });
+  });
   it("steers only the active native turn and confirms stop before settlement", async () => {
     const h = harness();
     await h.runtime.start(input());
