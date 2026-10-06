@@ -206,7 +206,7 @@ describe("SessionView conversation", () => {
     for (const status of ["completed", "failed"]) {
       const html = render({ status }, [{ planned: true, planTaskCount: 1 }]);
       expect(html).not.toContain("Sending starts a new session");
-      expect(html).toContain(">Send<");
+      expect(html).toContain('aria-label="Send"');
     }
     const cancelled = render({ status: "cancelled" }, [{ planned: true, planTaskCount: 1 }]);
     expect(cancelled).toContain("This session has ended. Sending starts a new session.");
