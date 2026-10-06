@@ -14,6 +14,7 @@
 //   --strict-mcp-config): they are not execution grants. The login itself is unaffected.
 // - Pro/Max plan limits assume ordinary individual use; heavy parallel or always-on use
 //   can hit them.
+
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -40,6 +41,7 @@ import {
   safeSummary,
   type UsageCounter,
 } from "@zamolxis/runtime-core";
+import { knownCommit } from "@zamolxis/runtime-core/known-commits";
 import { changedPath, completedSummary, describePermission, describeTool } from "./activity";
 import { ClaudeCliProcess, type ClaudeLaunch, type ClaudeProcess } from "./cli-process";
 import {
@@ -425,10 +427,11 @@ export class ClaudeRuntime implements AgentRuntime {
     const session = this.#get(input.nativeSessionId);
     if (terminal(session) || !session.approvals.has(input.approvalId))
       throw new Error("APPROVAL_NOT_PENDING");
+    if (input.decision === "approve_session") throw new Error("APPROVAL_SCOPE_UNAVAILABLE");
     this.#settleApproval(
       session,
       input.approvalId,
-      input.decision === "approve" ? "approved" : "rejected",
+      input.decision === "reject" ? "rejected" : "approved",
       "user",
     );
   }
@@ -637,7 +640,7 @@ export class ClaudeRuntime implements AgentRuntime {
           ? // The Supervisor's reply is structured JSON that the Node parses and redacts
             // field by field; redacting it here would corrupt values such as task keys.
             boundText(reply, REPLY_LIMIT)
-          : redactedText(reply, REPLY_LIMIT)
+          : redactedText(reply, REPLY_LIMIT, { keep: knownCommit(session.input.workspace.cwd) })
         : "Claude turn completed";
       this.#finish(session, "completed", summary);
     } else if (session.stopping) this.#finish(session, "stopped", "Claude turn interrupted");

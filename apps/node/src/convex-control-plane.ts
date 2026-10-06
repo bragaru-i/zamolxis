@@ -1,14 +1,16 @@
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import type {
   ControlPlaneTransport,
-  RunReconciliation,
   ConversationMessage,
   Delivery,
   ExecutionCommand,
+  RunReconciliation,
   SupervisorProgress,
   SupervisorSelection,
 } from "@zamolxis/node-core";
-import { makeFunctionReference, type FunctionReference } from "convex/server";
-import type { Value } from "convex/values";
+import { type FunctionReference, makeFunctionReference } from "convex/server";
+import { ConvexError, type Value } from "convex/values";
+
 function object(value: unknown): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value))
     throw new Error("INVALID_COMMAND");
@@ -210,7 +212,11 @@ export function parseExecutionCommand(value: unknown): ExecutionCommand {
     const runId = field(payload, "runId");
     if (command.targetType !== "run" || command.targetId !== runId)
       throw new Error("INVALID_COMMAND_TARGET");
-    if (payload.decision !== "approve" && payload.decision !== "reject")
+    if (
+      payload.decision !== "approve" &&
+      payload.decision !== "approve_session" &&
+      payload.decision !== "reject"
+    )
       throw new Error("INVALID_COMMAND");
     return {
       ...common,
@@ -278,6 +284,50 @@ export class ConvexControlPlaneTransport implements ControlPlaneTransport {
     private readonly workstationId: string,
     private readonly instanceId: string,
   ) {}
+  /**
+   * Uploads each proof image, then records it; a retried delivery skips files already sent
+   * (their local copy is gone) and the backend drops a duplicate upload of the same content.
+   */
+  async uploadProof(
+    runId: string,
+    files: ReadonlyArray<{ name: string; path: string; contentType: string; source: string }>,
+  ): Promise<void> {
+    const call = (name: string, args: Record<string, Value>) =>
+      this.client.mutation(
+        makeFunctionReference<"mutation", Record<string, Value>, unknown>(`proof:${name}`),
+        { workstationId: this.workstationId, runId, ...args },
+      );
+    for (const file of files) {
+      if (!existsSync(file.path)) continue;
+      let url: unknown;
+      try {
+        url = await call("uploadUrl", {});
+      } catch (error) {
+        // The run already has its maximum: nothing more will be accepted.
+        if (error instanceof ConvexError && error.data?.code === "LIMIT_EXCEEDED") return;
+        throw error;
+      }
+      if (typeof url !== "string") throw new Error("PROOF_UPLOAD_FAILED");
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": file.contentType },
+        body: readFileSync(file.path),
+      });
+      const body = (await response.json().catch(() => undefined)) as
+        | { storageId?: unknown }
+        | undefined;
+      if (!response.ok || typeof body?.storageId !== "string")
+        throw new Error("PROOF_UPLOAD_FAILED");
+      // "rejected" (outside the limits) is final too: the backend deleted the upload.
+      await call("record", {
+        storageId: body.storageId,
+        name: file.name,
+        source: file.source,
+        contentType: file.contentType,
+      });
+      rmSync(file.path, { force: true });
+    }
+  }
   async mutation(name: string, args: Record<string, Value>): Promise<unknown> {
     return this.client.mutation(
       makeFunctionReference<"mutation", Record<string, Value>, unknown>(`node:${name}`),
@@ -418,6 +468,8 @@ export class ConvexControlPlaneTransport implements ControlPlaneTransport {
           })),
         },
       );
+    } else if (delivery.kind === "run.proof") {
+      await this.uploadProof(delivery.runId, delivery.files);
     } else if (delivery.kind === "run.complete") {
       const { kind: _, evidence, ...args } = delivery;
       await this.mutation("completeRun", {

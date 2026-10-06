@@ -441,13 +441,16 @@ code,
   border-radius: var(--z-radius-md);
   background: var(--z-secondary-fg);
   color: var(--z-primary-fg);
-  font-weight: 800;
+}
+.z-mark svg {
+  display: block;
+  width: 80%;
+  height: 80%;
 }
 .z-mark--lg {
   width: 56px;
   height: 56px;
   border-radius: var(--z-radius-lg);
-  font-size: var(--z-text-xl);
 }
 
 /* Buttons */
@@ -621,6 +624,8 @@ code,
 .z-chat-timeline {
   display: flex;
   flex-direction: column;
+  /* Space between exchanges, and before Work, notices and Usage that follow them. */
+  gap: var(--z-space-5);
   min-width: 0;
 }
 .z-chat-timeline__item {
@@ -629,13 +634,13 @@ code,
   grid-template-columns: 18px minmax(0, 1fr);
   gap: var(--z-space-2);
   min-width: 0;
-  padding-bottom: var(--z-space-5);
 }
-.z-chat-timeline__item:not(:last-child)::before {
+/* The line joins one exchange to the next only; it stops before Work and Usage. */
+.z-chat-timeline__item:has(+ .z-chat-timeline__item)::before {
   content: "";
   position: absolute;
   top: 12px;
-  bottom: -2px;
+  bottom: calc(-1 * var(--z-space-5) - 2px);
   left: 8px;
   width: 2px;
   background: linear-gradient(var(--z-primary), var(--z-border));
@@ -2129,4 +2134,47 @@ code,
     flex-direction: column;
     gap: var(--z-space-2);
   }
+}
+
+/* Proof images an agent saved, or images its change added: thumbnails, then full size. */
+.z-proof {
+  display: flex;
+  flex-direction: column;
+  gap: var(--z-space-1);
+  min-width: 0;
+}
+.z-proof__strip {
+  display: flex;
+  gap: var(--z-space-2);
+  overflow-x: auto;
+  padding-bottom: 2px;
+  min-width: 0;
+}
+.z-proof__thumb {
+  flex: none;
+  width: 88px;
+  height: 88px;
+  padding: 0;
+  border: 1px solid var(--z-border);
+  border-radius: var(--z-radius-md);
+  overflow: hidden;
+  cursor: pointer;
+  /* A checkerboard shows transparent logos on light and dark parts alike. */
+  background:
+    repeating-conic-gradient(var(--z-surface-muted) 0 25%, var(--z-surface) 0 50%) 0 0 / 16px 16px;
+}
+.z-proof__thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.z-proof__full {
+  display: block;
+  width: 100%;
+  max-height: 70dvh;
+  object-fit: contain;
+  border-radius: var(--z-radius-md);
+  background:
+    repeating-conic-gradient(var(--z-surface-muted) 0 25%, var(--z-surface) 0 50%) 0 0 / 20px 20px;
 }

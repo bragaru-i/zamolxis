@@ -107,13 +107,41 @@ export function pushCommit(
   const target = options.target ?? "origin";
   if (target.startsWith("-")) throw new Error("INVALID_PUSH_TARGET");
   const args = ["push", "--porcelain", target, `${sha}:refs/heads/${branch}`];
+  let auth: ReturnType<typeof tokenPushOptions> | undefined;
   try {
-    if (options.token === undefined) run(path, args, 300_000);
+    auth =
+      options.token === undefined ? undefined : tokenPushOptions(options.token, options.username);
+  } catch {
+    throw new Error("PUSH_FAILED");
+  }
+  try {
+    // A lost result may leave the exact SHA on the remote while the control plane still
+    // considers publication failed. Recognize that state before asking for write access:
+    // it is already the requested, SHA-bound publication and must never be force-pushed.
+    const remote = auth
+      ? execFileSync(
+          "git",
+          [...auth.args, "-C", path, "ls-remote", target, `refs/heads/${branch}`],
+          {
+            encoding: "utf8",
+            env: auth.env,
+            timeout: 30_000,
+            maxBuffer: 4 * 1024 * 1024,
+            stdio: ["ignore", "pipe", "pipe"],
+          },
+        )
+      : run(path, ["ls-remote", target, `refs/heads/${branch}`]);
+    if (remote.split(/\s+/)[0] === sha) return;
+  } catch {
+    // Some repository-local push rewrites apply only to `git push`, not `ls-remote`.
+    // Fall through to the authoritative push in that case.
+  }
+  try {
+    if (!auth) run(path, args, 300_000);
     else {
-      const { args: config, env } = tokenPushOptions(options.token, options.username);
-      execFileSync("git", [...config, "-C", path, ...args], {
+      execFileSync("git", [...auth.args, "-C", path, ...args], {
         encoding: "utf8",
-        env,
+        env: auth.env,
         timeout: 300_000,
         maxBuffer: 4 * 1024 * 1024,
         stdio: ["ignore", "pipe", "pipe"],

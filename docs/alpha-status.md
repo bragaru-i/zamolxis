@@ -29,8 +29,10 @@ shipped or a tested implementation as proven in production.
   longer block the queue (#60).
 - **Approvals bridge:** Codex command, file-change and form-only MCP approval
   requests from builder/repair runs are held and shown on the phone (summary, risk
-  as text and tone; critical needs a second tap); Approve/Reject is delivered to the
-  agent through `runtime.approval`. Credential/login/attestation requests, permission
+  as text and tone; critical needs a second tap). Low/medium command requests may be
+  approved once or for the current run when Codex advertises native session approval;
+  high/critical requests remain one-time only. Decisions are delivered to the agent
+  through `runtime.approval`. Credential/login/attestation requests, permission
   requests, user-input questions and all Verifier/Supervisor requests are always
   refused; unanswered requests are rejected after 30 minutes, on stop and before any
   terminal event. Real Codex acceptance (2026-10-06, codex-cli 0.160.0): a held
@@ -81,6 +83,19 @@ shipped or a tested implementation as proven in production.
   page with a back button; wide screens show the menu as a left column next to the page. Agents
   is a compact list of roles; tapping one opens its description and editor. Usage and Settings are
   also at the top of the Home sidebar, and the Mac status in the header opens Macs directly.
+- **Proof images:** Builder, Repair and Verifier instructions ask the agent to save up to 8
+  screenshots or previews (PNG, JPEG, WebP, GIF, SVG, at most 5 MB each) in `.zamolxis-proof`
+  at the repository root when the result can be seen. When the run ends the Node moves that
+  folder out of the worktree (before the candidate commit and the checks, so it is never
+  committed), adds images the candidate added or edited (e.g. a new logo) up to the limit, and
+  delivers them through the durable outbox: `proof:uploadUrl` → Convex storage → `proof:record`
+  (Node-authenticated for its own run; the stored size and type are checked; duplicates and
+  files outside the limits are deleted). Each run row in a Session shows thumbnails; a tap opens
+  the image full size. Only the Session owner can list them. Screenshots are uploaded as taken:
+  they are not redacted, so an agent that screenshots a terminal could capture a secret.
+- **Commit IDs in agent replies:** redaction keeps a 40/64-hex string only when Git confirms it
+  is a commit of the run's repository (`knownCommit`), so "Reviewed exact SHA …" is readable
+  while other hex strings (e.g. old-style tokens) stay hidden.
 - **Session work map:** a Session with tasks shows how its work moves in five plain steps (Plan,
   Build, Check, Fix, Ready), each with its state derived from task phases and runs (for example
   "1 agent writing code · 2 of 3 done", "Not needed so far"), and the agent that did it (the
@@ -238,7 +253,9 @@ module aliases exist only when the variable is set.
    shown. Whether a model writes commentary is up to the model.
 3. **Steering and approvals, shipped with limits.** Real Codex acceptance covers a
    command approval being rejected (HEAD unchanged) and approved (the command runs and
-   the agent reports its result). File-change approvals, MCP elicitations, live
+   the agent reports its result). Codex-native approval for the current run is wired for
+   low/medium commands and covered by controlled protocol and control-plane tests.
+   File-change approvals, MCP elicitations, live
    `turn/steer` and the 30-minute timeout are covered by controlled tests only. A completed Codex turn ends its run, so "send to a waiting run" only
    applies to runtimes that pause. **Restart recovery:** Codex runs resume after a Node
    restart from the persistent `<managedRoot>/codex-home` (`thread/resume`); an

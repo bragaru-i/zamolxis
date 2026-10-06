@@ -5,6 +5,11 @@ import { internalMutation, type MutationCtx, mutation, query } from "./_generate
 import { bounded, fail, load, ownRun, ownSession, requireUser } from "./lib/access";
 import { ownerInstructionsSection, resolveAgentProfile } from "./lib/agentProfiles";
 import { enqueue, stopRun } from "./lib/commands";
+
+// The proof folder is moved out by the Node before commit and checks, so it is the one place
+// a Verifier may write and nothing in it is ever committed.
+const PROOF_INSTRUCTION =
+  "Proof for the owner: when the result can be seen (a screen, image, logo or document), save up to 8 screenshots or previews (PNG, JPEG, WebP, GIF or SVG, each under 5 MB) in the folder .zamolxis-proof at the repository root. Zamolxis shows them to the owner and never commits that folder; writing there is allowed even when other files must not change.";
 export async function queueRun(
   ctx: MutationCtx,
   input: {
@@ -153,9 +158,9 @@ export async function queueRun(
       ...(profile?.reasoningEffort ? { reasoningEffort: profile.reasoningEffort } : {}),
       instruction:
         (role === "verifier"
-          ? `Independently review exact SHA ${workspace.baseSha}. Do not modify files or Git state. Acceptance: ${task.description}. Provide a concise review; deterministic Node checks establish trust.`
+          ? `Independently review exact SHA ${workspace.baseSha}. Do not modify files or Git state. Acceptance: ${task.description}. Provide a concise review; deterministic Node checks establish trust.\n${PROOF_INSTRUCTION}`
           : `${task.description}
-Leave all intended implementation edits in your assigned worktree. Zamolxis captures the candidate commit. Do not publish, merge, or modify other checkouts.`) +
+Leave all intended implementation edits in your assigned worktree. Zamolxis captures the candidate commit. Do not publish, merge, or modify other checkouts.\n${PROOF_INSTRUCTION}`) +
         // Owner text is appended last and labelled; it cannot change trust or approval.
         ownerInstructionsSection(profile?.instructions),
       ...(role === "verifier"

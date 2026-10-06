@@ -26,6 +26,14 @@ describe("approval helpers", () => {
     expect(risk("ls", { cwd: "/Users/me" })).toBe("critical");
     expect(risk("ls", { cwd: `${workspace}/src` })).toBe("low");
   });
+  it("classifies trusted login-shell payloads instead of the interpreter path", () => {
+    expect(risk("/bin/zsh -lc 'node scripts/preview-brand.mjs access'")).toBe("medium");
+    expect(risk('/bin/bash -lc "pnpm check"')).toBe("medium");
+    expect(risk("sh -lc 'rg approval packages'")).toBe("low");
+    expect(risk("/bin/zsh -lc 'pnpm install'")).toBe("high");
+    expect(risk("/bin/zsh -lc 'cat /etc/hosts'")).toBe("high");
+    expect(risk("/bin/zsh -lc 'echo $GITHUB_TOKEN'")).toBe("critical");
+  });
   it("bounds identities and summaries", () => {
     expect(approvalIdFor("run", 7)).toBe("run:7");
     expect(() => approvalIdFor("run", "x".repeat(300))).toThrow("APPROVAL_ID_TOO_LONG");

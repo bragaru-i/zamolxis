@@ -67,7 +67,7 @@ class LiveRuntime extends FakeRuntime {
   override async resolveApproval(input: {
     nativeSessionId: string;
     approvalId: string;
-    decision: "approve" | "reject";
+    decision: "approve" | "approve_session" | "reject";
   }) {
     await super.resolveApproval(input);
     this.#signal();
@@ -287,6 +287,48 @@ describe("approvals", { timeout: 60_000 }, () => {
     expect((await f.commands()).every((command) => command.status === "completed")).toBe(true);
     expect(f.store.getWorkspaceLease(f.workspaceId)).toBeUndefined();
     f.assertCanonicalUnchanged();
+  });
+
+  it("lets the owner approve similar safe commands for only the current run", async () => {
+    const f = await fixture(
+      new FakeRuntime([
+        {
+          type: "approval",
+          kind: "command",
+          summary: "Run: node scripts/preview-brand.mjs access",
+          risk: "medium",
+          allowForSession: true,
+        },
+        { type: "success", summary: "Previewed" },
+      ]),
+    );
+    await f.driver.tick();
+    const approval = only(await f.user.query(api.approvals.listPending, {}));
+    expect(approval.request).toMatchObject({ allowForSession: true });
+    await f.user.mutation(api.approvals.resolve, {
+      approvalId: approval._id,
+      decision: "approved",
+      scope: "run",
+    });
+    const queued = (await f.commands()).find((command) => command.type === "runtime.approval");
+    expect(queued?.payload).toMatchObject({ decision: "approve_session" });
+    await f.driver.control();
+    await f.driver.idle();
+    expect((await f.run()).status).toBe("completed");
+    f.assertCanonicalUnchanged();
+  });
+
+  it("refuses run-scoped approval for high-risk or unsupported requests", async () => {
+    const f = await fixture(new FakeRuntime(approvalThenSuccess));
+    await f.driver.tick();
+    const approval = only(await f.user.query(api.approvals.listPending, {}));
+    await expect(
+      f.user.mutation(api.approvals.resolve, {
+        approvalId: approval._id,
+        decision: "approved",
+        scope: "run",
+      }),
+    ).rejects.toThrow("INVALID_ARGUMENT");
   });
 
   it("delivers the decision to a run that is still streaming and returns it to running", async () => {

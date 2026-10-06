@@ -1,6 +1,6 @@
 // Bounds shared by runtime adapters for what leaves them in normalized events.
 import { RUN_MESSAGE_LIMIT } from "@zamolxis/contracts";
-import { boundText, redactSecrets } from "./redaction";
+import { boundText, type RedactOptions, redactSecrets } from "./redaction";
 
 /** Backend limit is 16 KiB of JSON per event payload; keep a margin. */
 export const PAYLOAD_LIMIT = 15 * 1024;
@@ -34,8 +34,8 @@ export function fitPayload(
 }
 
 /** Redacted (not flattened) free text, such as the agent's final reply. */
-export function redactedText(text: string, limit: number): string {
-  return boundText(redactSecrets(text), limit);
+export function redactedText(text: string, limit: number, options: RedactOptions = {}): string {
+  return boundText(redactSecrets(text, options), limit);
 }
 
 /** An intermediate agent message: redacted, line breaks kept, bounded to RUN_MESSAGE_LIMIT. */

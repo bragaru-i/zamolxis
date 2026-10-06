@@ -69,8 +69,16 @@ function quoted(value: string): string {
   return quote === '"' || quote === "'" ? `${quote}${REDACTED}${quote}` : REDACTED;
 }
 
+export interface RedactOptions {
+  /**
+   * Keeps a long run that would otherwise be hidden, e.g. a commit SHA proven to exist in
+   * the run's repository. Never consulted for the named secret shapes above.
+   */
+  readonly keep?: (run: string) => boolean;
+}
+
 /** Replaces secret values in free text (command lines, summaries) with `***`. */
-export function redactSecrets(text: string): string {
+export function redactSecrets(text: string, options: RedactOptions = {}): string {
   return text
     .replace(PRIVATE_KEY, REDACTED)
     .replace(HEADER, (_match, name: string, separator: string) => `${name}${separator}${REDACTED}`)
@@ -96,7 +104,7 @@ export function redactSecrets(text: string): string {
         : match,
     )
     .replace(KNOWN_TOKEN, REDACTED)
-    .replace(LONG_RUN, (run) => (highEntropy(run) ? REDACTED : run));
+    .replace(LONG_RUN, (run) => (highEntropy(run) && !options.keep?.(run) ? REDACTED : run));
 }
 
 /** Trims and bounds text to `limit` characters, marking a cut with an ellipsis. */

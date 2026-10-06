@@ -29,6 +29,7 @@ import {
   usageLine,
 } from "./conversation";
 import { explainError, explainFailure } from "./errors";
+import { type ProofImage, ProofImages } from "./proof-images";
 import { PublishTask } from "./publish";
 import { RunDetail } from "./run-detail";
 import { runtimeLabel } from "./run-detail-model";
@@ -104,6 +105,7 @@ export function SessionView({
   const messages = useQuery(api.supervisor.messages, args) as UserMessage[] | undefined;
   const tasks = useQuery(api.tasks.listBySession, args) as Task[] | undefined;
   const runs = useQuery(api.runs.listBySession, args) as Run[] | undefined;
+  const proof = useQuery(api.proof.listForSession, args) as ProofImage[] | undefined;
   const submit = useMutation(api.supervisor.submit);
   const cancel = useMutation(api.sessions.cancel);
   const close = useMutation(api.sessions.close);
@@ -336,6 +338,10 @@ export function SessionView({
                                 </Button>
                               ) : undefined
                             }
+                          />
+                          <ProofImages
+                            images={(proof ?? []).filter((image) => image.runId === run._id)}
+                            role={ROLE[run.role ?? "builder"] ?? "agent"}
                           />
                           {STEERABLE.includes(run.status) && <SteerRun runId={run._id} />}
                           {run.resultSummary?.trim() && (

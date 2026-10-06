@@ -1,9 +1,9 @@
 import { convexTest } from "convex-test";
 import { expect, it } from "vitest";
-import type { Id } from "./_generated/dataModel";
-import { api, internal } from "./_generated/api";
-import schema from "./schema";
 import { seedHuman } from "../tests/fixtures/auth";
+import { api, internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
+import schema from "./schema";
 
 function required<T>(value: T | undefined): T {
   if (value === undefined) throw new Error("Missing fixture value");

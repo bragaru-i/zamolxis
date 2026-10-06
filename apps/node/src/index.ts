@@ -1,6 +1,7 @@
 import { createNodeInfo } from "@zamolxis/node-core";
 import { watchSession } from "./debug-session";
 import { runFakeLoopOnce } from "./fake-loop";
+
 function required(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`Missing ${name}`);

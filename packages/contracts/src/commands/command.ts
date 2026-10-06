@@ -31,6 +31,10 @@ export type ZamolxisCommandDto =
   | CommandBase<"runtime.stop", { runId: AgentRunId }>
   | CommandBase<
       "runtime.approval",
-      { runId: AgentRunId; approvalId: string; decision: "approve" | "reject" }
+      {
+        runId: AgentRunId;
+        approvalId: string;
+        decision: "approve" | "approve_session" | "reject";
+      }
     >
   | CommandBase<"node.reconcile", { reason: "connect" | "requested" | "recovery" }>;

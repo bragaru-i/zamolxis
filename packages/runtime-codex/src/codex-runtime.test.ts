@@ -186,6 +186,46 @@ describe("Codex approval bridge", () => {
       }),
     ).rejects.toThrow("APPROVAL_NOT_PENDING");
   });
+  it("offers a run-scoped decision only for low or medium commands supported by Codex", async () => {
+    const h = harness();
+    await h.runtime.start(input());
+    expect(
+      h.connection.ask(9, "item/commandExecution/requestApproval", {
+        command: "/bin/zsh -lc 'node scripts/preview-brand.mjs access'",
+        cwd: "/assigned/worktree",
+        availableDecisions: ["accept", "acceptForSession", "decline"],
+      }),
+    ).toBe(true);
+    const requested = (await until(h.runtime, "approval.requested")).at(-1);
+    expect(requested?.payload).toMatchObject({
+      approvalId: "run:9",
+      risk: "medium",
+      allowForSession: true,
+    });
+    await h.runtime.resolveApproval({
+      nativeSessionId: "native",
+      approvalId: "run:9",
+      decision: "approve_session",
+    });
+    expect(h.connection.responses).toEqual([{ id: 9, result: { decision: "acceptForSession" } }]);
+
+    expect(
+      h.connection.ask(10, "item/commandExecution/requestApproval", {
+        command: "/bin/zsh -lc 'pnpm install'",
+        availableDecisions: ["accept", "acceptForSession", "decline"],
+      }),
+    ).toBe(true);
+    const high = (await until(h.runtime, "approval.requested", 2)).at(-1);
+    expect(high?.payload).toMatchObject({ approvalId: "run:10", risk: "high" });
+    expect(high?.payload).not.toHaveProperty("allowForSession");
+    await expect(
+      h.runtime.resolveApproval({
+        nativeSessionId: "native",
+        approvalId: "run:10",
+        decision: "approve_session",
+      }),
+    ).rejects.toThrow("APPROVAL_SCOPE_UNAVAILABLE");
+  });
   it("describes file changes from the proposed item and flags deletion and outside writes", async () => {
     const h = harness();
     await h.runtime.start(input());

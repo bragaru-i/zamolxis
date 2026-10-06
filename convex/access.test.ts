@@ -1,9 +1,9 @@
 import { convexTest } from "convex-test";
 import { expect, it } from "vitest";
-import schema from "./schema";
-import { api } from "./_generated/api";
 import { seedHuman } from "../tests/fixtures/auth";
+import { api } from "./_generated/api";
 import { authRedirect, googleProfile } from "./lib/authPolicy";
+import schema from "./schema";
 
 const modules = {
   "./_generated/server.ts": () => import("./_generated/server"),

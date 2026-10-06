@@ -1,5 +1,6 @@
-import { convexToJson } from "convex/values";
 import type { Value } from "convex/values";
+import { convexToJson } from "convex/values";
+
 function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical);
   if (value !== null && typeof value === "object")

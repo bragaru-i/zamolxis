@@ -8,7 +8,7 @@ import type {
   WorkspaceId,
   WorkstationId,
 } from "@zamolxis/contracts";
-import { commitCandidate, mergeDependencies } from "@zamolxis/git";
+import { addedOrModifiedFiles, commitCandidate, mergeDependencies } from "@zamolxis/git";
 import type { AgentRuntime, InterruptedTurnPolicy, RuntimeRegistry } from "@zamolxis/runtime-core";
 import {
   type OrchestratorDecision,
@@ -54,6 +54,7 @@ import {
 import { SupervisorLog, type SupervisorLogBatch } from "../trace/supervisor-log";
 import { type CheckEvidence, runVerificationChecks } from "../verification/checks";
 import type { WorkspaceManager } from "../workspace/workspace-manager";
+import { PROOF_MAX_FILES, type ProofFile, takeChangedImages, takeProof } from "./proof";
 
 export type ExecutionCommand = {
   readonly commandId: string;
@@ -120,7 +121,11 @@ export type ExecutionCommand = {
   | { readonly type: "runtime.send"; readonly payload: { runId: string; message: string } }
   | {
       readonly type: "runtime.approval";
-      readonly payload: { runId: string; approvalId: string; decision: "approve" | "reject" };
+      readonly payload: {
+        runId: string;
+        approvalId: string;
+        decision: "approve" | "approve_session" | "reject";
+      };
     }
   | {
       readonly type: "workspace.cleanup";
@@ -268,8 +273,15 @@ export interface ControlPlaneDriverOptions {
   readonly githubCredentials?: PublishingCredentials;
   readonly github?: GitHubClient;
   readonly githubHosts?: readonly string[];
+  // Node-owned folder for proof images until they are uploaded; without it no proof is taken.
+  readonly proofRoot?: string;
 }
 export type Delivery =
+  | {
+      readonly kind: "run.proof";
+      readonly runId: string;
+      readonly files: readonly ProofFile[];
+    }
   | {
       readonly kind: "repository.plan";
       readonly textCommandId: string;
@@ -989,6 +1001,16 @@ export class ControlPlaneDriver {
     trace.record(runtimeStep(runId, context.runtime, Date.now(), state));
     let workspace = this.workspaces.inspect(workspaceId);
     let evidence: CheckEvidence[] | undefined;
+    // Taken before the commit and the checks so the proof folder is in neither.
+    const proofRoot = this.options.proofRoot;
+    const proof: ProofFile[] = [];
+    if (proofRoot) {
+      try {
+        proof.push(...takeProof(workspace.path, proofRoot, runId));
+      } catch {
+        // Proof is best effort: it never blocks the candidate or the checks.
+      }
+    }
     try {
       if (context.role !== "verifier" && state === "completed") {
         const at = Date.now();
@@ -1002,6 +1024,21 @@ export class ControlPlaneDriver {
         workspace = this.workspaces.inspect(workspaceId);
         const after = workspace.headSha ?? workspace.baseSha;
         trace.record(candidateStep(commandId, at, { before, after }));
+        if (proofRoot && before && after) {
+          try {
+            proof.push(
+              ...takeChangedImages(
+                workspace.path,
+                proofRoot,
+                runId,
+                addedOrModifiedFiles(workspace.path, before, after),
+                PROOF_MAX_FILES - proof.length,
+              ),
+            );
+          } catch {
+            // Best effort, as above.
+          }
+        }
       }
       let checks = 0;
       const subject = workspace.headSha;
@@ -1018,6 +1055,8 @@ export class ControlPlaneDriver {
       trace.persist();
     }
     workspace = this.workspaces.inspect(workspaceId);
+    // Before run.complete, so the images are there when the run shows as finished.
+    if (proof.length) deliveries.push({ kind: "run.proof", runId, files: proof });
     deliveries.push({
       kind: "run.complete",
       ...(evidence ? { evidence } : {}),

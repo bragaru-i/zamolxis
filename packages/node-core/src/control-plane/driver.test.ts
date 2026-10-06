@@ -1,4 +1,5 @@
-import { rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   type NormalizedRunEventDto,
@@ -391,7 +392,7 @@ class LiveRuntime extends FakeRuntime {
   override async resolveApproval(input: {
     nativeSessionId: string;
     approvalId: string;
-    decision: "approve" | "reject";
+    decision: "approve" | "approve_session" | "reject";
   }) {
     await super.resolveApproval(input);
     this.#signal();
@@ -416,7 +417,7 @@ class LiveRuntime extends FakeRuntime {
     }
   }
 }
-function runFixture(runtime: FakeRuntime) {
+function runFixture(runtime: FakeRuntime, options: ControlPlaneDriverOptions = {}) {
   const repo = repositoryFixture();
   cleanup.push(() => rmSync(repo.root, { recursive: true, force: true }));
   const store = new LocalStateStore(":memory:");
@@ -452,7 +453,15 @@ function runFixture(runtime: FakeRuntime) {
         state.pending = state.pending.filter((command) => command.commandId !== delivery.commandId);
     },
   };
-  const driver = new ControlPlaneDriver(store, workspaces, runtimes, manager, transport, "node");
+  const driver = new ControlPlaneDriver(
+    store,
+    workspaces,
+    runtimes,
+    manager,
+    transport,
+    "node",
+    options,
+  );
   workspaces.provision({ workspaceId: "build", repositoryLocationId: "location", baseRef: "main" });
   const command = <T extends ExecutionCommand["type"]>(
     id: string,
@@ -520,6 +529,40 @@ describe("approvals and messages", { timeout: 30_000 }, () => {
       summary: "Installed and built",
     });
     expect(f.store.getWorkspaceLease("build")).toBeUndefined();
+  });
+
+  it("uploads proof images before completion and keeps them out of the candidate", async () => {
+    const proofRoot = mkdtempSync(join(tmpdir(), "zam-proof-"));
+    cleanup.push(() => rmSync(proofRoot, { recursive: true, force: true }));
+    const f = runFixture(
+      new FakeRuntime([
+        { type: "waiting", reason: "Draw it" },
+        { type: "success", summary: "New logo" },
+      ]),
+      { proofRoot },
+    );
+    await f.driver.execute(f.start);
+    const workspace = f.workspaces.inspect("build");
+    mkdirSync(join(workspace.path, ".zamolxis-proof"));
+    writeFileSync(join(workspace.path, ".zamolxis-proof", "preview.png"), "png-bytes");
+    writeFileSync(join(workspace.path, "logo.svg"), "<svg xmlns='http://www.w3.org/2000/svg'/>");
+    f.deliveries.length = 0;
+    f.state.pending = [f.command("send", "runtime.send", { runId: "run", message: "go" })];
+    await f.driver.control();
+    await f.driver.idle();
+    const kinds = f.deliveries.map((delivery) => delivery.kind);
+    expect(kinds.indexOf("run.proof")).toBeLessThan(kinds.indexOf("run.complete"));
+    const proof = f.deliveries.find((delivery) => delivery.kind === "run.proof");
+    expect(
+      proof?.kind === "run.proof" && proof.files.map((file) => [file.name, file.source]),
+    ).toEqual([
+      ["preview.png", "proof"],
+      ["logo.svg", "changed"],
+    ]);
+    const complete = f.deliveries.find((delivery) => delivery.kind === "run.complete");
+    const head = complete?.kind === "run.complete" ? complete.headSha : "";
+    expect(git(workspace.path, ["show", "--name-only", "--format=", head])).toBe("logo.svg");
+    expect(complete).toMatchObject({ dirty: false });
   });
 
   it("continues a waiting run after a message and completes it like a start", async () => {
