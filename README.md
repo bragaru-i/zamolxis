@@ -9,6 +9,8 @@ Repositories and native credentials remain local.
 ```text
 Product -> Repository -> Work Session -> Task -> Workspace -> Agent Run -> Runtime
 
+Owner -> Orchestrator conversation -> answer / linked Work Session
+
 Text intent -> repository context -> validated plan / DAG
   -> up to 3 Builders -> candidate Git SHA
   -> 1 independent Verifier -> evidence -> deterministic Trust
@@ -210,11 +212,14 @@ manifest supports standalone use; authenticated offline operation is not provide
 ## Web app
 
 The web app is phone-first and follows `docs/ui-ux-design-system.md`; shared tokens and
-components live in `packages/ui`. The current Alpha opens on a list of your Sessions and its
-home composer creates a Session before the Supervisor decides. The target architecture replaces
-that entry point with a durable top-level Orchestrator chat: status questions summarize and link
-existing work without creating a Session, while explicit execution routes to a new or existing
-Session. This global routing layer is not shipped yet. An open Session is kept in the URL
+components live in `packages/ui`. It opens with a durable top-level Orchestrator conversation
+outside Work Sessions. Status questions summarize existing control-plane state and return typed
+Session links without creating work. Explicit execution language creates a Session; explicit
+continuation follows a recent linked Session when its Product and repository match. Each routing
+decision is persisted. Settings → Agents selects the runtime, model, reasoning effort and owner
+instructions for Supervisor, Builder, Verifier, Repair and Integration roles. Current global
+summaries do not yet link external tickets, Tasks, Runs, evidence or pull requests, and the
+top-level answer/router is deterministic rather than a separate model-backed role. An open Session is kept in the URL
 (`?session=<id>`), so refresh and back navigation keep it. A Session shows
 your messages, the planning outcome for each, Task cards with their Runs (status, live
 activity label, reported token totals) and a Stop control per active Run and per Session.

@@ -14,6 +14,7 @@ import type * as agentProfiles from "../agentProfiles.js";
 import type * as pairing from "../pairing.js";
 import type * as deviceTokens from "../deviceTokens.js";
 import type * as onboarding from "../onboarding.js";
+import type * as orchestrator from "../orchestrator.js";
 import type * as supervisor from "../supervisor.js";
 import type * as approvals from "../approvals.js";
 import type * as events from "../events.js";
@@ -49,6 +50,7 @@ const fullApi: ApiFromModules<{
   pairing: typeof pairing;
   deviceTokens: typeof deviceTokens;
   onboarding: typeof onboarding;
+  orchestrator: typeof orchestrator;
   supervisor: typeof supervisor;
   approvals: typeof approvals;
   events: typeof events;

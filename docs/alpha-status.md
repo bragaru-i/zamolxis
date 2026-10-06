@@ -1,6 +1,6 @@
 # Alpha status and handoff
 
-Status as of 2026-10-06, main through #87. Alpha is **not finished**:
+Status as of 2026-10-06, main through #88. Alpha is **not finished**:
 issues #45, #47, #48 and #49 are open. This file is the handoff for any agent picking
 up the work; update it when a gap closes or a new one is found. Never describe a
 planned capability as shipped.
@@ -60,7 +60,13 @@ planned capability as shipped.
 - **Supervisor and conversation (#66):** ordinary questions, status checks, explanations and
   reviews inside a Session create no Tasks or Agent Runs. A requested plan is shown as a proposal
   with "Open this work"; only that owner action or explicit execution language delegates work to
-  Builders. The separate global Orchestrator boundary is still missing; see gap 1 and 2 below.
+  Builders.
+- **Global Orchestrator conversation:** the home screen has a durable owner-level conversation
+  outside Work Sessions. Questions and status requests answer from control-plane state without
+  creating hidden work. Answers persist their route and typed links to relevant Sessions. Explicit
+  execution language creates a Session; "continue", "do it" and equivalent follow a recent linked
+  Session in the selected repository. Role runtimes, models, effort and instructions remain
+  selectable in Settings → Agents.
 - **Access administration (#67):** Settings → People (admins approve, block,
   restore, promote; blocking revokes all sign-ins) and Settings → Signed-in devices.
   First admin via the internal `admin:bootstrapAdmin` (done on prod for the owner).
@@ -97,13 +103,15 @@ planned capability as shipped.
    #73's reply redaction turned plan task keys into `***`, so every real plan was
    rejected for about 40 minutes until #74 (the Supervisor reply is now redacted per
    field after parsing).
-2. **Global Orchestrator conversation, not shipped.** The home composer still invokes
-   `supervisor.submit`, immediately creates a Work Session and opens it. The required architecture
-   has a durable owner-level Orchestrator conversation outside Work Sessions. It must answer and
-   summarize from control-plane state, return links to relevant tickets, Sessions, Tasks, Agent
-   Runs, evidence and pull requests, and create or reuse a Session only when routing determines
-   durable investigation or execution is needed. Its routing decision must be persisted and
-   explainable. **In-Session conversation is shipped:** Supervisor replies (Markdown, bounded to 8000),
+2. **Global Orchestrator conversation, shipped with limits.** `orchestratorConversations`,
+   `orchestratorMessages` and `orchestratorMessageLinks` persist the owner-level chat, its routing
+   decision (`answer`, `create`, `continue`) and typed navigation. The current backend answers
+   architecture questions and deterministic status summaries directly, with Session links, and
+   creates no Session/Task/Run for those messages. Explicit work uses the existing SHA-bound
+   Session Supervisor; explicit continuation can reuse a Session linked by an earlier summary.
+   Current limits: summaries link Sessions only (not external tickets, Tasks, Runs, evidence or
+   pull requests yet), and the top-level answer/router is deterministic rather than a separately
+   configured model-backed agent. **In-Session conversation is shipped:** Supervisor replies (Markdown, bounded to 8000),
    builder/verifier final replies (`agentRuns.resultSummary`) and intermediate agent
    notes (`run.message`, redacted, ≤2000 chars, shown in Run detail Activity) are
    shown. Whether a model writes commentary is up to the model.
@@ -161,7 +169,10 @@ planned capability as shipped.
 
 ## Next steps, in order
 
-1. Real-device validation: iPhone and a second Google account.
+1. Extend Orchestrator summaries with typed ticket, Task, Run, evidence and pull-request links.
+2. Decide whether free-form top-level answers need a separately configurable model-backed
+   Orchestrator; status and routing remain backend-authorized.
+3. Real-device validation: iPhone and a second Google account.
 
 ## Operations on the owner's Mac
 

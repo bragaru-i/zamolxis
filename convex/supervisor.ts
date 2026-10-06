@@ -5,6 +5,7 @@ import { type MutationCtx, mutation, type QueryCtx, query } from "./_generated/s
 import { fail, load, ownSession, requireNode, requireUser } from "./lib/access";
 import { resolveAgentProfile } from "./lib/agentProfiles";
 import { enqueue } from "./lib/commands";
+import { explicitlyRequestsWork } from "./lib/orchestration";
 import {
   SUPERVISOR_LOG_LIMITS,
   supervisorLogStep,
@@ -89,185 +90,197 @@ export const messages = query({
     );
   },
 });
-export const submit = mutation({
+const submitArgs = {
+  productId: v.id("products"),
+  repositoryId: v.id("repositories"),
+  text: v.string(),
+  idempotencyKey: v.string(),
+  sessionId: v.optional(v.id("workSessions")),
+};
+export async function submitText(
+  ctx: MutationCtx,
   args: {
-    productId: v.id("products"),
-    repositoryId: v.id("repositories"),
-    text: v.string(),
-    idempotencyKey: v.string(),
-    sessionId: v.optional(v.id("workSessions")),
+    productId: Id<"products">;
+    repositoryId: Id<"repositories">;
+    text: string;
+    idempotencyKey: string;
+    sessionId?: Id<"workSessions">;
   },
-  returns: v.id("workSessions"),
-  handler: async (ctx, args) => {
-    const owner = await requireUser(ctx);
-    if (
-      !args.text.trim() ||
-      args.text.length > 16000 ||
-      !/^[a-zA-Z0-9_-]{1,128}$/.test(args.idempotencyKey)
+) {
+  const owner = await requireUser(ctx);
+  if (
+    !args.text.trim() ||
+    args.text.length > 16000 ||
+    !/^[a-zA-Z0-9_-]{1,128}$/.test(args.idempotencyKey)
+  )
+    fail("INVALID_ARGUMENT");
+  const repository = await load(ctx, "repositories", args.repositoryId);
+  const product = await load(ctx, "products", args.productId);
+  if (
+    repository.ownerId !== owner._id ||
+    product.ownerId !== owner._id ||
+    repository.productId !== product._id ||
+    product.archivedAt
+  )
+    fail("PRODUCT_MISMATCH");
+  const previous = await ctx.db
+    .query("textCommands")
+    .withIndex("by_owner_key", (q) =>
+      q.eq("ownerId", owner._id).eq("idempotencyKey", args.idempotencyKey),
     )
-      fail("INVALID_ARGUMENT");
-    const repository = await load(ctx, "repositories", args.repositoryId);
-    const product = await load(ctx, "products", args.productId);
+    .unique();
+  if (previous) {
     if (
-      repository.ownerId !== owner._id ||
-      product.ownerId !== owner._id ||
-      repository.productId !== product._id ||
-      product.archivedAt
+      previous.text !== args.text ||
+      previous.repositoryId !== repository._id ||
+      previous.productId !== product._id ||
+      previous.requestedSessionId !== args.sessionId
     )
-      fail("PRODUCT_MISMATCH");
-    const previous = await ctx.db
-      .query("textCommands")
-      .withIndex("by_owner_key", (q) =>
-        q.eq("ownerId", owner._id).eq("idempotencyKey", args.idempotencyKey),
+      fail("COMMAND_CONFLICT");
+    return previous.workSessionId;
+  }
+  const effective = await resolveAgentProfile(ctx, owner._id, product._id, "builder");
+  // The Supervisor runtime is a snapshot for the Node; it is not required to be
+  // installed here because older Nodes plan deterministically without it.
+  const supervisor = await resolveAgentProfile(ctx, owner._id, product._id, "supervisor");
+  const locations = await ctx.db
+    .query("repositoryLocations")
+    .withIndex("by_repository", (q) => q.eq("repositoryId", repository._id))
+    .take(33);
+  if (locations.length > 32) fail("LIMIT_EXCEEDED");
+  let location: Doc<"repositoryLocations"> | undefined;
+  for (const item of locations) {
+    const device = await load(ctx, "workstations", item.workstationId);
+    const runtime = await ctx.db
+      .query("runtimeInstallations")
+      .withIndex("by_workstation_runtime", (q) =>
+        q.eq("workstationId", device._id).eq("runtime", effective.runtime),
       )
       .unique();
-    if (previous) {
-      if (
-        previous.text !== args.text ||
-        previous.repositoryId !== repository._id ||
-        previous.productId !== product._id ||
-        previous.requestedSessionId !== args.sessionId
+    if (
+      device.ownerId === owner._id &&
+      device.status === "online" &&
+      (device.lastHeartbeatAt ?? 0) > Date.now() - 45000 &&
+      item.status === "available" &&
+      runtime?.status === "available"
+    ) {
+      location = item;
+      break;
+    }
+  }
+  if (!location) fail("NODE_OR_RUNTIME_OFFLINE");
+  const now = Date.now();
+  let sessionId = args.sessionId;
+  if (sessionId) {
+    const session = await ownSession(ctx, sessionId);
+    if (session.productId !== product._id || session.status === "cancelled")
+      fail("PRODUCT_MISMATCH");
+    const relationship = await ctx.db
+      .query("sessionRepositories")
+      .withIndex("by_session_repository", (q) =>
+        q.eq("workSessionId", session._id).eq("repositoryId", repository._id),
       )
-        fail("COMMAND_CONFLICT");
-      return previous.workSessionId;
-    }
-    const effective = await resolveAgentProfile(ctx, owner._id, product._id, "builder");
-    // The Supervisor runtime is a snapshot for the Node; it is not required to be
-    // installed here because older Nodes plan deterministically without it.
-    const supervisor = await resolveAgentProfile(ctx, owner._id, product._id, "supervisor");
-    const locations = await ctx.db
-      .query("repositoryLocations")
-      .withIndex("by_repository", (q) => q.eq("repositoryId", repository._id))
-      .take(33);
-    if (locations.length > 32) fail("LIMIT_EXCEEDED");
-    let location: Doc<"repositoryLocations"> | undefined;
-    for (const item of locations) {
-      const device = await load(ctx, "workstations", item.workstationId);
-      const runtime = await ctx.db
-        .query("runtimeInstallations")
-        .withIndex("by_workstation_runtime", (q) =>
-          q.eq("workstationId", device._id).eq("runtime", effective.runtime),
-        )
-        .unique();
-      if (
-        device.ownerId === owner._id &&
-        device.status === "online" &&
-        (device.lastHeartbeatAt ?? 0) > Date.now() - 45000 &&
-        item.status === "available" &&
-        runtime?.status === "available"
-      ) {
-        location = item;
-        break;
-      }
-    }
-    if (!location) fail("NODE_OR_RUNTIME_OFFLINE");
-    const now = Date.now();
-    let sessionId = args.sessionId;
-    if (sessionId) {
-      const session = await ownSession(ctx, sessionId);
-      if (session.productId !== product._id || session.status === "cancelled")
-        fail("PRODUCT_MISMATCH");
-      const relationship = await ctx.db
-        .query("sessionRepositories")
-        .withIndex("by_session_repository", (q) =>
-          q.eq("workSessionId", session._id).eq("repositoryId", repository._id),
-        )
-        .unique();
-      if (!relationship) fail("PRODUCT_MISMATCH");
-      // A follow-up reopens a finished Session; the Supervisor decides what it needs.
-      const reopen = session.status === "completed" || session.status === "failed";
-      await ctx.db.patch("workSessions", session._id, {
-        ...(reopen ? { status: "planning" as const, completedAt: undefined, reopenedAt: now } : {}),
-        updatedAt: now,
-        lastActivityAt: now,
-      });
-    } else {
-      sessionId = await ctx.db.insert("workSessions", {
-        ownerId: owner._id,
-        productId: product._id,
-        title: args.text.slice(0, 80),
-        goal: args.text,
-        status: "planning",
-        activeRunCount: 0,
-        completedTaskCount: 0,
-        totalTaskCount: 0,
-        needsInputCount: 0,
-        createdAt: now,
-        updatedAt: now,
-        lastActivityAt: now,
-      });
-      await ctx.db.insert("sessionRepositories", {
-        workSessionId: sessionId,
-        repositoryId: repository._id,
-        role: "primary",
-      });
-    }
-    const tasks = await ctx.db
-      .query("tasks")
-      .withIndex("by_session", (q) => q.eq("workSessionId", sessionId!))
-      .take(100);
-    if (tasks.length >= 100) fail("LIMIT_EXCEEDED");
-    if (args.sessionId)
-      // A new message answers any earlier clarifying question.
-      await ctx.db.patch("workSessions", sessionId, {
-        needsInputCount: tasks.filter((task) => task.phase === "needs_input").length,
-      });
-    const history = await ctx.db
-      .query("textCommands")
-      .withIndex("by_session", (q) => q.eq("workSessionId", sessionId!))
-      .order("desc")
-      .take(CONVERSATION_LIMIT);
-    const conversation = history
-      .reverse()
-      .flatMap((row) => [
-        { role: "user" as const, text: row.text },
-        ...(row.reply !== undefined ? [{ role: "supervisor" as const, text: row.reply }] : []),
-      ])
-      .slice(-CONVERSATION_LIMIT)
-      .map((entry) => ({ ...entry, text: entry.text.slice(0, CONVERSATION_TEXT_LIMIT) }));
-    const planningWorkspaceId = await allocateWorkspace(ctx, {
-      workSessionId: sessionId,
-      repositoryLocationId: location._id,
-      baseRef: location.lastKnownHead ?? "HEAD",
-      kind: "worktree",
+      .unique();
+    if (!relationship) fail("PRODUCT_MISMATCH");
+    // A follow-up reopens a finished Session; the Supervisor decides what it needs.
+    const reopen = session.status === "completed" || session.status === "failed";
+    await ctx.db.patch("workSessions", session._id, {
+      ...(reopen ? { status: "planning" as const, completedAt: undefined, reopenedAt: now } : {}),
+      updatedAt: now,
+      lastActivityAt: now,
     });
-    const commandId = await ctx.db.insert("textCommands", {
+  } else {
+    sessionId = await ctx.db.insert("workSessions", {
       ownerId: owner._id,
-      idempotencyKey: args.idempotencyKey,
-      text: args.text,
       productId: product._id,
-      repositoryId: repository._id,
-      workSessionId: sessionId,
-      planningWorkspaceId,
-      ...(args.sessionId ? { requestedSessionId: args.sessionId } : {}),
+      title: args.text.slice(0, 80),
+      goal: args.text,
+      status: "planning",
+      activeRunCount: 0,
+      completedTaskCount: 0,
+      totalTaskCount: 0,
+      needsInputCount: 0,
+      createdAt: now,
+      updatedAt: now,
+      lastActivityAt: now,
     });
-    await enqueue(
-      ctx,
-      location.workstationId,
-      "repository.plan",
-      "textCommand",
-      commandId,
-      {
-        textCommandId: commandId,
-        workspaceId: planningWorkspaceId,
-        text: args.text,
-        supervisor: {
-          runtime: supervisor.runtime,
-          ...(supervisor.profile?.model ? { model: supervisor.profile.model } : {}),
-          ...(supervisor.profile?.reasoningEffort
-            ? { reasoningEffort: supervisor.profile.reasoningEffort }
-            : {}),
-          // Owner instructions (#48): redacted prompt text, never policy.
-          ...(supervisor.profile?.instructions
-            ? { instructions: supervisor.profile.instructions }
-            : {}),
-        },
-        conversation,
+    await ctx.db.insert("sessionRepositories", {
+      workSessionId: sessionId,
+      repositoryId: repository._id,
+      role: "primary",
+    });
+  }
+  const effectiveSessionId = sessionId;
+  if (!effectiveSessionId) fail("INVALID_STATE");
+  const tasks = await ctx.db
+    .query("tasks")
+    .withIndex("by_session", (q) => q.eq("workSessionId", effectiveSessionId))
+    .take(100);
+  if (tasks.length >= 100) fail("LIMIT_EXCEEDED");
+  if (args.sessionId)
+    // A new message answers any earlier clarifying question.
+    await ctx.db.patch("workSessions", sessionId, {
+      needsInputCount: tasks.filter((task) => task.phase === "needs_input").length,
+    });
+  const history = await ctx.db
+    .query("textCommands")
+    .withIndex("by_session", (q) => q.eq("workSessionId", effectiveSessionId))
+    .order("desc")
+    .take(CONVERSATION_LIMIT);
+  const conversation = history
+    .reverse()
+    .flatMap((row) => [
+      { role: "user" as const, text: row.text },
+      ...(row.reply !== undefined ? [{ role: "supervisor" as const, text: row.reply }] : []),
+    ])
+    .slice(-CONVERSATION_LIMIT)
+    .map((entry) => ({ ...entry, text: entry.text.slice(0, CONVERSATION_TEXT_LIMIT) }));
+  const planningWorkspaceId = await allocateWorkspace(ctx, {
+    workSessionId: sessionId,
+    repositoryLocationId: location._id,
+    baseRef: location.lastKnownHead ?? "HEAD",
+    kind: "worktree",
+  });
+  const commandId = await ctx.db.insert("textCommands", {
+    ownerId: owner._id,
+    idempotencyKey: args.idempotencyKey,
+    text: args.text,
+    productId: product._id,
+    repositoryId: repository._id,
+    workSessionId: sessionId,
+    planningWorkspaceId,
+    ...(args.sessionId ? { requestedSessionId: args.sessionId } : {}),
+  });
+  await enqueue(
+    ctx,
+    location.workstationId,
+    "repository.plan",
+    "textCommand",
+    commandId,
+    {
+      textCommandId: commandId,
+      workspaceId: planningWorkspaceId,
+      text: args.text,
+      supervisor: {
+        runtime: supervisor.runtime,
+        ...(supervisor.profile?.model ? { model: supervisor.profile.model } : {}),
+        ...(supervisor.profile?.reasoningEffort
+          ? { reasoningEffort: supervisor.profile.reasoningEffort }
+          : {}),
+        ...(supervisor.profile?.instructions
+          ? { instructions: supervisor.profile.instructions }
+          : {}),
       },
-      `plan:${commandId}`,
-    );
-    return sessionId;
-  },
+      conversation,
+    },
+    `plan:${commandId}`,
+  );
+  return sessionId;
+}
+export const submit = mutation({
+  args: submitArgs,
+  returns: v.id("workSessions"),
+  handler: submitText,
 });
 const CONVERSATION_LIMIT = 20;
 const CONVERSATION_TEXT_LIMIT = 4000;
@@ -277,22 +290,6 @@ const ACTIVITY_LIMIT = 200;
 const PROGRESS_MIN_INTERVAL_MS = 500;
 const IN_FLIGHT = ["claimed", "acknowledged"];
 
-// The model may recommend delegation, but only the owner's words authorize it.
-// Keep this deliberately conservative: exploratory questions such as "how would
-// you fix this?" must stay conversational.
-function explicitlyRequestsWork(text: string) {
-  const normalized = text.trim();
-  if (normalized.startsWith("{")) return true; // Structured API plan submission.
-  return (
-    /^(?:please\s+)?(?:open|start|create|implement|fix|change|update|add|remove|build|refactor|repair|execute|apply|ship|continue|do)\b/i.test(
-      normalized,
-    ) ||
-    /^(?:can|could|would|will)\s+you\s+(?:please\s+)?(?:open|start|create|implement|fix|change|update|add|remove|build|refactor|repair|execute|apply|ship|continue|do)\b/i.test(
-      normalized,
-    ) ||
-    /\b(?:do it|go ahead|open this work|start the work)\b/i.test(normalized)
-  );
-}
 const usageArgs = v.object({
   modelActual: v.optional(v.string()),
   inputTokens: v.optional(v.number()),

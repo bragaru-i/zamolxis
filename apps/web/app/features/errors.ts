@@ -8,6 +8,7 @@ const MESSAGES: Record<string, string> = {
   INVALID_ARGUMENT: "That message can't be sent. Keep it under 16,000 characters.",
   INVALID_STATE: "That action isn't available in the session's current state.",
   COMMAND_CONFLICT: "This message was already sent with different details. Refresh and try again.",
+  WORK_CONTEXT_REQUIRED: "Choose a product and repository before asking Zamolxis to start work.",
   FORBIDDEN: "You don't have access to this.",
   NOT_FOUND: "This item no longer exists.",
 };
