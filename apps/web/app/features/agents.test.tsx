@@ -20,10 +20,12 @@ vi.mock("convex/react", () => ({
 
 import {
   AgentsSettings,
+  concurrencyProblem,
   effectiveProfile,
   explainProfileError,
   type Profile,
   ProfileEditor,
+  profileNameProblem,
   runtimeChoices,
   scopeProfile,
   upsertArgs,
@@ -84,27 +86,42 @@ describe("profile resolution", () => {
     ).toEqual(["claude", "codex"]);
   });
 
-  it("builds upsert arguments without dropping concurrency or inventing values", () => {
+  it("builds upsert arguments with the edited name and concurrency, inventing nothing", () => {
     const existing = profile({ name: "Mine", maxConcurrency: 2 });
     expect(
       upsertArgs({
         role: "builder",
-        name: "Builder · All products",
+        name: "  Fast builders ",
         productId: undefined,
         existing,
         runtime: "codex",
         model: "  ",
         effort: "",
         enabled: false,
+        maxConcurrency: " 4 ",
       }),
     ).toEqual({
       profileId: existing._id,
-      name: "Mine",
+      name: "Fast builders",
       role: "builder",
       runtime: "codex",
       enabled: false,
-      maxConcurrency: 2,
+      maxConcurrency: 4,
     });
+    // An empty limit clears it.
+    expect(
+      upsertArgs({
+        role: "builder",
+        name: "Mine",
+        productId: undefined,
+        existing,
+        runtime: "codex",
+        model: "",
+        effort: "",
+        enabled: true,
+        maxConcurrency: "",
+      }),
+    ).not.toHaveProperty("maxConcurrency");
     expect(
       upsertArgs({
         role: "verifier",
@@ -115,6 +132,7 @@ describe("profile resolution", () => {
         model: " gpt-5 ",
         effort: "high",
         enabled: true,
+        maxConcurrency: "",
       }),
     ).toEqual({
       productId: product,
@@ -127,12 +145,24 @@ describe("profile resolution", () => {
     });
   });
 
+  it("validates names and concurrency like the backend", () => {
+    expect(profileNameProblem(" ")).toBe("Enter a name.");
+    expect(profileNameProblem("x".repeat(65))).toContain("64");
+    expect(profileNameProblem("Builder")).toBeUndefined();
+    for (const bad of ["0", "33", "1.5", "-1", "two"])
+      expect(concurrencyProblem(bad)).toContain("1 to 32");
+    for (const good of ["", " ", "1", "32"]) expect(concurrencyProblem(good)).toBeUndefined();
+  });
+
   it("explains profile errors in plain language", () => {
     expect(explainProfileError(new ConvexError({ code: "AGENT_PROFILE_CONFLICT" }))).toContain(
       "Turn that one off first",
     );
     expect(explainProfileError(new ConvexError({ code: "PRODUCT_MISMATCH" }))).toContain(
       "archived",
+    );
+    expect(explainProfileError(new ConvexError({ code: "AGENT_PROFILE_IN_USE" }))).toContain(
+      "still active",
     );
     expect(explainProfileError(new Error("boom"))).toBe("Could not save the profile.");
   });
@@ -199,5 +229,45 @@ describe("ProfileEditor", () => {
     expect(html).toContain("Runtime default");
     expect(html).toContain("Turn off");
     expect(html).toContain("Use this profile for App");
+    // A product override can be removed; its name and limit are editable.
+    expect(html).toContain("Remove override");
+    expect(html).toContain('value="Builder"');
+    expect(html).toContain("Max concurrent runs");
+  });
+
+  it("prefills the concurrency limit and never offers removal for All products", () => {
+    const html = renderToStaticMarkup(
+      createElement(ProfileEditor, {
+        role: "builder",
+        label: "Builder",
+        scopeName: "All products",
+        productId: undefined,
+        existing: profile({ name: "Global builder", maxConcurrency: 3 }),
+        prefill: profile({ name: "Global builder", maxConcurrency: 3 }),
+        runtimes: ["codex"],
+        onDone: () => {},
+      }),
+    );
+    expect(html).toContain('value="Global builder"');
+    expect(html).toContain('value="3"');
+    expect(html).not.toContain("Remove override");
+  });
+
+  it("names a new override after the role and product", () => {
+    const html = renderToStaticMarkup(
+      createElement(ProfileEditor, {
+        role: "verifier",
+        label: "Verifier",
+        scopeName: "App",
+        productId: product,
+        existing: undefined,
+        prefill: profile({ role: "verifier" }),
+        runtimes: ["codex"],
+        onDone: () => {},
+      }),
+    );
+    expect(html).toContain('value="Verifier · App"');
+    expect(html).toContain('placeholder="No limit"');
+    expect(html).not.toContain("Remove override");
   });
 });
