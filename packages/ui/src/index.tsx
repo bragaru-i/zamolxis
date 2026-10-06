@@ -11,6 +11,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import { compactPath, crownPath, facePath } from "./product-mark";
 
 export { AgentRow, compactCount, costLabel, elapsed } from "./agent";
@@ -140,13 +141,44 @@ export function ToastStack({
   return <ToastRegion label={label}>{items}</ToastRegion>;
 }
 function ToastRegion({ label, children }: { label: string; children: ReactNode }) {
+  // A modal sheet makes everything outside it inert, so the stack is rendered inside the
+  // topmost open sheet while one is open (as its descendant it stays clickable) and in the
+  // page otherwise. Server rendering (and static tests) keep it inline.
+  const [host, setHost] = useState<HTMLElement | null | undefined>(undefined);
+  useEffect(() => {
+    const update = () => {
+      const open = document.querySelectorAll<HTMLDialogElement>("dialog[open]");
+      setHost(open.length ? (open[open.length - 1] as HTMLElement) : document.body);
+    };
+    update();
+    const observer = new MutationObserver(update);
+    observer.observe(document.body, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ["open"],
+    });
+    return () => observer.disconnect();
+  }, []);
+  const inSheet = typeof document !== "undefined" && !!host && host !== document.body;
+  const region = (
+    <ToastPopover key={inSheet ? "sheet" : "page"} label={label}>
+      {children}
+    </ToastPopover>
+  );
+  if (typeof document === "undefined") return region;
+  if (host === undefined) return null;
+  return createPortal(region, host ?? document.body);
+}
+function ToastPopover({ label, children }: { label: string; children: ReactNode }) {
   const root = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const element = root.current as (HTMLDivElement & { showPopover?: () => void }) | null;
     try {
+      // In the top layer above the sheet it belongs to; the fixed layout applies anyway.
       element?.showPopover?.();
     } catch {
-      /* Already shown or no popover support: the fixed layout still applies. */
+      /* Already shown or unsupported. */
     }
   }, []);
   return (
