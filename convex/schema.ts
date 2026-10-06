@@ -293,6 +293,18 @@ export default defineSchema({
     verificationRunId: v.optional(v.id("verificationRuns")),
     trustDecisionId: v.optional(v.id("trustDecisions")),
     lastTrustDecisionId: v.optional(v.id("trustDecisions")),
+    // Publication of the trusted integration branch, only on the owner's explicit action.
+    publishStatus: v.optional(
+      v.union(v.literal("pending"), v.literal("published"), v.literal("failed")),
+    ),
+    publishBranch: v.optional(v.string()),
+    publishBase: v.optional(v.string()),
+    publishCommandId: v.optional(v.id("commands")),
+    publishAttempts: v.optional(v.number()),
+    publishError: v.optional(v.string()),
+    prUrl: v.optional(v.string()),
+    compareUrl: v.optional(v.string()),
+    publishedAt: v.optional(v.number()),
   })
     .index("by_session", ["workSessionId"])
     .index("by_session_status", ["workSessionId", "status"])

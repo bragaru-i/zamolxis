@@ -3,6 +3,7 @@ import { assertRunTransition, type RunStatus } from "@zamolxis/domain";
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { applyApprovalEvent, expireRunApprovals } from "./approvals";
+import { failPublish, publishRecorded } from "./integration";
 import { bounded, fail, load, nodeRun, requireNode } from "./lib/access";
 import { decideVerification, refreshSession } from "./lib/lifecycle";
 import { refreshDependents } from "./lib/settlement";
@@ -255,6 +256,11 @@ export const failCommand = mutation({
       error: args.code,
       completedAt: Date.now(),
     });
+    // A failed publication is reported on the task; the trusted work itself is unaffected.
+    if (command.type === "integration.publish") {
+      await failPublish(ctx, command, args.code);
+      return null;
+    }
     let taskId: import("./_generated/dataModel").Id<"tasks"> | undefined;
     let sessionId: import("./_generated/dataModel").Id<"workSessions"> | undefined;
     if (command.type === "workspace.provision") {
@@ -653,6 +659,8 @@ export const recoverCompletedCommand = mutation({
       const id = ctx.db.normalizeId("tasks", command.targetId);
       if (!id || (await load(ctx, "tasks", id)).phase !== "completed")
         fail("RECONCILIATION_REQUIRED");
+    } else if (command.type === "integration.publish") {
+      if (!(await publishRecorded(ctx, command))) fail("RECONCILIATION_REQUIRED");
     } else if (command.type === "supervisor.stop") {
       // Delivered (or a no-op); the plan reports what followed through its own command.
       if (!ctx.db.normalizeId("textCommands", command.targetId)) fail("INVALID_ARGUMENT");

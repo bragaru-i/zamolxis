@@ -26,6 +26,7 @@ import {
   usageLine,
 } from "./conversation";
 import { explainError, explainFailure } from "./errors";
+import { PublishTask } from "./publish";
 import { RunDetail } from "./run-detail";
 import { STEERABLE, SteerRun } from "./steer";
 import { SessionUsage } from "./usage";
@@ -241,6 +242,9 @@ export function SessionView({
                   {task.failureReason && (
                     <p className="z-small z-muted">{explainFailure(task.failureReason)}</p>
                   )}
+                  {task.status === "completed" && task.phase === "completed" && (
+                    <PublishTask taskId={task._id} />
+                  )}
                   {runsFor(task._id).length > 0 && (
                     <div className="z-work__runs">
                       {runsFor(task._id).map((run) => (
@@ -311,8 +315,8 @@ export function SessionView({
           )}
           {session.status === "completed" && (
             <Notice tone="success">
-              Trusted changes are ready on local integration branches on your Mac. Publishing and
-              merging stay with you.
+              Trusted changes are ready on integration branches on your Mac. Open a pull request
+              from each task when you want; merging stays with you.
             </Notice>
           )}
           <SessionUsage sessionId={sessionId} ready={ready} />

@@ -12,3 +12,4 @@ export * from "./persistence/local-state";
 export * from "./repository/repository-registry";
 export * from "./runtime/runtime-manager";
 export * from "./workspace/workspace-manager";
+export * from "./integration/publish";

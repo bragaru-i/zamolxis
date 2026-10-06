@@ -4,6 +4,13 @@ import { commitCandidate, mergeDependencies } from "@zamolxis/git";
 import type { AgentRuntime, RuntimeRegistry } from "@zamolxis/runtime-core";
 import type { RepositoryDiscovery } from "../capabilities/repository-discovery";
 import {
+  ghPullRequestOpener,
+  type PublishRequest,
+  type PublishResult,
+  type PullRequestOpener,
+  publishIntegration,
+} from "../integration/publish";
+import {
   type ConversationMessage,
   explicitPlan,
   parseSupervisorDecision,
@@ -54,6 +61,8 @@ export type ExecutionCommand = {
         trustDecisionId: string;
       };
     }
+  // Pushes a trusted integration branch and opens a pull request; never merges.
+  | { readonly type: "integration.publish"; readonly payload: PublishRequest }
   | {
       readonly type: "runtime.start";
       readonly payload: {
@@ -202,6 +211,9 @@ interface Planning {
 export interface ControlPlaneDriverOptions {
   readonly now?: () => number;
   readonly progressIntervalMs?: number;
+  // Opens pull requests for integration.publish; defaults to the signed-in GitHub CLI.
+  readonly pullRequests?: PullRequestOpener;
+  readonly githubHosts?: readonly string[];
 }
 export type Delivery =
   | {
@@ -224,6 +236,12 @@ export type Delivery =
       readonly dirty: boolean;
       readonly branchName: string;
     }
+  | ({
+      readonly kind: "integration.published";
+      readonly commandId: string;
+      readonly taskId: string;
+      readonly subjectSha: string;
+    } & PublishResult)
   | {
       readonly kind: "workspace.ready";
       readonly commandId: string;
@@ -476,6 +494,19 @@ export class ControlPlaneDriver {
           headSha: workspace.headSha,
           dirty: false,
           branchName: workspace.branch,
+        });
+      } else if (command.type === "integration.publish") {
+        const workspace = this.workspaces.inspect(command.payload.workspaceId);
+        const result = await publishIntegration(workspace, command.payload, {
+          pullRequests: this.options.pullRequests ?? ghPullRequestOpener,
+          ...(this.options.githubHosts ? { githubHosts: this.options.githubHosts } : {}),
+        });
+        deliveries.push({
+          kind: "integration.published",
+          commandId: command.commandId,
+          taskId: command.payload.taskId,
+          subjectSha: command.payload.subjectSha,
+          ...result,
         });
       } else if (command.type === "runtime.stop") {
         const { runId } = command.payload;
@@ -868,6 +899,24 @@ export class ControlPlaneDriver {
             kind: "command.failed",
             commandId: command.commandId,
             code: "SUPERVISOR_INTERRUPTED",
+          } satisfies Delivery,
+          createdAt: Date.now(),
+        },
+      ]);
+      await this.flush();
+      return;
+    }
+    if (command.type === "integration.publish" && command.status === "running") {
+      // The push may or may not have happened. Publishing again is safe (same exact commit,
+      // never forced), so fail visibly and let the owner retry.
+      this.store.completeCommandWithEvents(command.commandId, [
+        {
+          eventId: `delivery:${command.commandId}:000`,
+          type: "control-plane.delivery",
+          payload: {
+            kind: "command.failed",
+            commandId: command.commandId,
+            code: "PUBLISH_INTERRUPTED",
           } satisfies Delivery,
           createdAt: Date.now(),
         },
