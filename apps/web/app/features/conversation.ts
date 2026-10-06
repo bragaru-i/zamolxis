@@ -1,4 +1,4 @@
-import { explainFailure } from "./errors";
+import { failedReplyText } from "./errors";
 
 export type Decision = "answer" | "plan" | "propose" | "delegate" | "ask";
 
@@ -52,7 +52,7 @@ export function assistantReply(message: ConversationMessage): AssistantReply {
   if (message.planStatus === "failed") {
     return {
       kind: "error",
-      text: `I couldn't plan this: ${explainFailure(message.planError ?? "unknown error")}.`,
+      text: failedReplyText(message.planError ?? "LOCAL_OPERATION_FAILED"),
     };
   }
   if (message.planStatus === "expired") {
