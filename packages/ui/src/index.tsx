@@ -357,13 +357,18 @@ export function Sheet({
   description,
   size = "md",
   onClose,
+  onBack,
+  backLabel = "Back",
   children,
 }: {
   open: boolean;
   title: string;
   description?: ReactNode;
-  /** md fits a form or a list; lg is for long content such as Settings or Run detail. */
-  size?: "md" | "lg";
+  /** Shows a back button before the title, for sheets with pages of their own. */
+  onBack?: () => void;
+  backLabel?: string;
+  /** md fits a form or a list; lg is for long content such as Run detail; xl has two columns. */
+  size?: "md" | "lg" | "xl";
   onClose: () => void;
   children: ReactNode;
 }) {
@@ -389,6 +394,16 @@ export function Sheet({
       }}
     >
       <div className="z-sheet__head">
+        {onBack && (
+          <button
+            type="button"
+            className="z-sheet__back"
+            aria-label={`Back to ${backLabel}`}
+            onClick={onBack}
+          >
+            ‹ {backLabel}
+          </button>
+        )}
         <div className="z-sheet__titles">
           <h2 className="z-sheet__title" id={titleId}>
             {title}

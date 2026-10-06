@@ -246,9 +246,11 @@ describe("AgentsSettings", () => {
     expect(html).toContain("Custom");
     expect(html).toContain("Codex · default model");
     expect(html).toContain("Your All products profile is off.");
-    expect(html).toContain("Orchestration");
-    expect(html).toContain("without opening work");
+    expect(html).toContain("Writes the code");
+    expect(html).toContain("Tap one to change its agent or model.");
     expect(html).toContain("Changes apply to new runs.");
+    // The list stays compact: no editor until a role is opened.
+    expect(html).not.toContain("Thinking effort");
     expect(html).not.toContain("Instructions:");
     // No products yet: no scope picker.
     expect(html).not.toContain("Applies to");
@@ -259,8 +261,13 @@ describe("AgentsSettings", () => {
       "supervisor:products": [],
       "agentProfiles:list": [profile({ instructions: "Always run pnpm lint before finishing." })],
     };
-    const html = renderToStaticMarkup(createElement(AgentsSettings, { active: true, devices: [] }));
+    const html = renderToStaticMarkup(
+      createElement(AgentsSettings, { active: true, devices: [], initialRole: "builder" }),
+    );
     expect(html).toContain("Instructions: Always run pnpm lint before finishing.");
+    expect(html).toContain("‹ All agents");
+    expect(html).toContain("in its own copy of the repository");
+    expect(html).toContain("Thinking effort");
   });
 
   it("offers a product scope when products exist", () => {

@@ -18,7 +18,7 @@ vi.mock("convex/react", () => ({
 }));
 vi.mock("@convex-dev/auth/react", () => ({ useAuthActions: () => ({ signOut: vi.fn() }) }));
 
-import { type Device, explainMacError, MacItem, macNameProblem } from "./workspace";
+import { type Device, explainMacError, MacItem, macNameProblem } from "./macs";
 
 const NOW = 1_000_000;
 const device = (overrides: Partial<Device> = {}): Device => ({

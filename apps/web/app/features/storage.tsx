@@ -110,7 +110,16 @@ function MacRow({
 }
 
 /** Settings section: managed worktrees per Mac, retention window and on-demand cleanup. */
-export function StorageSettings({ active, now }: { active: boolean; now: number }) {
+export function StorageSettings({
+  active,
+  now,
+  showTitle = true,
+}: {
+  active: boolean;
+  now: number;
+  /** Off when the surrounding page already names the section. */
+  showTitle?: boolean;
+}) {
   const storage = useQuery(api.workspaces.storage, active ? {} : "skip") as
     | StorageSummary
     | undefined;
@@ -126,7 +135,7 @@ export function StorageSettings({ active, now }: { active: boolean; now: number 
   }
   return (
     <section className="z-stack" aria-label="Storage">
-      <h3 className="z-section-title">Storage</h3>
+      {showTitle && <h3 className="z-section-title">Storage</h3>}
       {storage === undefined ? (
         <p className="z-muted z-small" role="status">
           Loading storage…

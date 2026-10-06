@@ -25,6 +25,7 @@ import { ApprovalsInbox } from "./approvals";
 import { explainError } from "./errors";
 import { LiveAgents } from "./live-agents";
 import { OnboardingChecklist } from "./onboarding";
+import type { SettingsPage } from "./settings";
 import { groupByRecency, relativeTime } from "./time";
 import { useNow } from "./workspace";
 
@@ -60,7 +61,7 @@ export function SessionList({
   chatId: string;
   onOpenChat: (id: string, mode?: "push" | "replace") => void;
   onOpen: (id: Id<"workSessions">, runId?: Id<"agentRuns">) => void;
-  onSettings: () => void;
+  onSettings: (page?: SettingsPage) => void;
 }) {
   const now = useNow(30000);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -120,6 +121,28 @@ export function SessionList({
       >
         + New chat
       </button>
+      <div className="z-home-nav__links">
+        <button
+          type="button"
+          className="z-home-link"
+          onClick={() => {
+            setDrawerOpen(false);
+            onSettings("usage");
+          }}
+        >
+          Usage
+        </button>
+        <button
+          type="button"
+          className="z-home-link"
+          onClick={() => {
+            setDrawerOpen(false);
+            onSettings();
+          }}
+        >
+          Settings
+        </button>
+      </div>
       <TextInput
         value={search}
         aria-label="Search chats and work sessions"
@@ -277,7 +300,7 @@ export function SessionList({
           title={chatId ? (openChat?.title ?? "Chat") : "Home"}
           subtitle={indicator}
           trailing={
-            <Button variant="ghost" onClick={onSettings}>
+            <Button variant="ghost" onClick={() => onSettings()}>
               Settings
             </Button>
           }
