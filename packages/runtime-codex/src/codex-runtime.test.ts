@@ -507,7 +507,8 @@ describe("Codex native lifecycle", () => {
     await expect(h.runtime.start(input())).rejects.toThrow("ambiguous");
     expect(h.connect).toHaveBeenCalledOnce();
     await expect(h.runtime.inspect("persisted-native")).rejects.toThrow("NOT_FOUND");
-    expect(h.runtime.capabilities().canResume).toBe(false);
+    // Resume is explicit (codex-resume.test.ts); inspect never reattaches on its own.
+    expect(h.runtime.capabilities().canResume).toBe(true);
   });
 });
 

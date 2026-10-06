@@ -167,3 +167,130 @@ export function defineRuntimeAdapterContract(name: string, harness: RuntimeContr
     });
   });
 }
+export interface RuntimeResumeHarness {
+  /** A new runtime process that shares the native state of earlier ones (a restart). */
+  create(): AgentRuntime;
+  input(): StartRunInput;
+  /** Makes the started session hold exactly one approval while its turn is in flight. */
+  requestApproval(runtime: AgentRuntime, nativeSessionId: string): Promise<void>;
+}
+/**
+ * Resume after a restart: a new runtime process reattaches to the native session, continues
+ * event sequences after the Node's cursor (no duplicates, original provenance), withdraws
+ * approvals that died with the old process (never approving them), and settles or
+ * continues the interrupted turn exactly as asked. It never starts the run again.
+ */
+export function defineRuntimeResumeContract(name: string, harness: RuntimeResumeHarness): void {
+  describe(`${name} resume contract`, () => {
+    // Starts a run that holds an approval, as the old process saw it before it ended.
+    const interrupted = async () => {
+      const before = harness.create();
+      const input = harness.input();
+      const session = await before.start(input);
+      await harness.requestApproval(before, session.nativeSessionId);
+      const events = await readUntil(
+        before,
+        session.nativeSessionId,
+        (event) => event.type === "approval.requested",
+      );
+      const requested = events.at(-1);
+      if (requested?.type !== "approval.requested") throw new Error("approval not requested");
+      return { input, session, events, approvalId: requested.payload.approvalId };
+    };
+    it("continues after the Node's cursor in a new process and withdraws held approvals", async () => {
+      const { input, session, events, approvalId } = await interrupted();
+      const cursor = events.at(-1)?.sequence ?? 0;
+      const after = harness.create();
+      expect(after.capabilities().canResume).toBe(true);
+      const resumed = await after.resume({
+        ...input,
+        nativeSessionId: session.nativeSessionId,
+        afterSequence: cursor,
+        pendingApprovalIds: [approvalId],
+        interrupted: "continue",
+      });
+      expect(resumed.nativeSessionId).toBe(session.nativeSessionId);
+      expect(resumed.runId).toBe(input.runId);
+      expect(resumed.workspace).toEqual(input.workspace);
+      const next = await readUntil(
+        after,
+        session.nativeSessionId,
+        (event) => event.type === "approval.requested",
+      );
+      expect(next[0]?.sequence).toBe(cursor + 1);
+      expect(next.map((event) => event.sequence)).toEqual(
+        next.map((_, index) => cursor + index + 1),
+      );
+      expect(next[0]?.type).toBe("approval.resolved");
+      expect(next[0]?.payload).toEqual({ approvalId, decision: "rejected", reason: "withdrawn" });
+      const ids = new Set(events.map((event) => event.eventId));
+      expect(next.some((event) => ids.has(event.eventId))).toBe(false);
+      for (const event of next) {
+        expect(event.runId).toBe(input.runId);
+        expect(event.workspaceId).toBe(input.workspace.workspaceId);
+        expect(event.workstationId).toBe(input.workstationId);
+      }
+      // The agent asks again under a new identity.
+      const asked = next.at(-1);
+      expect(asked?.type).toBe("approval.requested");
+      if (asked?.type === "approval.requested")
+        expect(asked.payload.approvalId).not.toBe(approvalId);
+      // Resuming an attached session again changes nothing.
+      const again = await after.resume({
+        ...input,
+        nativeSessionId: session.nativeSessionId,
+        afterSequence: cursor,
+        pendingApprovalIds: [approvalId],
+        interrupted: "continue",
+      });
+      expect(again.lastSequence).toBe((await after.inspect(session.nativeSessionId)).lastSequence);
+      await after.stop({ nativeSessionId: session.nativeSessionId });
+    });
+    it("announces the run, then fails or stops an interrupted turn instead of continuing it", async () => {
+      for (const [policy, terminal] of [
+        ["fail", "run.failed"],
+        ["stop", "run.stopped"],
+      ] as const) {
+        const { input, session, approvalId } = await interrupted();
+        const after = harness.create();
+        const resumed = await after.resume({
+          ...input,
+          nativeSessionId: session.nativeSessionId,
+          announce: true,
+          pendingApprovalIds: [approvalId],
+          interrupted: policy,
+        });
+        expect(resumed.state).toBe(policy === "fail" ? "failed" : "stopped");
+        const events: NormalizedRunEventDto[] = [];
+        for await (const event of after.subscribe({ nativeSessionId: session.nativeSessionId }))
+          events.push(event);
+        // Usage and activity reports are informational and may appear in between.
+        expect(
+          events
+            .map((event) => event.type)
+            .filter((type) => type !== "run.usage" && type !== "run.activity"),
+        ).toEqual(["run.started", "approval.resolved", terminal]);
+        expect(events[0]?.sequence).toBe(1);
+        await expect(
+          after.resolveApproval?.({
+            nativeSessionId: session.nativeSessionId,
+            approvalId,
+            decision: "approve",
+          }),
+        ).rejects.toThrow();
+      }
+    });
+    it("never resumes an unknown session or another workspace", async () => {
+      const { input, session } = await interrupted();
+      const after = harness.create();
+      await expect(after.resume({ ...input, nativeSessionId: "unknown-native" })).rejects.toThrow();
+      await expect(
+        after.resume({
+          ...input,
+          workspace: { ...input.workspace, cwd: `${input.workspace.cwd}/wrong` },
+          nativeSessionId: session.nativeSessionId,
+        }),
+      ).rejects.toThrow();
+    });
+  });
+}

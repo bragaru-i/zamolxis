@@ -1,7 +1,7 @@
 import type { AgentRunId, WorkspaceId, WorkstationId } from "@zamolxis/contracts";
 import { describe, expect, it } from "vitest";
 import { RuntimeRegistry } from "../runtime-registry";
-import { FakeRuntime } from "./fake-runtime";
+import { FakeNativeStore, FakeRuntime } from "./fake-runtime";
 
 const input = {
   runId: "run" as AgentRunId,
@@ -123,4 +123,48 @@ it("holds an approval step: messages do not settle it, rejection continues the s
     ["approval.resolved", { approvalId: "run:fake-0", decision: "rejected", reason: "user" }],
     ["run.completed", { summary: "Continued without it" }],
   ]);
+});
+it("survives a restart only through a shared native store: waiting stays waiting", async () => {
+  const native = new FakeNativeStore();
+  const scenario = [
+    { type: "waiting", reason: "Need input" },
+    { type: "success", summary: "Finished" },
+  ] as const;
+  const first = new FakeRuntime(scenario, () => 0, native);
+  const session = await first.start(input);
+  // Without the native store a new process knows nothing about the session.
+  await expect(
+    new FakeRuntime(scenario).resume({ ...input, nativeSessionId: session.nativeSessionId }),
+  ).rejects.toThrow("RUNTIME_SESSION_NOT_FOUND");
+  const second = new FakeRuntime(scenario, () => 0, native);
+  const waiting = await second.resume({
+    ...input,
+    nativeSessionId: session.nativeSessionId,
+    afterSequence: 2,
+    interrupted: "continue",
+  });
+  expect(waiting).toMatchObject({ state: "waiting", lastSequence: 2 });
+  await second.send({ nativeSessionId: session.nativeSessionId, message: "Go" });
+  const after: unknown[] = [];
+  for await (const event of second.subscribe({ nativeSessionId: session.nativeSessionId }))
+    after.push([event.sequence, event.type]);
+  expect(after).toEqual([
+    [3, "run.activity"],
+    [4, "run.completed"],
+  ]);
+  // A terminal session resumed again reports its outcome once more after the cursor.
+  const third = new FakeRuntime(scenario, () => 0, native);
+  const done = await third.resume({
+    ...input,
+    nativeSessionId: session.nativeSessionId,
+    afterSequence: 3,
+  });
+  expect(done).toMatchObject({ state: "completed", lastSequence: 4 });
+  const replayed: unknown[] = [];
+  for await (const event of third.subscribe({
+    nativeSessionId: session.nativeSessionId,
+    afterSequence: 3,
+  }))
+    replayed.push([event.eventId, event.type, event.payload]);
+  expect(replayed).toEqual([["fake:run:4", "run.completed", { summary: "Finished" }]]);
 });

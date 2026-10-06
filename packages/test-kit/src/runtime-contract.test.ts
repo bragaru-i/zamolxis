@@ -1,6 +1,10 @@
 import type { AgentRunId, WorkspaceId, WorkstationId } from "@zamolxis/contracts";
-import { FakeRuntime } from "@zamolxis/runtime-core";
-import { defineRuntimeAdapterContract, defineRuntimeApprovalContract } from "./runtime-contract";
+import { FakeNativeStore, FakeRuntime } from "@zamolxis/runtime-core";
+import {
+  defineRuntimeAdapterContract,
+  defineRuntimeApprovalContract,
+  defineRuntimeResumeContract,
+} from "./runtime-contract";
 
 const input = () => ({
   runId: "run" as AgentRunId,
@@ -24,3 +28,21 @@ defineRuntimeApprovalContract("FakeRuntime", {
   // The scenario requests the approval as soon as it starts.
   requestApproval: async () => {},
 });
+{
+  const native = new FakeNativeStore();
+  let runs = 0;
+  defineRuntimeResumeContract("FakeRuntime", {
+    create: () =>
+      new FakeRuntime(
+        [
+          { type: "approval", kind: "command", summary: "pnpm test", risk: "medium" },
+          { type: "success", summary: "Done" },
+        ],
+        () => 0,
+        native,
+      ),
+    // Each test starts a new run, so sessions of earlier tests never interfere.
+    input: () => ({ ...input(), runId: `run-${++runs}` as AgentRunId }),
+    requestApproval: async () => {},
+  });
+}
