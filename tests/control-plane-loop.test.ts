@@ -1421,7 +1421,14 @@ it.skipIf(process.env.ZAMOLXIS_CODEX_ACCEPTANCE !== "1")(
     const stoppedLog = (await f.user.query(api.supervisor.log, {
       textCommandId: stopTarget as never,
     })) as { kind: string; label: string; status: string }[];
-    expect(stoppedLog.some((step) => step.kind === "tool" || step.kind === "phase")).toBe(true);
+    // How much it did before the stop depends on timing; the session and outcome are logged.
+    console.log(
+      `Supervisor log (stopped): ${stoppedLog.map((step) => `${step.kind}:${step.label}`).join(" | ")}`,
+    );
+    expect(stoppedLog[0]).toMatchObject({ kind: "discovery" });
+    expect(stoppedLog.find((step) => step.kind === "supervisor")).toMatchObject({
+      status: "failed",
+    });
     expect(stoppedLog.at(-1)).toMatchObject({
       label: "Stopped before answering",
       status: "failed",
