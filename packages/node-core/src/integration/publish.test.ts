@@ -1,18 +1,21 @@
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { publishBranchName } from "@zamolxis/application";
+import { type GitHubAccessStatus, publishBranchName } from "@zamolxis/application";
 import { git } from "@zamolxis/git";
 import { RuntimeRegistry } from "@zamolxis/runtime-core";
 import { afterEach, describe, expect, it } from "vitest";
 import { ControlPlaneDriver, type Delivery, type ExecutionCommand } from "../control-plane/driver";
+import type { GitHubClient, PullRequestRequest } from "../github/github-api";
+import { MemoryRepositoryTokenStore } from "../github/token-store";
 import { LocalStateStore } from "../persistence/local-state";
 import { RepositoryRegistry } from "../repository/repository-registry";
 import { RuntimeManager } from "../runtime/runtime-manager";
 import { repositoryFixture } from "../testing/git-fixture";
 import { WorkspaceManager } from "../workspace/workspace-manager";
-import { type PublishRequest, type PullRequestInput, publishIntegration } from "./publish";
+import { type PublishRequest, publishIntegration } from "./publish";
 
 const cleanup: Array<() => void> = [];
+const TOKEN = `github_pat_${"A1b2C3d4E5".repeat(8)}`;
 afterEach(() => {
   for (const fn of cleanup.splice(0).reverse()) fn();
 });
@@ -63,9 +66,21 @@ function fixture() {
     title: "Fix the login form",
     body: "Opened by Zamolxis; merge is a human decision.\nGITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123456789",
   };
-  const opened: PullRequestInput[] = [];
-  const opener = (url: string | undefined) => ({
-    open: async (input: PullRequestInput) => {
+  const repository = { host: "example.invalid", owner: "team", repo: "repo" };
+  const tokens = new MemoryRepositoryTokenStore();
+  tokens.write(repository, TOKEN);
+  const opened: PullRequestRequest[] = [];
+  const checked: string[] = [];
+  // A GitHub API stand-in: no network, records what publishing asked for.
+  const github = (
+    url = "https://example.invalid/team/repo/pull/7",
+    status: GitHubAccessStatus = "ok",
+  ): GitHubClient => ({
+    checkAccess: async (_repository, token) => {
+      checked.push(token);
+      return { status, login: "publisher", checkedAt: 0 };
+    },
+    openPullRequest: async (input) => {
       opened.push(input);
       return url;
     },
@@ -77,28 +92,54 @@ function fixture() {
       return undefined;
     }
   };
-  return { repo, remote, store, workspaces, integration, sha, request, opened, opener, remoteRef };
+  const options = (client: GitHubClient = github()) => ({
+    tokens,
+    github: client,
+    githubHosts: ["example.invalid"],
+  });
+  return {
+    repo,
+    remote,
+    store,
+    workspaces,
+    integration,
+    sha,
+    request,
+    repository,
+    tokens,
+    opened,
+    checked,
+    github,
+    options,
+    remoteRef,
+  };
 }
 
 describe("publishing a trusted integration branch", () => {
   it("pushes the exact trusted commit to a Zamolxis branch and opens a pull request", async () => {
     const f = fixture();
     expect(f.request.branch).toBe(`zamolxis/fix-the-login-form-${f.sha.slice(0, 7)}`);
-    const result = await publishIntegration(f.workspaces.inspect("integration"), f.request, {
-      pullRequests: f.opener("https://example.invalid/team/repo/pull/7"),
-      githubHosts: ["example.invalid"],
-      githubCredentials: {
-        get: async (repository) => {
-          expect(repository).toEqual({
-            repositoryId: "repo",
-            host: "example.invalid",
-            owner: "team",
-            repo: "repo",
-          });
-          return { login: "publisher", token: "test-token" };
-        },
-      },
-    });
+    // The pre-push hook sees the push as it runs: the token is in git's environment only,
+    // never on its command line.
+    const hooks = join(f.repo.path, ".git", "hooks");
+    const seen = join(f.repo.root, "seen.txt");
+    mkdirSync(hooks, { recursive: true });
+    writeFileSync(
+      join(hooks, "pre-push"),
+      `#!/bin/sh\n{ echo "env=\${ZAMOLXIS_PUBLISH_TOKEN:+set}"; ps -o args= -p $PPID; } > '${seen}'\nexit 0\n`,
+    );
+    chmodSync(join(hooks, "pre-push"), 0o755);
+    const result = await publishIntegration(
+      f.workspaces.inspect("integration"),
+      f.request,
+      f.options(),
+    );
+    const observed = readFileSync(seen, "utf8");
+    expect(observed).toContain("env=set");
+    expect(observed).toContain("push --porcelain https://example.invalid/team/repo.git");
+    expect(observed).not.toContain(TOKEN);
+    expect(observed).toContain("credential.helper=");
+    expect(f.checked).toEqual([TOKEN]);
     expect(f.remoteRef(f.request.branch)).toBe(f.sha);
     expect(f.remoteRef("main")).toBe(f.sha);
     expect(result).toEqual({
@@ -109,56 +150,80 @@ describe("publishing a trusted integration branch", () => {
     });
     expect(f.opened).toHaveLength(1);
     expect(f.opened[0]).toMatchObject({
-      host: "example.invalid",
-      owner: "team",
-      repo: "repo",
+      repository: f.repository,
+      token: TOKEN,
       base: "main",
       head: f.request.branch,
-      authentication: { login: "publisher", token: "test-token" },
     });
     // Bodies leave the Mac redacted.
     expect(f.opened[0]?.body).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz0123456789");
-    // Retrying the same publication is safe: same commit, nothing forced.
-    await publishIntegration(f.workspaces.inspect("integration"), f.request, {
-      pullRequests: f.opener(undefined),
-      githubHosts: ["example.invalid"],
-    });
+    // Retrying the same publication is safe: same commit, nothing forced, and the GitHub
+    // client is asked again (it returns the already open pull request).
+    const again = await publishIntegration(
+      f.workspaces.inspect("integration"),
+      f.request,
+      f.options(),
+    );
+    expect(again.prUrl).toBe("https://example.invalid/team/repo/pull/7");
     expect(f.remoteRef(f.request.branch)).toBe(f.sha);
   });
 
-  it("returns a compare link when no signed-in pull request client is available", async () => {
+  it("needs this repository's own GitHub token and never falls back to another identity", async () => {
     const f = fixture();
-    const result = await publishIntegration(f.workspaces.inspect("integration"), f.request, {
-      pullRequests: f.opener(undefined),
-      githubHosts: ["example.invalid"],
-    });
-    expect(result.prUrl).toBeUndefined();
-    expect(result.compareUrl).toBe(
-      `https://example.invalid/team/repo/compare/main...${f.request.branch}`,
+    const workspace = f.workspaces.inspect("integration");
+    const empty = { ...f.options(), tokens: new MemoryRepositoryTokenStore() };
+    await expect(publishIntegration(workspace, f.request, empty)).rejects.toThrow(
+      /^PUBLISH_GITHUB_TOKEN_MISSING$/,
     );
-    // A non-GitHub remote still gets the push, without links.
-    const plain = await publishIntegration(f.workspaces.inspect("integration"), f.request, {
-      pullRequests: f.opener("https://example.invalid/never"),
-    });
-    expect(plain).toEqual({ remoteBranch: f.request.branch, base: "main" });
-    expect(f.opened).toHaveLength(1);
+    for (const [status, code] of [
+      ["invalid", "PUBLISH_GITHUB_TOKEN_INVALID"],
+      ["expired", "PUBLISH_GITHUB_TOKEN_EXPIRED"],
+      ["no_push", "PUBLISH_GITHUB_NO_PUSH"],
+      ["unreachable", "PUBLISH_GITHUB_UNREACHABLE"],
+    ] as const)
+      await expect(
+        publishIntegration(workspace, f.request, f.options(f.github(undefined, status))),
+      ).rejects.toThrow(new RegExp(`^${code}$`));
+    const unreadable = {
+      ...f.options(),
+      tokens: {
+        read: () => {
+          throw new Error("KEYCHAIN_UNAVAILABLE");
+        },
+        write: () => undefined,
+        remove: () => undefined,
+      },
+    };
+    await expect(publishIntegration(workspace, f.request, unreadable)).rejects.toThrow(
+      "PUBLISH_GITHUB_TOKEN_UNREADABLE",
+    );
+    // Nothing was pushed and no pull request was opened.
+    expect(f.remoteRef(f.request.branch)).toBeUndefined();
+    expect(f.opened).toHaveLength(0);
+    // An expiring token still publishes.
+    const expiring = await publishIntegration(
+      workspace,
+      f.request,
+      f.options(f.github(undefined, "expiring")),
+    );
+    expect(expiring.prUrl).toBe("https://example.invalid/team/repo/pull/7");
   });
 
-  it("refuses a GitHub publication when the configured repository account is unavailable", async () => {
+  it("pushes a non-GitHub remote with the repository's own credentials, without links", async () => {
     const f = fixture();
-    await expect(
-      publishIntegration(f.workspaces.inspect("integration"), f.request, {
-        pullRequests: f.opener(undefined),
-        githubHosts: ["example.invalid"],
-        githubCredentials: { get: async () => undefined },
-      }),
-    ).rejects.toThrow("PUBLISH_GITHUB_AUTH_REQUIRED");
-    expect(f.remoteRef(f.request.branch)).toBeUndefined();
+    const plain = await publishIntegration(f.workspaces.inspect("integration"), f.request, {
+      tokens: new MemoryRepositoryTokenStore(),
+      github: f.github(),
+    });
+    expect(plain).toEqual({ remoteBranch: f.request.branch, base: "main" });
+    expect(f.remoteRef(f.request.branch)).toBe(f.sha);
+    expect(f.opened).toHaveLength(0);
+    expect(f.checked).toHaveLength(0);
   });
 
   it("refuses dirty worktrees, other commits, default or foreign branches and plain worktrees", async () => {
     const f = fixture();
-    const options = { pullRequests: f.opener(undefined) };
+    const options = f.options();
     const workspace = f.workspaces.inspect("integration");
     await expect(
       publishIntegration(workspace, { ...f.request, subjectSha: "f".repeat(40) }, options),
@@ -189,7 +254,7 @@ describe("publishing a trusted integration branch", () => {
 
   it("never forces over a diverged remote branch and respects pre-push hooks", async () => {
     const f = fixture();
-    const options = { pullRequests: f.opener(undefined) };
+    const options = f.options();
     // Someone else's commit already sits on the branch name: a push must not replace it.
     git(f.repo.path, ["checkout", "-q", "-b", "elsewhere"]);
     writeFileSync(join(f.repo.path, "other.txt"), "other\n");
@@ -225,20 +290,23 @@ describe("publishing a trusted integration branch", () => {
   it("fails visibly when the pull request cannot be opened", async () => {
     const f = fixture();
     await expect(
-      publishIntegration(f.workspaces.inspect("integration"), f.request, {
-        pullRequests: {
-          open: async () => {
-            throw new Error("gh: HTTP 422 token=ghp_secret");
+      publishIntegration(
+        f.workspaces.inspect("integration"),
+        f.request,
+        f.options({
+          ...f.github(),
+          openPullRequest: async () => {
+            throw new Error("HTTP 422 token=ghp_secret");
           },
-        },
-        githubHosts: ["example.invalid"],
-      }),
+        }),
+      ),
     ).rejects.toThrow(/^PUBLISH_PR_FAILED$/);
     await expect(
-      publishIntegration(f.workspaces.inspect("integration"), f.request, {
-        pullRequests: f.opener("https://attacker.invalid/pull/1"),
-        githubHosts: ["example.invalid"],
-      }),
+      publishIntegration(
+        f.workspaces.inspect("integration"),
+        f.request,
+        f.options(f.github("https://attacker.invalid/pull/1")),
+      ),
     ).rejects.toThrow("PUBLISH_PR_FAILED");
   });
 
@@ -269,7 +337,8 @@ describe("publishing a trusted integration branch", () => {
       },
       "node",
       {
-        pullRequests: f.opener("https://example.invalid/team/repo/pull/9"),
+        githubTokens: f.tokens,
+        github: f.github("https://example.invalid/team/repo/pull/9"),
         githubHosts: ["example.invalid"],
       },
     );
@@ -298,6 +367,29 @@ describe("publishing a trusted integration branch", () => {
     await driver.execute(command("publish-2", { ...f.request, subjectSha: "e".repeat(40) }));
     expect(deliveries).toEqual([
       { kind: "command.failed", commandId: "publish-2", code: "PUBLISH_SHA_MISMATCH" },
+    ]);
+    // A driver without tokens reports the missing token instead of using another identity.
+    deliveries.length = 0;
+    const tokenless = new ControlPlaneDriver(
+      f.store,
+      f.workspaces,
+      runtimes,
+      manager,
+      {
+        listPending: async () => [],
+        claim: async () => {},
+        acknowledge: async () => {},
+        reconcile: async () => {},
+        deliver: async (delivery) => {
+          deliveries.push(delivery);
+        },
+      },
+      "node",
+      { github: f.github(), githubHosts: ["example.invalid"] },
+    );
+    await tokenless.execute(command("publish-3", f.request));
+    expect(deliveries).toEqual([
+      { kind: "command.failed", commandId: "publish-3", code: "PUBLISH_GITHUB_TOKEN_MISSING" },
     ]);
   });
 });
