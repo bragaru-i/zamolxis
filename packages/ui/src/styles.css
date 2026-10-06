@@ -155,8 +155,21 @@ code,
   flex-direction: column;
   gap: var(--z-space-4);
 }
+/* Sign-in, access and loading screens: one centered column, on every screen size. */
 .z-centered {
   justify-content: center;
+  align-items: center;
+  text-align: center;
+}
+.z-centered > * {
+  width: 100%;
+  max-width: 420px;
+}
+.z-centered > .z-row {
+  justify-content: center;
+}
+.z-centered .z-card {
+  text-align: left;
 }
 
 /* Conversation-first Home */
