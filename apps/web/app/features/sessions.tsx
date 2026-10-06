@@ -12,6 +12,7 @@ import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { type ReactNode, useEffect, useState } from "react";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
+import { ApprovalsInbox } from "./approvals";
 import { explainError } from "./errors";
 import { relativeTime } from "./time";
 import { useNow } from "./workspace";
@@ -62,6 +63,7 @@ export function SessionList({
       footer={<NewSession ready={ready} onCreated={onOpen} />}
     >
       {notices}
+      <ApprovalsInbox ready={ready} onOpen={onOpen} />
       <section className="z-stack" aria-label="Sessions">
         <h2 className="z-section-title">Sessions</h2>
         {status === "LoadingFirstPage" ? (

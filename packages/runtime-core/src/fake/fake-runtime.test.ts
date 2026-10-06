@@ -96,3 +96,31 @@ it("plays a per-run scenario and reports an arbitrary final summary", async () =
       if (event.type === "run.completed") summaries.push(event.payload.summary);
   expect(summaries).toEqual(['{"decision":"answer"}', "Built"]);
 });
+it("holds an approval step: messages do not settle it, rejection continues the scenario", async () => {
+  const runtime = new FakeRuntime([
+    { type: "approval", kind: "command", summary: "rm -rf build", risk: "high" },
+    { type: "success", summary: "Continued without it" },
+  ]);
+  const session = await runtime.start(input);
+  expect(session.state).toBe("running");
+  await runtime.send({ nativeSessionId: session.nativeSessionId, message: "Hurry" });
+  expect((await runtime.inspect(session.nativeSessionId)).state).toBe("running");
+  await runtime.resolveApproval({
+    nativeSessionId: session.nativeSessionId,
+    approvalId: "run:fake-0",
+    decision: "reject",
+  });
+  const events: unknown[] = [];
+  for await (const event of runtime.subscribe({ nativeSessionId: session.nativeSessionId }))
+    events.push([event.type, event.payload]);
+  expect(events).toEqual([
+    ["run.started", { nativeSessionId: "fake:run" }],
+    [
+      "approval.requested",
+      { approvalId: "run:fake-0", kind: "command", summary: "rm -rf build", risk: "high" },
+    ],
+    ["run.activity", { label: "Message received" }],
+    ["approval.resolved", { approvalId: "run:fake-0", decision: "rejected", reason: "user" }],
+    ["run.completed", { summary: "Continued without it" }],
+  ]);
+});

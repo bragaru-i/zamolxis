@@ -6,6 +6,104 @@ export interface RuntimeContractHarness {
   create(): AgentRuntime;
   input(): StartRunInput;
 }
+export interface RuntimeApprovalHarness extends RuntimeContractHarness {
+  // Makes the started session request exactly one approval.
+  requestApproval(runtime: AgentRuntime, nativeSessionId: string): Promise<void>;
+}
+async function readUntil(
+  runtime: AgentRuntime,
+  nativeSessionId: string,
+  done: (event: NormalizedRunEventDto) => boolean,
+): Promise<NormalizedRunEventDto[]> {
+  const events: NormalizedRunEventDto[] = [];
+  for await (const event of runtime.subscribe({ nativeSessionId })) {
+    events.push(event);
+    if (done(event)) return events;
+  }
+  return events;
+}
+/** Shared semantics for adapters that hold operations for human approval. */
+export function defineRuntimeApprovalContract(name: string, harness: RuntimeApprovalHarness): void {
+  describe(`${name} approval contract`, () => {
+    const requested = async (runtime: AgentRuntime) => {
+      const session = await runtime.start(harness.input());
+      await harness.requestApproval(runtime, session.nativeSessionId);
+      const events = await readUntil(
+        runtime,
+        session.nativeSessionId,
+        (event) => event.type === "approval.requested",
+      );
+      const event = events.at(-1);
+      if (event?.type !== "approval.requested") throw new Error("approval not requested");
+      return { session, event };
+    };
+    it("holds the operation until a human approves it, once", async () => {
+      const runtime = harness.create();
+      expect(runtime.capabilities().canApprove).toBe(true);
+      const { session, event } = await requested(runtime);
+      expect(event.payload.approvalId.length).toBeGreaterThan(0);
+      expect(event.payload.approvalId.length).toBeLessThanOrEqual(256);
+      expect(event.payload.summary.length).toBeLessThanOrEqual(2000);
+      expect(["command", "fileChange", "tool", "other"]).toContain(event.payload.kind);
+      expect(["low", "medium", "high", "critical"]).toContain(event.payload.risk);
+      expect(event.runId).toBe(harness.input().runId);
+      const snapshot = await runtime.inspect(session.nativeSessionId);
+      expect(["completed", "failed", "stopped"]).not.toContain(snapshot.state);
+      await expect(
+        runtime.resolveApproval?.({
+          nativeSessionId: session.nativeSessionId,
+          approvalId: "unknown",
+          decision: "approve",
+        }),
+      ).rejects.toThrow("APPROVAL_NOT_PENDING");
+      await runtime.resolveApproval?.({
+        nativeSessionId: session.nativeSessionId,
+        approvalId: event.payload.approvalId,
+        decision: "approve",
+      });
+      const after = await readUntil(
+        runtime,
+        session.nativeSessionId,
+        (item) => item.type === "approval.resolved",
+      );
+      expect(after.at(-1)?.payload).toEqual({
+        approvalId: event.payload.approvalId,
+        decision: "approved",
+        reason: "user",
+      });
+      await expect(
+        runtime.resolveApproval?.({
+          nativeSessionId: session.nativeSessionId,
+          approvalId: event.payload.approvalId,
+          decision: "reject",
+        }),
+      ).rejects.toThrow("APPROVAL_NOT_PENDING");
+      await runtime.stop({ nativeSessionId: session.nativeSessionId });
+    });
+    it("rejects pending approvals before reporting a stop", async () => {
+      const runtime = harness.create();
+      const { session, event } = await requested(runtime);
+      await runtime.stop({ nativeSessionId: session.nativeSessionId });
+      const events = await readUntil(runtime, session.nativeSessionId, (item) =>
+        ["run.stopped", "run.completed", "run.failed"].includes(item.type),
+      );
+      const resolved = events.findIndex((item) => item.type === "approval.resolved");
+      expect(events[resolved]?.payload).toEqual({
+        approvalId: event.payload.approvalId,
+        decision: "rejected",
+        reason: "stopped",
+      });
+      expect(resolved).toBeLessThan(events.length - 1);
+      await expect(
+        runtime.resolveApproval?.({
+          nativeSessionId: session.nativeSessionId,
+          approvalId: event.payload.approvalId,
+          decision: "approve",
+        }),
+      ).rejects.toThrow();
+    });
+  });
+}
 export function defineRuntimeAdapterContract(name: string, harness: RuntimeContractHarness): void {
   describe(`${name} shared runtime adapter contract`, () => {
     it("advertises its identity and executes only the supplied assignment", async () => {

@@ -15,6 +15,7 @@ import { useMutation, useQuery } from "convex/react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
+import { SessionApprovals } from "./approvals";
 import {
   assistantReply,
   type ConversationMessage,
@@ -25,6 +26,7 @@ import {
 } from "./conversation";
 import { explainError, explainFailure } from "./errors";
 import { RunDetail } from "./run-detail";
+import { STEERABLE, SteerRun } from "./steer";
 import { SessionUsage } from "./usage";
 
 interface Session {
@@ -174,6 +176,7 @@ export function SessionView({
       }
     >
       {notices}
+      <SessionApprovals sessionId={sessionId} ready={ready} />
       {confirmStop && (
         <div className="z-card z-stack" role="alertdialog" aria-label="Stop session">
           <p>Stop all work in this session? Running agents are interrupted on your Mac.</p>
@@ -279,6 +282,7 @@ export function SessionView({
                           {run.activityLabel && ACTIVE_RUN.includes(run.status) && (
                             <span className="z-xsmall z-muted">{run.activityLabel}</span>
                           )}
+                          {STEERABLE.includes(run.status) && <SteerRun runId={run._id} />}
                           {run.resultSummary?.trim() && (
                             <div className="z-small">
                               <Collapsible likelyLong={likelyLongSummary(run.resultSummary)}>

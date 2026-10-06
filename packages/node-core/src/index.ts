@@ -4,12 +4,11 @@ export interface NodeInfo {
 export function createNodeInfo(): NodeInfo {
   return { version: "0.0.0" };
 }
+export * from "./capabilities/capability-trace";
+export * from "./capabilities/repository-discovery";
+export * from "./capabilities/supervisor";
+export * from "./control-plane/driver";
 export * from "./persistence/local-state";
 export * from "./repository/repository-registry";
-export * from "./workspace/workspace-manager";
-export * from "./capabilities/repository-discovery";
-export * from "./capabilities/capability-trace";
-export * from "./capabilities/supervisor";
 export * from "./runtime/runtime-manager";
-
-export * from "./control-plane/driver";
+export * from "./workspace/workspace-manager";

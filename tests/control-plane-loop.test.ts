@@ -104,14 +104,14 @@ async function fixture(runtimeId = "fake") {
     runtimePolicy: { mode: "forced", runtime: runtimeId },
   });
   const runtime = new CountingRuntime();
-  const boot = async (adapter: AgentRuntime = runtime) => {
+  const boot = async (adapter: AgentRuntime = runtime, capabilities = ["start"]) => {
     const store = new LocalStateStore(join(repo.root, "state.sqlite"));
     cleanup.push(() => store.close());
     const identity = store.getOrCreateIdentity();
     await node.mutation(api.node.heartbeat, {
       workstationId,
       instanceId: identity.instanceId,
-      runtimeCapabilities: [{ runtime: adapter.id, capabilities: ["start"] }],
+      runtimeCapabilities: [{ runtime: adapter.id, capabilities }],
     });
     const repositories = new RepositoryRegistry(store, () => true);
     repositories.register({
@@ -326,11 +326,14 @@ it("fails unknown and unsupported commands individually and still stops a waitin
       createdAt: Date.now(),
     }),
   );
-  const sendId = await f.user.mutation(api.runs.sendMessage, {
-    runId,
-    message: "Continue",
-    idempotencyKey: "first",
-  });
+  // This Node does not advertise steering ("message"), so the backend refuses to queue it.
+  await expect(
+    f.user.mutation(api.runs.sendMessage, {
+      runId,
+      message: "Continue",
+      idempotencyKey: "first",
+    }),
+  ).rejects.toThrow("RUNTIME_MESSAGE_UNSUPPORTED");
   await f.user.mutation(api.runs.stop, { runId });
   await node.driver().tick();
   const run = await f.user.query(api.runs.get, { runId });
@@ -342,12 +345,53 @@ it("fails unknown and unsupported commands individually and still stops a waitin
     status: "failed",
     error: "UNSUPPORTED_EXECUTION_COMMAND",
   });
-  expect(byId.get(String(sendId))).toMatchObject({
-    status: "failed",
-    error: "RUNTIME_SEND_UNSUPPORTED",
-  });
+  expect(commands.some((command) => command.type === "runtime.send")).toBe(false);
   expect(commands.find((command) => command.type === "runtime.stop")?.status).toBe("completed");
   expect(commands.filter((command) => command.status === "pending")).toEqual([]);
+  expect(node.store.getWorkspaceLease(workspaceId)).toBeUndefined();
+  expect(git(f.path, ["rev-parse", "HEAD"])).toBe(f.originalHead);
+  expect(git(f.path, ["status", "--porcelain"])).toBe(f.originalStatus);
+});
+it("steers a waiting run from a fresh driver instance without replaying its earlier pause", async () => {
+  const f = await fixture();
+  const node = await f.boot(
+    new FakeRuntime([
+      { type: "waiting", reason: "Which file?" },
+      { type: "success", summary: "Edited README" },
+    ]),
+    ["start", "stop", "message", "approval"],
+  );
+  const workspaceId = await f.user.mutation(api.workspaces.request, {
+    taskId: f.taskId,
+    repositoryLocationId: f.repositoryLocationId,
+    baseRef: "main",
+  });
+  await node.driver().tick();
+  const runId = await f.user.mutation(api.runs.request, {
+    taskId: f.taskId,
+    workspaceId,
+    runtime: "fake",
+  });
+  await node.driver().tick();
+  expect((await f.user.query(api.runs.get, { runId })).status).toBe("waiting");
+  await f.user.mutation(api.runs.sendMessage, {
+    runId,
+    message: "README.md",
+    idempotencyKey: "first",
+  });
+  await node.driver().tick();
+  const run = await f.user.query(api.runs.get, { runId });
+  expect(run.status).toBe("completed");
+  expect(run.resultSummary).toBe("Edited README");
+  const events = await f.user.query(api.events.listByRun, {
+    runId,
+    paginationOpts: { numItems: 100, cursor: null },
+  });
+  expect(
+    [...events.page]
+      .sort((a: { sequence: number }, b: { sequence: number }) => a.sequence - b.sequence)
+      .map((event: { type: string }) => event.type),
+  ).toEqual(["run.started", "run.waiting", "run.activity", "run.completed"]);
   expect(node.store.getWorkspaceLease(workspaceId)).toBeUndefined();
   expect(git(f.path, ["rev-parse", "HEAD"])).toBe(f.originalHead);
   expect(git(f.path, ["status", "--porcelain"])).toBe(f.originalStatus);

@@ -46,6 +46,32 @@ describe("Codex app-server stdio boundary", () => {
     remove();
     h.client.close();
   });
+  it("lets a handler hold approvals but always refuses credential requests", () => {
+    const h = harness();
+    const handler = vi.fn(
+      (request: { method: string }) => request.method === "item/commandExecution/requestApproval",
+    );
+    h.client.onServerRequest(handler);
+    h.child.stdout.write(
+      '{"id":1,"method":"item/commandExecution/requestApproval","params":{"threadId":"t"}}\n',
+    );
+    h.child.stdout.write('{"id":2,"method":"account/chatgptAuthTokens/refresh","params":{}}\n');
+    h.child.stdout.write('{"id":3,"method":"attestation/generate","params":{}}\n');
+    h.child.stdout.write('{"id":4,"method":"item/tool/call","params":{}}\n');
+    expect(handler.mock.calls.map(([request]) => request.method)).toEqual([
+      "item/commandExecution/requestApproval",
+      "item/tool/call",
+    ]);
+    expect(h.sent).toEqual([
+      { id: 2, error: { code: -32601, message: "Credential requests are not supported" } },
+      { id: 3, error: { code: -32601, message: "Credential requests are not supported" } },
+      { id: 4, error: { code: -32601, message: "Request not supported" } },
+    ]);
+    h.client.respond(1, { decision: "decline" });
+    expect(h.sent[3]).toEqual({ id: 1, result: { decision: "decline" } });
+    expect(() => h.client.respond(1, { decision: "accept" })).toThrow("CODEX_REQUEST_NOT_HELD");
+    h.client.close();
+  });
   it("fails ambiguous requests on timeout and never replays them", async () => {
     const h = harness({ timeoutMs: 5 });
     await expect(h.client.request("turn/start", {})).rejects.toThrow("CODEX_REQUEST_TIMEOUT");

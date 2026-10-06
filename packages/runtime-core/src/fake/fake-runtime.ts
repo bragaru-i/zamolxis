@@ -1,16 +1,30 @@
-import type { NormalizedRunEventDto, RuntimeCapabilitiesDto } from "@zamolxis/contracts";
+import type {
+  ApprovalDecision,
+  ApprovalKind,
+  ApprovalRisk,
+  NormalizedRunEventDto,
+  RuntimeCapabilitiesDto,
+} from "@zamolxis/contracts";
 import type {
   AgentRuntime,
   ResumeRunInput,
   RuntimeSessionSnapshot,
   StartRunInput,
 } from "../agent-runtime";
+import { approvalIdFor, approvalSummary } from "../approvals";
 
 export type FakeStep =
   | { readonly type: "activity"; readonly label: string }
   | { readonly type: "waiting"; readonly reason: string }
   | { readonly type: "success"; readonly summary: string }
-  | { readonly type: "failure"; readonly message: string };
+  | { readonly type: "failure"; readonly message: string }
+  // Holds the scenario until resolveApproval; stop rejects it.
+  | {
+      readonly type: "approval";
+      readonly kind: ApprovalKind;
+      readonly summary: string;
+      readonly risk: ApprovalRisk;
+    };
 // A scenario may depend on the run (for example its role), so one fake can play several agents.
 export type FakeScenario = readonly FakeStep[] | ((input: StartRunInput) => readonly FakeStep[]);
 interface FakeSession {
@@ -19,6 +33,7 @@ interface FakeSession {
   snapshot: RuntimeSessionSnapshot;
   events: NormalizedRunEventDto[];
   nextStep: number;
+  pendingApproval?: string | undefined;
 }
 const defaultScenario: readonly FakeStep[] = [
   { type: "activity", label: "Fake runtime executing" },
@@ -43,6 +58,7 @@ export class FakeRuntime implements AgentRuntime {
       canStop: true,
       canDiscoverSessions: false,
       supportsSubagents: false,
+      canApprove: true,
     };
   }
   async start(input: StartRunInput): Promise<RuntimeSessionSnapshot> {
@@ -88,11 +104,24 @@ export class FakeRuntime implements AgentRuntime {
     if (session.snapshot.state !== "waiting" && session.snapshot.state !== "running")
       throw new Error("RUNTIME_TERMINAL");
     this.#emit(session, { type: "run.activity", payload: { label: "Message received" } });
+    // A message never settles a pending approval.
+    if (!session.pendingApproval) this.#advance(session);
+  }
+  async resolveApproval(input: {
+    nativeSessionId: string;
+    approvalId: string;
+    decision: ApprovalDecision;
+  }): Promise<void> {
+    const session = this.#get(input.nativeSessionId);
+    if (!session.pendingApproval || session.pendingApproval !== input.approvalId)
+      throw new Error("APPROVAL_NOT_PENDING");
+    this.#settleApproval(session, input.decision === "approve" ? "approved" : "rejected", "user");
     this.#advance(session);
   }
   async stop(input: { nativeSessionId: string }): Promise<void> {
     const session = this.#get(input.nativeSessionId);
     if (["completed", "failed", "stopped"].includes(session.snapshot.state)) return;
+    this.#settleApproval(session, "rejected", "stopped");
     this.#emit(session, { type: "run.stopped", payload: { reason: "Stop requested" } });
     session.snapshot = { ...session.snapshot, state: "stopped" };
   }
@@ -111,11 +140,36 @@ export class FakeRuntime implements AgentRuntime {
       yield { ...event, payload: { ...event.payload } } as NormalizedRunEventDto;
     }
   }
+  #settleApproval(
+    session: FakeSession,
+    decision: "approved" | "rejected",
+    reason: "user" | "stopped",
+  ): void {
+    const approvalId = session.pendingApproval;
+    if (!approvalId) return;
+    session.pendingApproval = undefined;
+    this.#emit(session, { type: "approval.resolved", payload: { approvalId, decision, reason } });
+  }
   #advance(session: FakeSession): void {
     session.snapshot = { ...session.snapshot, state: "running" };
     while (session.nextStep < session.steps.length) {
+      const index = session.nextStep;
       const step = session.steps[session.nextStep++];
       if (!step) break;
+      if (step.type === "approval") {
+        const approvalId = approvalIdFor(session.input.runId, `fake-${index}`);
+        session.pendingApproval = approvalId;
+        this.#emit(session, {
+          type: "approval.requested",
+          payload: {
+            approvalId,
+            kind: step.kind,
+            summary: approvalSummary([step.summary]),
+            risk: step.risk,
+          },
+        });
+        return;
+      }
       if (step.type === "activity")
         this.#emit(session, { type: "run.activity", payload: { label: step.label } });
       else if (step.type === "waiting") {

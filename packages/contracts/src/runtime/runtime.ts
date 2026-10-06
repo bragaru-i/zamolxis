@@ -8,4 +8,6 @@ export interface RuntimeCapabilitiesDto {
   readonly canStop: boolean;
   readonly canDiscoverSessions: boolean;
   readonly supportsSubagents: boolean;
+  // Holds operations for human approval and accepts resolveApproval.
+  readonly canApprove?: boolean;
 }

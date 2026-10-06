@@ -1,5 +1,5 @@
-import type { WorkstationId } from "../shared/ids";
 import type { RuntimeCapabilitiesDto } from "../runtime/runtime";
+import type { WorkstationId } from "../shared/ids";
 
 export interface NodeHandshakeDto {
   readonly protocolVersion: { readonly major: number; readonly minor: number };

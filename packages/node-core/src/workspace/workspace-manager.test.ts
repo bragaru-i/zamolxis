@@ -8,17 +8,27 @@ import { repositoryFixture } from "../testing/git-fixture";
 import { WorkspaceManager } from "./workspace-manager";
 
 const cleanup: Array<() => void> = [];
-afterEach(() => { for (const fn of cleanup.splice(0).reverse()) fn(); });
+afterEach(() => {
+  for (const fn of cleanup.splice(0).reverse()) fn();
+});
 function fixture() {
-  const f = repositoryFixture(); cleanup.push(() => rmSync(f.root, { recursive: true, force: true }));
+  const f = repositoryFixture();
+  cleanup.push(() => rmSync(f.root, { recursive: true, force: true }));
   const database = join(f.root, "state.db");
-  const store = new LocalStateStore(database); cleanup.push(() => store.close());
+  const store = new LocalStateStore(database);
+  cleanup.push(() => store.close());
   const registry = new RepositoryRegistry(store, () => true);
-  registry.register({ repositoryLocationId: "location", repositoryId: "repo", workstationId: "node", path: f.path,
-    expectedIdentity: { remoteUrl: "https://example.invalid/team/repo" } });
+  registry.register({
+    repositoryLocationId: "location",
+    repositoryId: "repo",
+    workstationId: "node",
+    path: f.path,
+    expectedIdentity: { remoteUrl: "https://example.invalid/team/repo" },
+  });
   const root = join(f.root, "workspaces");
   const manager = new WorkspaceManager(store, registry, root, "instance-a", () => true);
-  const provision = (workspaceId: string) => manager.provision({ workspaceId, repositoryLocationId: "location", baseRef: "main" });
+  const provision = (workspaceId: string) =>
+    manager.provision({ workspaceId, repositoryLocationId: "location", baseRef: "main" });
   return { ...f, root, store, manager, provision, database };
 }
 const retention = { artifactsCaptured: true, integrationPending: false, retentionAllows: true };
@@ -30,12 +40,22 @@ describe("workspace lifecycle with real Git", () => {
     const redirect = join(f.root, "redirect");
     mkdirSync(outside);
     symlinkSync(outside, redirect);
-    expect(() => new WorkspaceManager(f.store, new RepositoryRegistry(f.store, () => true),
-      join(redirect, "new"), "instance", (path) => path.startsWith(redirect))).toThrow("ROOT_DENIED");
+    expect(
+      () =>
+        new WorkspaceManager(
+          f.store,
+          new RepositoryRegistry(f.store, () => true),
+          join(redirect, "new"),
+          "instance",
+          (path) => path.startsWith(redirect),
+        ),
+    ).toThrow("ROOT_DENIED");
     expect(existsSync(join(outside, "new"))).toBe(false);
   });
   it("isolates parallel edits, retries provision and reuses dirty work after runtime replacement", () => {
-    const f = fixture(); const a = f.provision("a"); const b = f.provision("b");
+    const f = fixture();
+    const a = f.provision("a");
+    const b = f.provision("b");
     expect(a.path).not.toBe(b.path);
     writeFileSync(join(a.path, "source.txt"), "runtime A\n");
     writeFileSync(join(b.path, "source.txt"), "runtime B\n");
@@ -51,33 +71,50 @@ describe("workspace lifecycle with real Git", () => {
   });
 
   it("rejects wrong cwd, branch, path traversal, conflicting retries and changed Git branch", () => {
-    const f = fixture(); const a = f.provision("a");
+    const f = fixture();
+    const a = f.provision("a");
     expect(() => f.manager.acquire("a", "run", f.path, a.branch)).toThrow("MISMATCH");
     expect(() => f.manager.acquire("a", "run", a.path, "main")).toThrow("MISMATCH");
     expect(() => f.provision("../escape")).toThrow("INVALID");
-    expect(() => f.manager.provision({ workspaceId: "a", repositoryLocationId: "location", baseRef: "HEAD" })).toThrow("CONFLICT");
+    expect(() =>
+      f.manager.provision({ workspaceId: "a", repositoryLocationId: "location", baseRef: "HEAD" }),
+    ).toThrow("CONFLICT");
     git(a.path, ["checkout", "-b", "wrong"]);
     expect(() => f.manager.acquire("a", "run", a.path, a.branch)).toThrow("IDENTITY");
   });
 
   it("keeps leases across connections and requires stopped-run evidence after restart", () => {
-    const f = fixture(); const a = f.provision("a");
+    const f = fixture();
+    const a = f.provision("a");
     f.manager.acquire("a", "run-a", a.path, a.branch);
-    const secondStore = new LocalStateStore(f.database); cleanup.push(() => secondStore.close());
-    const second = new WorkspaceManager(secondStore, new RepositoryRegistry(secondStore, () => true), f.root, "instance-b", () => true);
-    expect(second.reconcile()).toContainEqual({ workspaceId: "a", status: "in_use", staleLease: true });
+    const secondStore = new LocalStateStore(f.database);
+    cleanup.push(() => secondStore.close());
+    const second = new WorkspaceManager(
+      secondStore,
+      new RepositoryRegistry(secondStore, () => true),
+      f.root,
+      "instance-b",
+      () => true,
+    );
+    expect(second.reconcile()).toContainEqual({
+      workspaceId: "a",
+      status: "in_use",
+      staleLease: true,
+    });
     expect(() => second.acquire("a", "run-a", a.path, a.branch)).toThrow("BUSY");
     expect(() => second.releaseStaleLease("a", () => false)).toThrow("NOT_RECONCILED");
     second.releaseStaleLease("a", () => true);
     second.acquire("a", "run-b", a.path, a.branch);
     expect(() => f.manager.cleanup("a", retention)).toThrow("BUSY");
     second.release("a", "run-b");
-    second.cleanup("a", retention); second.cleanup("a", retention);
+    second.cleanup("a", retention);
+    second.cleanup("a", retention);
     expect(secondStore.getManagedWorkspace("a")?.status).toBe("removed");
   });
 
   it("recovers interrupted provision and reports orphans without deleting them", () => {
-    const f = fixture(); const a = f.provision("a");
+    const f = fixture();
+    const a = f.provision("a");
     f.store.saveManagedWorkspace({ ...a, status: "provisioning" });
     expect(f.provision("a").status).toBe("ready");
     const orphan = join(f.root, "orphan");
@@ -86,6 +123,8 @@ describe("workspace lifecycle with real Git", () => {
     expect(f.manager.listUnownedWorktrees("location")).toContain(orphan);
     f.manager.reconcile();
     expect(readFileSync(join(orphan, "source.txt"), "utf8")).toBe("valuable\n");
-    expect(() => f.manager.cleanup("a", { ...retention, integrationPending: true })).toThrow("DENIED");
+    expect(() => f.manager.cleanup("a", { ...retention, integrationPending: true })).toThrow(
+      "DENIED",
+    );
   });
 });

@@ -1,7 +1,8 @@
 import { applyRunEvent } from "@zamolxis/application";
-import { assertRunTransition } from "@zamolxis/domain";
+import { assertRunTransition, type RunStatus } from "@zamolxis/domain";
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import { applyApprovalEvent, expireRunApprovals } from "./approvals";
 import { bounded, fail, load, nodeRun, requireNode } from "./lib/access";
 import { decideVerification, refreshSession } from "./lib/lifecycle";
 import { refreshDependents } from "./lib/settlement";
@@ -351,6 +352,8 @@ const runEventType = v.union(
   v.literal("tool.started"),
   v.literal("tool.completed"),
   v.literal("files.changed"),
+  v.literal("approval.requested"),
+  v.literal("approval.resolved"),
 );
 export const ingestBatch = mutation({
   args: {
@@ -401,7 +404,19 @@ export const ingestBatch = mutation({
         continue;
       }
       if (event.sequence !== sequence + 1) fail("EVENT_SEQUENCE_CONFLICT");
-      const status = applyRunEvent(run.status, event.type);
+      let status: RunStatus;
+      if (event.type === "approval.requested" || event.type === "approval.resolved")
+        status = await applyApprovalEvent(ctx, run, { ...event, type: event.type });
+      else {
+        // A runtime settles its approvals before it pauses or ends; if that confirmation
+        // was lost, the run resumed before this event and the approvals are void.
+        const from =
+          run.status === "needs_approval" && ["run.waiting", "run.completed"].includes(event.type)
+            ? "running"
+            : run.status;
+        status = applyRunEvent(from, event.type);
+        if (["completed", "failed", "stopped"].includes(status)) await expireRunApprovals(ctx, run);
+      }
       await ctx.db.insert("runEvents", {
         ...event,
         runId: run._id,
@@ -601,7 +616,9 @@ export const recoverCompletedCommand = mutation({
       const run = await nodeRun(ctx, device._id, id);
       if (
         !run.nativeSessionId ||
-        !["running", "waiting", "completed", "failed", "stopped"].includes(run.status) ||
+        !["running", "waiting", "needs_approval", "completed", "failed", "stopped"].includes(
+          run.status,
+        ) ||
         (["completed", "failed", "stopped"].includes(run.status) && run.completedAt === undefined)
       )
         fail("RECONCILIATION_REQUIRED");
@@ -611,6 +628,11 @@ export const recoverCompletedCommand = mutation({
       if (!id) fail("INVALID_ARGUMENT");
       const run = await nodeRun(ctx, device._id, id);
       if (run.completedAt === undefined) fail("RECONCILIATION_REQUIRED");
+    } else if (command.type === "runtime.send" || command.type === "runtime.approval") {
+      // Delivered to the runtime; the run reports what followed through its own events.
+      const id = ctx.db.normalizeId("agentRuns", command.targetId);
+      if (!id) fail("INVALID_ARGUMENT");
+      await nodeRun(ctx, device._id, id);
     } else if (command.type === "workspace.cleanup") {
       const id = ctx.db.normalizeId("workspaces", command.targetId);
       if (!id) fail("INVALID_ARGUMENT");

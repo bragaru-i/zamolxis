@@ -75,7 +75,8 @@ try {
               encoding: "utf8",
               timeout: 5000,
             }).trim(),
-            capabilities: ["start", "stop"],
+            // "message": steering active runs; "approval": held operations wait for a human.
+            capabilities: ["start", "stop", "message", "approval"],
           },
         ],
       });

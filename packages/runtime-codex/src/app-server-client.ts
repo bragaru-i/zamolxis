@@ -11,6 +11,19 @@ export interface AppServerNotification {
   readonly method: string;
   readonly params: Record<string, unknown>;
 }
+export type AppServerRequestId = string | number;
+export interface AppServerRequest {
+  readonly id: AppServerRequestId;
+  readonly method: string;
+  readonly params: Record<string, unknown>;
+}
+// Returns true when the handler holds the request and will answer it with respond().
+export type AppServerRequestHandler = (request: AppServerRequest) => boolean;
+// Credential, login and attestation requests are refused here, before any handler sees them.
+const CREDENTIAL_METHOD = /(auth|token|credential|login|attestation|secret|password|account)/i;
+export function isCredentialRequest(method: string): boolean {
+  return CREDENTIAL_METHOD.test(method);
+}
 export interface AppServerClientOptions {
   readonly cwd: string;
   readonly executable?: string;
@@ -24,10 +37,17 @@ interface PendingRequest {
   timer: ReturnType<typeof setTimeout>;
 }
 
-/** Local stdio only. Server-initiated operations require a later approval bridge. */
+/**
+ * Local stdio only. Server-initiated requests are refused unless a handler explicitly holds
+ * them; credential requests are always refused. Nothing is answered automatically with an
+ * approval.
+ */
 export class AppServerClient {
   readonly #process: AppServerProcess;
   readonly #pending = new Map<number, PendingRequest>();
+  // Server requests held by a handler and not answered yet.
+  readonly #held = new Set<AppServerRequestId>();
+  #requestHandler: AppServerRequestHandler | undefined;
   readonly #closeListeners = new Set<() => void>();
   readonly #listeners = new Set<(event: AppServerNotification) => void>();
   #nextId = 0;
@@ -78,6 +98,17 @@ export class AppServerClient {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);
   }
+  onServerRequest(handler: AppServerRequestHandler): () => void {
+    this.#requestHandler = handler;
+    return () => {
+      if (this.#requestHandler === handler) this.#requestHandler = undefined;
+    };
+  }
+  /** Answers a held server request exactly once. */
+  respond(id: AppServerRequestId, result: Record<string, unknown>): void {
+    if (!this.#held.delete(id)) throw new Error("CODEX_REQUEST_NOT_HELD");
+    this.#write({ id, result });
+  }
   onClose(listener: () => void): () => void {
     if (this.#closed) listener();
     else this.#closeListeners.add(listener);
@@ -123,11 +154,7 @@ export class AppServerClient {
   #dispatch(frame: Record<string, unknown>): void {
     if (typeof frame.method === "string") {
       if (frame.id !== undefined) {
-        // Never auto-approve commands, file changes, tools or credential requests.
-        this.#write({
-          id: frame.id,
-          error: { code: -32601, message: "Approval bridge unavailable" },
-        });
+        this.#serverRequest(frame);
         return;
       }
       if (!frame.params || typeof frame.params !== "object" || Array.isArray(frame.params)) {
@@ -153,6 +180,40 @@ export class AppServerClient {
       this.#fail("CODEX_INVALID_FRAME");
     }
   }
+  #serverRequest(frame: Record<string, unknown>): void {
+    const id = frame.id;
+    const method = String(frame.method);
+    const refuse = (message: string) => this.#write({ id, error: { code: -32601, message } });
+    if ((typeof id !== "string" && typeof id !== "number") || this.#held.has(id)) {
+      this.#fail("CODEX_INVALID_FRAME");
+      return;
+    }
+    // Never auto-approve; credential requests are never delegated to anyone.
+    if (isCredentialRequest(method)) {
+      refuse("Credential requests are not supported");
+      return;
+    }
+    const handler = this.#requestHandler;
+    const params = frame.params;
+    if (
+      !handler ||
+      this.#held.size >= 64 ||
+      !params ||
+      typeof params !== "object" ||
+      Array.isArray(params)
+    ) {
+      refuse("Approval bridge unavailable");
+      return;
+    }
+    this.#held.add(id);
+    let held = false;
+    try {
+      held = handler({ id, method, params: params as Record<string, unknown> });
+    } catch {
+      held = false;
+    }
+    if (!held && this.#held.delete(id)) refuse("Request not supported");
+  }
   #fail(code: string): void {
     if (this.#closed) return;
     this.#closed = true;
@@ -161,6 +222,8 @@ export class AppServerClient {
       pending.reject(new Error(code));
     }
     this.#pending.clear();
+    this.#held.clear();
+    this.#requestHandler = undefined;
     this.#listeners.clear();
     this.#process.kill();
     for (const listener of this.#closeListeners) listener();

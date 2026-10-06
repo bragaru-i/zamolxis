@@ -19,9 +19,21 @@ planned capability as shipped.
   deterministic trust → at most 2 repairs → local integration branch. Tested with
   FakeRuntime and manually with Codex (`docs/alpha-validation.md`).
 - **Node commands:** `workspace.provision`, `repository.plan`, `runtime.start`,
-  `runtime.stop` (delivered while a run streams, via a separate control loop),
-  `workspace.cleanup`, `integration.prepare`. Unknown or malformed commands fail
-  individually and no longer block the queue (#60).
+  `runtime.stop`, `runtime.send`, `runtime.approval` (stop/send/approval are
+  delivered while a run streams, via a separate control loop), `workspace.cleanup`,
+  `integration.prepare`. Unknown or malformed commands fail individually and no
+  longer block the queue (#60).
+- **Approvals bridge:** Codex command, file-change and form-only MCP approval
+  requests from builder/repair runs are held and shown on the phone (summary, risk
+  as text and tone; critical needs a second tap); Approve/Reject is delivered to the
+  agent through `runtime.approval`. Credential/login/attestation requests, permission
+  requests, user-input questions and all Verifier/Supervisor requests are always
+  refused; unanswered requests are rejected after 30 minutes, on stop and before any
+  terminal event. Real Codex acceptance (2026-10-06, codex-cli 0.160.0): a held
+  `curl` approval was rejected and the turn completed with HEAD unchanged.
+- **Steering:** "Message agent" on an active run steers a streaming Codex turn
+  (`turn/steer`) or continues a waiting run to completion with the normal
+  completion handling.
 - **Web app (#61):** phone-first sessions list; open session kept in `?session=<id>`;
   your messages with their planning outcome, task cards with runs (status, activity
   label, token totals), Stop per run and per session, pinned composer, Settings sheet
@@ -57,10 +69,15 @@ planned capability as shipped.
 2. **Conversation, partially shipped.** Supervisor replies (Markdown, bounded to 8000)
    and builder/verifier final replies (`agentRuns.resultSummary`) are shown. Not yet:
    intermediate agent messages, verifier review text beyond its final message.
-3. **No steering.** `runtime.send` fails with `RUNTIME_SEND_UNSUPPORTED`. A follow-up
-   message is a new Supervisor turn in the same session (with the earlier
-   conversation), and reopens a completed session. A reopened *failed* session can
-   return to failed on the next lifecycle refresh (`convex/lib/lifecycle.ts`).
+3. **Steering and approvals, shipped with limits.** Real Codex was exercised only for
+   a rejected command approval; the approve path, file-change approvals, MCP
+   elicitations, live `turn/steer` and the 30-minute timeout are covered by controlled
+   tests only. A completed Codex turn ends its run, so "send to a waiting run" only
+   applies to runtimes that pause. Native sessions live in Node memory: a Node
+   restart loses runs left waiting or in `needs_approval` (reconciled through their
+   start command). A follow-up message in the composer is a new Supervisor turn in
+   the same session; a reopened *failed* session can return to failed on the next
+   lifecycle refresh (`convex/lib/lifecycle.ts`).
 4. **Profiles and usage (#48), mostly shipped.** Missing: editing profile name and
    max concurrency in the UI, instruction/policy references on profiles, any cost data
    source.
@@ -78,11 +95,9 @@ planned capability as shipped.
 
 ## Next steps, in order
 
-1. Approvals bridge and steering (wave 2, lane D, in progress): Codex approval
-   requests reach the phone; `runtime.send` to running and waiting agents.
-2. Make the Supervisor a stoppable, visible run; real-Codex validation of answers.
-3. Codex tool summaries (show the actual command) and trace recording on the Node.
-4. Real-device validation: iPhone, launchd across reboot, stop against Codex.
+1. Make the Supervisor a stoppable, visible run; real-Codex validation of answers.
+2. Codex tool summaries (show the actual command) and trace recording on the Node.
+3. Real-device validation: iPhone, launchd across reboot, stop against Codex.
 
 ## Operations on the owner's Mac
 

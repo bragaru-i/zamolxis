@@ -310,3 +310,277 @@ it("reports a builder's bounded final message with run completion", {
   const complete = f.deliveries.find((delivery) => delivery.kind === "run.complete");
   expect(complete).toMatchObject({ kind: "run.complete", runId: "run", summary: "r".repeat(8000) });
 });
+
+// Like Codex: a subscription stays open until the run is terminal or explicitly waiting.
+class LiveRuntime extends FakeRuntime {
+  #wake: Array<() => void> = [];
+  #signal() {
+    for (const wake of this.#wake.splice(0)) wake();
+  }
+  override async send(input: { nativeSessionId: string; message: string }) {
+    await super.send(input);
+    this.#signal();
+  }
+  override async resolveApproval(input: {
+    nativeSessionId: string;
+    approvalId: string;
+    decision: "approve" | "reject";
+  }) {
+    await super.resolveApproval(input);
+    this.#signal();
+  }
+  override async stop(input: { nativeSessionId: string }) {
+    await super.stop(input);
+    this.#signal();
+  }
+  override async *subscribe(input: { nativeSessionId: string; afterSequence?: number }) {
+    let cursor = input.afterSequence ?? 0;
+    for (;;) {
+      let last: NormalizedRunEventDto | undefined;
+      for await (const event of super.subscribe({ ...input, afterSequence: cursor })) {
+        cursor = event.sequence;
+        last = event;
+        yield event;
+      }
+      const state = (await this.inspect(input.nativeSessionId)).state;
+      if (["completed", "failed", "stopped"].includes(state) || last?.type === "run.waiting")
+        return;
+      await new Promise<void>((resolve) => this.#wake.push(resolve));
+    }
+  }
+}
+function runFixture(runtime: FakeRuntime) {
+  const repo = repositoryFixture();
+  cleanup.push(() => rmSync(repo.root, { recursive: true, force: true }));
+  const store = new LocalStateStore(":memory:");
+  cleanup.push(() => store.close());
+  const repositories = new RepositoryRegistry(store, () => true);
+  repositories.register({
+    repositoryLocationId: "location",
+    repositoryId: "repo",
+    workstationId: "node",
+    path: repo.path,
+    expectedIdentity: { remoteUrl: "https://example.invalid/team/repo" },
+  });
+  const workspaces = new WorkspaceManager(
+    store,
+    repositories,
+    join(repo.root, "workspaces"),
+    "instance",
+    () => true,
+  );
+  const runtimes = new RuntimeRegistry();
+  runtimes.register(runtime);
+  const manager = new RuntimeManager(store, workspaces, runtimes, "node" as never, () => true);
+  const deliveries: Delivery[] = [];
+  const state = { pending: [] as ExecutionCommand[] };
+  const transport: ControlPlaneTransport = {
+    listPending: async () => state.pending,
+    claim: async () => {},
+    acknowledge: async () => {},
+    reconcile: async () => {},
+    deliver: async (delivery) => {
+      deliveries.push(delivery);
+      if (delivery.kind === "command.complete" || delivery.kind === "command.failed")
+        state.pending = state.pending.filter((command) => command.commandId !== delivery.commandId);
+    },
+  };
+  const driver = new ControlPlaneDriver(store, workspaces, runtimes, manager, transport, "node");
+  workspaces.provision({ workspaceId: "build", repositoryLocationId: "location", baseRef: "main" });
+  const command = <T extends ExecutionCommand["type"]>(
+    id: string,
+    type: T,
+    payload: Extract<ExecutionCommand, { type: T }>["payload"],
+  ) =>
+    ({ commandId: id, idempotencyKey: id, workstationId: "node", type, payload }) as Extract<
+      ExecutionCommand,
+      { type: T }
+    >;
+  const start = command("start", "runtime.start", {
+    runId: "run",
+    workspaceId: "build",
+    runtime: "fake",
+    role: "builder",
+    instruction: "Build",
+  });
+  const events = () =>
+    deliveries.flatMap((delivery) => (delivery.kind === "run.events" ? delivery.events : []));
+  const until = async (check: () => boolean) => {
+    for (let attempt = 0; !check() && attempt < 400; attempt++)
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(check()).toBe(true);
+  };
+  return { store, workspaces, deliveries, driver, state, command, start, events, until };
+}
+
+describe("approvals and messages", { timeout: 30_000 }, () => {
+  it("delivers an approval while the run streams and resolves it through the control loop", async () => {
+    const f = runFixture(
+      new LiveRuntime([
+        { type: "approval", kind: "command", summary: "Run: pnpm install", risk: "high" },
+        { type: "success", summary: "Installed and built" },
+      ]),
+    );
+    const streaming = f.driver.execute(f.start);
+    // The approval reaches the backend immediately, before the run pauses.
+    await f.until(() => f.events().some((event) => event.type === "approval.requested"));
+    expect(f.deliveries.some((delivery) => delivery.kind === "command.complete")).toBe(false);
+    f.state.pending = [
+      f.command("message", "runtime.send", { runId: "run", message: "Use the lockfile" }),
+      f.command("approve", "runtime.approval", {
+        runId: "run",
+        approvalId: "run:fake-0",
+        decision: "approve",
+      }),
+    ];
+    await f.driver.control();
+    await streaming;
+    expect(f.state.pending).toEqual([]);
+    expect(f.events().map((event) => event.type)).toEqual([
+      "run.started",
+      "approval.requested",
+      "run.activity",
+      "approval.resolved",
+      "run.completed",
+    ]);
+    expect(f.deliveries.filter((delivery) => delivery.kind === "command.complete")).toEqual([
+      { kind: "command.complete", commandId: "message" },
+      { kind: "command.complete", commandId: "approve" },
+      { kind: "command.complete", commandId: "start" },
+    ]);
+    expect(f.deliveries.find((delivery) => delivery.kind === "run.complete")).toMatchObject({
+      runId: "run",
+      summary: "Installed and built",
+    });
+    expect(f.store.getWorkspaceLease("build")).toBeUndefined();
+  });
+
+  it("continues a waiting run after a message and completes it like a start", async () => {
+    const f = runFixture(
+      new FakeRuntime([
+        { type: "waiting", reason: "Which file?" },
+        { type: "success", summary: "Edited README" },
+      ]),
+    );
+    await f.driver.execute(f.start);
+    expect(f.deliveries.some((delivery) => delivery.kind === "run.complete")).toBe(false);
+    expect(f.store.getWorkspaceLease("build")?.runId).toBe("run");
+    const workspace = f.workspaces.inspect("build");
+    writeFileSync(join(workspace.path, "README.md"), "edited\n");
+    f.deliveries.length = 0;
+    f.state.pending = [f.command("send", "runtime.send", { runId: "run", message: "README" })];
+    await f.driver.control();
+    await f.driver.idle();
+    expect(f.events().map((event) => event.type)).toEqual(["run.activity", "run.completed"]);
+    const complete = f.deliveries.find((delivery) => delivery.kind === "run.complete");
+    expect(complete).toMatchObject({ runId: "run", summary: "Edited README", dirty: false });
+    // The builder candidate is committed exactly as after a start.
+    expect(complete?.kind === "run.complete" && complete.headSha).not.toBe(workspace.baseSha);
+    expect(f.deliveries.at(-1)).toEqual({ kind: "command.complete", commandId: "send" });
+    expect(f.store.getWorkspaceLease("build")).toBeUndefined();
+  });
+
+  it("continues a run parked on an approval when tick delivers the decision", async () => {
+    const f = runFixture(
+      new FakeRuntime([
+        { type: "approval", kind: "fileChange", summary: "Change files: a.ts", risk: "medium" },
+        { type: "success", summary: "Done" },
+      ]),
+    );
+    await f.driver.execute(f.start);
+    f.state.pending = [
+      f.command("reject", "runtime.approval", {
+        runId: "run",
+        approvalId: "run:fake-0",
+        decision: "reject",
+      }),
+    ];
+    await f.driver.tick();
+    expect(f.events().map((event) => [event.type, event.payload])).toContainEqual([
+      "approval.resolved",
+      { approvalId: "run:fake-0", decision: "rejected", reason: "user" },
+    ]);
+    expect(f.deliveries.find((delivery) => delivery.kind === "run.complete")).toMatchObject({
+      summary: "Done",
+    });
+    // A second decision once the run ended fails visibly.
+    f.state.pending = [
+      f.command("again", "runtime.approval", {
+        runId: "run",
+        approvalId: "run:fake-0",
+        decision: "approve",
+      }),
+    ];
+    await f.driver.tick();
+    expect(f.deliveries.at(-1)).toEqual({
+      kind: "command.failed",
+      commandId: "again",
+      code: "RUN_NOT_ACTIVE",
+    });
+  });
+
+  it("rejects pending approvals on stop and fails an unknown approval", async () => {
+    const f = runFixture(
+      new LiveRuntime([
+        { type: "approval", kind: "command", summary: "Run: rm -rf dist", risk: "high" },
+        { type: "success", summary: "unused" },
+      ]),
+    );
+    const streaming = f.driver.execute(f.start);
+    await f.until(() => f.events().some((event) => event.type === "approval.requested"));
+    f.state.pending = [
+      f.command("unknown", "runtime.approval", {
+        runId: "run",
+        approvalId: "run:other",
+        decision: "approve",
+      }),
+      f.command("stop", "runtime.stop", { runId: "run" }),
+    ];
+    await f.driver.control();
+    await streaming;
+    expect(f.deliveries).toContainEqual({
+      kind: "command.failed",
+      commandId: "unknown",
+      code: "APPROVAL_NOT_PENDING",
+    });
+    expect(
+      f
+        .events()
+        .map((event) => [event.type, event.payload])
+        .slice(-2),
+    ).toEqual([
+      ["approval.resolved", { approvalId: "run:fake-0", decision: "rejected", reason: "stopped" }],
+      ["run.stopped", { reason: "Stop requested" }],
+    ]);
+  });
+
+  it("fails an interrupted message instead of blocking the queue", async () => {
+    const f = runFixture(new FakeRuntime());
+    const send = f.command("lost", "runtime.send", { runId: "run", message: "Hi" });
+    f.store.recordCommand(send);
+    f.store.markCommandRunning("lost");
+    await f.driver.tick();
+    expect(f.deliveries).toEqual([
+      { kind: "command.failed", commandId: "lost", code: "RUNTIME_COMMAND_INTERRUPTED" },
+    ]);
+  });
+});
+
+it("rejects Supervisor approval requests: nobody can approve a Node-local read-only run", {
+  timeout: 30_000,
+}, async () => {
+  const f = fixture(() => [
+    { type: "approval", kind: "command", summary: "Run: curl x", risk: "high" },
+    ...json({ decision: "answer", reply: "Answered without it", tasks: [] }),
+  ]);
+  const { textCommandId } = await f.plan("Question");
+  expect(f.deliveries[0]).toMatchObject({ decision: "answer", reply: "Answered without it" });
+  const resolved: unknown[] = [];
+  for await (const event of f.runtime.subscribe({
+    nativeSessionId: `fake:supervisor:${textCommandId}`,
+  }))
+    if (event.type === "approval.resolved") resolved.push(event.payload);
+  expect(resolved).toEqual([
+    { approvalId: `supervisor:${textCommandId}:fake-0`, decision: "rejected", reason: "user" },
+  ]);
+});

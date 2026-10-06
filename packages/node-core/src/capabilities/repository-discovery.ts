@@ -2,10 +2,10 @@ import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import {
+  type CapabilityPolicy,
   contextForRole,
   resolveCapabilities,
   selectCapability,
-  type CapabilityPolicy,
 } from "@zamolxis/application";
 import type {
   CapabilityDefinition,
