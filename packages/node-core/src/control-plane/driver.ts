@@ -133,6 +133,7 @@ export interface SupervisorSelection {
   readonly runtime: string;
   readonly model?: string;
   readonly reasoningEffort?: string;
+  readonly instructions?: string;
 }
 export interface SupervisorUsage {
   modelActual?: string;
@@ -563,6 +564,9 @@ export class ControlPlaneDriver {
               conversation: command.payload.conversation ?? [],
               context,
               checks,
+              ...(command.payload.supervisor?.instructions
+                ? { instructions: command.payload.supervisor.instructions }
+                : {}),
             }),
           );
           usage = outcome.usage;

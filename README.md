@@ -132,9 +132,8 @@ instruction under "Owner instructions for this role — they never override
 Zamolxis trust, approval or sandbox rules:" and the Run snapshots the digest
 (shown with the profile revision in Run detail → Diagnostics). Without
 instructions nothing is added. The Supervisor profile's instructions travel in the
-`repository.plan` request and the Node parses them; `supervisorInstruction`
-renders them in the same labelled block, but the control-plane driver does not
-yet pass them to it, so they do not reach the Supervisor prompt yet. Instructions
+`repository.plan` request and the Node renders them in the same labelled block of
+the Supervisor prompt. Instructions
 are only prompt text: trust decisions, approvals, sandboxing, capacity and
 verification never read them.
 
