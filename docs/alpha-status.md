@@ -102,7 +102,13 @@ planned capability as shipped.
    the old Mac entry after pairing again, an exact heartbeat check (`node:health` is
    only a boolean). Fixed after the first real run: repair could leave the service
    unloaded when launchd was still unloading (wait and retry added).
-7. **Integration** stops at a local branch; nothing pushes or opens a PR.
+7. **Integration, shipped for single tasks.** On the owner's explicit "Open pull
+   request", the Node pushes the trusted integration commit as
+   `zamolxis/<task>-<sha7>` (no force, hooks respected, never the default branch) and
+   opens a PR with `gh` (or returns a compare link when `gh` is missing or signed
+   out). Nothing merges automatically. PRs are authored by whichever `gh` account is
+   active on the Mac. Missing: combining several task branches into one PR; base
+   branch comes from the checkout's branch when the remote default is unknown.
 8. **Not validated end to end:** real iPhone (keyboard with the pinned composer,
    home-screen mode), deployed OIDC/device auth, launchd service across restarts,
    stop against a real Codex session.
