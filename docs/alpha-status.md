@@ -113,9 +113,17 @@ planned capability as shipped.
    Session Supervisor; explicit continuation can reuse a Session linked by an earlier summary.
    Links cover Sessions, approvals, pull requests, attention Tasks, trust decisions and active Runs
    of the five most recent Sessions in scope; link status is a snapshot from answer time. Current
-   limits: no external-ticket links (no connector), and the top-level answer/router is
-   deterministic rather than a separately
-   configured model-backed agent. **In-Session conversation is shipped:** Supervisor replies (Markdown, bounded to 8000),
+   limits: no external-ticket links (no connector).
+   **Model-backed replies:** with an online Node that has the effective Orchestrator profile's
+   runtime (Settings → Agents → Orchestrator; Codex by default), a question is stored with the
+   deterministic summary and status `thinking`, and an `orchestrator.answer` command asks the
+   model for the reply. The model receives only that summary, its link list and the last 10
+   exchanges, and runs read-only in an empty scratch directory (no repository, no workspace lease,
+   approvals rejected, stopped after 5 minutes). It may `answer`, `ask` or `propose`; a proposal is
+   inert until the owner clicks **Open this work**, which opens a Session with an explicit request.
+   Routing, links and Session creation stay backend-authorized. Without a Node, or when the model
+   fails, the deterministic summary is the answer (`answeredBy: "deterministic"`, `modelError`).
+   There is no opt-out yet: every question uses tokens when a Node is online. **In-Session conversation is shipped:** Supervisor replies (Markdown, bounded to 8000),
    builder/verifier final replies (`agentRuns.resultSummary`) and intermediate agent
    notes (`run.message`, redacted, ≤2000 chars, shown in Run detail Activity) are
    shown. Whether a model writes commentary is up to the model.
@@ -174,9 +182,7 @@ planned capability as shipped.
 ## Next steps, in order
 
 1. External ticket links (GitHub/Linear) need a connector first.
-2. Decide whether free-form top-level answers need a separately configurable model-backed
-   Orchestrator; status and routing remain backend-authorized.
-3. Real-device validation: iPhone and a second Google account.
+2. Real-device validation: iPhone and a second Google account.
 
 ## Operations on the owner's Mac
 

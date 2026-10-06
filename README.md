@@ -217,9 +217,11 @@ outside Work Sessions. Status questions summarize existing control-plane state a
 links without creating work: Sessions, pending approvals, pull requests, Tasks that need you
 (with their trust decision) and active Runs. A Run link opens Run detail directly (`?run=<id>`). Explicit execution language creates a Session; explicit
 continuation follows a recent linked Session when its Product and repository match. Each routing
-decision is persisted. Settings → Agents selects the runtime, model, reasoning effort and owner
-instructions for Supervisor, Builder, Verifier, Repair and Integration roles. Current global
-summaries do not link external tickets yet, and the top-level answer/router is deterministic rather than a separate model-backed role. An open Session is kept in the URL
+decision is persisted. When a Mac is online, the Orchestrator model writes the reply from that
+summary (read-only, no repository) and may answer, ask or propose; a proposal starts nothing until
+you click **Open this work**. Without a Mac the summary itself is the answer. Settings → Agents
+selects the runtime, model, reasoning effort and owner instructions for Orchestrator, Supervisor,
+Builder, Verifier, Repair and Integration roles. Global summaries do not link external tickets yet. An open Session is kept in the URL
 (`?session=<id>`), so refresh and back navigation keep it. A Session shows
 your messages, the planning outcome for each, Task cards with their Runs (status, live
 activity label, reported token totals) and a Stop control per active Run and per Session.
