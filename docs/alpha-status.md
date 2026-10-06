@@ -51,8 +51,9 @@ planned capability as shipped.
   (`turn/steer`) or continues a waiting run to completion with the normal
   completion handling.
 - **Web app (#61):** conversation-first Home with a persistent desktop sidebar and a mobile
-  drawer listing **Chats** and **Work Sessions**, each grouped by day (Today, Yesterday, Previous 7
-  days, Previous 30 days, Older) and searchable; open session kept in `?session=<id>`;
+  drawer. Identity, **New chat**, Mac connectivity, Usage and Settings remain fixed while one
+  searchable history region scrolls **Chats** and **Work Sessions**, each grouped by day (Today,
+  Yesterday, Previous 7 days, Previous 30 days, Older); open session kept in `?session=<id>`;
   your messages with their planning outcome, task cards with runs (status, activity
   label, token totals), Stop per run and per session, pinned composer, Settings sheet
   (Macs, removal, sign-out), iOS safe areas. Shared tokens and components live in
@@ -68,7 +69,8 @@ planned capability as shipped.
   (`?chat=<id>`, titled after that message, at most 80 characters). Earlier chats are listed in
   the sidebar and can be reopened, renamed or deleted (deleting hides the chat and closes it to
   new messages; its history and any Work Session it opened are kept). Each chat has its own model
-  history; another owner's chat is never readable or continuable.
+  history; another owner's chat is never readable or continuable. Home and Session conversations
+  show exchanges on a chronological rail with relative timestamps.
 - **Settings:** a menu of five pages in order of use (Agents, Macs & repositories, Usage,
   Storage, People & devices), each row showing its current state in one line (for example the
   Builder's model, which Mac is online, tokens in the last 7 days). Phones show the menu or one
@@ -79,9 +81,11 @@ planned capability as shipped.
   Build, Check, Fix, Ready), each with its state derived from task phases and runs (for example
   "1 agent writing code · 2 of 3 done", "Not needed so far"), and the agent that did it (the
   latest run's runtime and model, else the effective profile). Collapsed to one summary line on
-  phones, a horizontal strip on wide screens. Tapping a step explains it and offers "Change the
-  ... agent", which saves a profile for that Session's Product (next runs only; Integration has
-  no agent in Alpha). Questions and status requests answer from control-plane state without
+  phones, a horizontal strip on wide screens. Each Task card uses a phase-specific color and a
+  compact Build → Check → Fix → Ready track derived from the same state. Tapping a step explains
+  it and offers "Change the ... agent", which saves a profile for that Session's Product (next
+  runs only; Integration has no agent in Alpha). Questions and status requests answer from
+  control-plane state without
   creating hidden work. Answers persist their route and typed links: Sessions, pending approvals,
   pull requests, Tasks needing the owner with their trust decision, and active Runs (a Run link
   opens Run detail via `?run=`). Every Home message remains conversation: execution language,

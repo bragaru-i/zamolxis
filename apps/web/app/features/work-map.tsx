@@ -40,6 +40,18 @@ export interface WorkStep {
   detail: string;
 }
 
+export type TaskProcess = "queued" | "build" | "check" | "fix" | "ready";
+
+/** The color family for a task card follows the concrete backend phase. */
+export function taskProcess(task: MapTask): TaskProcess {
+  const phase = task.phase ?? task.status;
+  if (phase === "building") return "build";
+  if (["waiting_for_verification", "verifying"].includes(phase)) return "check";
+  if (["trust_failed", "repairing", "needs_input", "failed"].includes(phase)) return "fix";
+  if (["ready_for_integration", "integrating", "completed"].includes(phase)) return "ready";
+  return "queued";
+}
+
 const ACTIVE_RUN = new Set([
   "queued",
   "starting",
@@ -332,5 +344,37 @@ export function WorkMap({
         )}
       </Sheet>
     </section>
+  );
+}
+
+/** A compact, per-task view of the same trusted Build → Check → Fix → Ready journey. */
+export function TaskProgress({
+  sessionStatus,
+  task,
+  runs,
+}: {
+  sessionStatus: string;
+  task: MapTask;
+  runs: MapRun[];
+}) {
+  const steps = workSteps({ sessionStatus, tasks: [task], runs }).filter(
+    (step) => step.key !== "plan",
+  );
+  return (
+    <ol className="z-task-progress" aria-label="Task progress">
+      {steps.map((step) => (
+        <li
+          key={step.key}
+          className={`z-task-progress__step z-task-progress__step--${step.state}`}
+          aria-label={`${step.title}: ${STATE_LABEL[step.state]}`}
+          title={`${step.title}: ${step.detail}`}
+        >
+          <span className="z-task-progress__marker" aria-hidden="true">
+            {step.state === "done" ? "✓" : step.state === "attention" ? "!" : ""}
+          </span>
+          <span className="z-task-progress__label">{step.title}</span>
+        </li>
+      ))}
+    </ol>
   );
 }

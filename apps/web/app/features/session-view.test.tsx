@@ -162,6 +162,7 @@ describe("SessionView conversation", () => {
       ] as never,
     );
     expect(html).toContain("Two parts.");
+    expect(html).toContain("z-chat-timeline");
     expect(html).toContain("Opened 2 tasks.");
     expect(html).toContain("<strong>3 files</strong>");
     expect(html).toContain("Show more");

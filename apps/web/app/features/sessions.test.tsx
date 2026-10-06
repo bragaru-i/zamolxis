@@ -105,7 +105,11 @@ it("renders the global answer and its linked session separately from the session
     }),
   );
   expect(html).toContain("Orchestrator");
+  expect(html).toContain("z-chat-timeline");
+  expect(html).toContain("z-chat-timeline__marker");
   expect(html).toContain("+ New chat");
+  expect(html).toContain("z-home-nav__scroll");
+  expect(html).toContain("z-home-nav__connection");
   expect(html).toContain(">Today<");
   expect(html).toContain(">Previous 7 days<");
   expect(html).toContain("How does the verifier work?");

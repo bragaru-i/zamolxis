@@ -97,29 +97,155 @@ export function SessionList({
   const openChat = chats?.find((chat) => chat._id === chatId);
   const navigation = (
     <div className="z-home-nav__content">
-      <div className="z-row z-row--between">
-        <div className="z-row">
-          <ProductMark />
-          <strong>Zamolxis</strong>
+      <div className="z-home-nav__top">
+        <div className="z-row z-row--between">
+          <div className="z-row">
+            <ProductMark />
+            <strong>Zamolxis</strong>
+          </div>
+          <IconButton
+            icon="close"
+            label="Close menu"
+            className="z-home-nav__close"
+            onClick={() => setDrawerOpen(false)}
+          />
         </div>
-        <IconButton
-          icon="close"
-          label="Close menu"
-          className="z-home-nav__close"
-          onClick={() => setDrawerOpen(false)}
-        />
+        <button
+          type="button"
+          className={`z-home-link${chatId ? "" : " z-home-link--active"}`}
+          aria-current={chatId ? undefined : "page"}
+          onClick={() => {
+            setDrawerOpen(false);
+            onOpenChat("");
+          }}
+        >
+          + New chat
+        </button>
+        <div className="z-home-nav__connection">{indicator}</div>
       </div>
-      <button
-        type="button"
-        className={`z-home-link${chatId ? "" : " z-home-link--active"}`}
-        aria-current={chatId ? undefined : "page"}
-        onClick={() => {
-          setDrawerOpen(false);
-          onOpenChat("");
-        }}
-      >
-        + New chat
-      </button>
+      <div className="z-home-nav__scroll">
+        <TextInput
+          value={search}
+          aria-label="Search chats and work sessions"
+          placeholder="Search…"
+          onChange={(event) => setSearch(event.target.value)}
+        />
+        <div className="z-row z-row--between">
+          <h2 className="z-section-title">Chats</h2>
+          <span className="z-xsmall z-muted">{chats?.length ?? ""}</span>
+        </div>
+        <section className="z-home-session-list" aria-label="Chats">
+          {chats === undefined ? (
+            <p className="z-muted z-small" role="status">
+              Loading chats…
+            </p>
+          ) : visibleChats.length ? (
+            groupByRecency(visibleChats, (chat) => chat.lastActivityAt, now).map((group) => (
+              <div className="z-home-session-list" key={group.label}>
+                <p className="z-home-group">{group.label}</p>
+                {group.items.map((chat) => (
+                  <div className="z-home-chat" key={chat._id}>
+                    <button
+                      type="button"
+                      className={`z-home-session${chat._id === chatId ? " z-home-session--active" : ""}`}
+                      aria-current={chat._id === chatId ? "page" : undefined}
+                      onClick={() => {
+                        setDrawerOpen(false);
+                        onOpenChat(chat._id);
+                      }}
+                    >
+                      <span className="z-home-session__title">{chat.title}</span>
+                      <span className="z-xsmall z-muted">
+                        {relativeTime(chat.lastActivityAt, now)}
+                      </span>
+                    </button>
+                    <Button
+                      variant="ghost"
+                      size="small"
+                      className="z-home-chat__menu"
+                      aria-label={`Options for chat ${chat.title}`}
+                      onClick={() => setChatMenu(chat)}
+                    >
+                      …
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            ))
+          ) : (
+            <p className="z-muted z-small">
+              {search ? "No chats match." : "No chats yet. Your first message starts one."}
+            </p>
+          )}
+        </section>
+        <div className="z-row z-row--between">
+          <h2 className="z-section-title">Work Sessions</h2>
+          <span className="z-xsmall z-muted">{sessions.length}</span>
+        </div>
+        <fieldset className="z-home-filters">
+          <legend className="z-visually-hidden">Filter work sessions</legend>
+          {(["all", "active", "waiting", "completed"] as const).map((value) => (
+            <button
+              type="button"
+              key={value}
+              className={`z-home-filter${filter === value ? " z-home-filter--active" : ""}`}
+              aria-pressed={filter === value}
+              onClick={() => setFilter(value)}
+            >
+              {value[0]?.toUpperCase()}
+              {value.slice(1)}
+            </button>
+          ))}
+        </fieldset>
+        <section className="z-home-session-list" aria-label="Work Sessions">
+          {status === "LoadingFirstPage" ? (
+            <p className="z-muted z-small" role="status">
+              Loading sessions…
+            </p>
+          ) : visible.length ? (
+            groupByRecency(visible, (session) => session.lastActivityAt, now).map((group) => (
+              <div className="z-home-session-list" key={group.label}>
+                <p className="z-home-group">{group.label}</p>
+                {group.items.map((session) => (
+                  <button
+                    type="button"
+                    className="z-home-session"
+                    key={session._id}
+                    onClick={() => {
+                      setDrawerOpen(false);
+                      onOpen(session._id);
+                    }}
+                  >
+                    <span className="z-list-item__title">{session.title}</span>
+                    <span className="z-row z-xsmall z-muted">
+                      <SessionStatusBadge status={session.status} />
+                      {session.totalTaskCount > 0 && (
+                        <span>
+                          {session.completedTaskCount}/{session.totalTaskCount}
+                        </span>
+                      )}
+                      <span>{relativeTime(session.lastActivityAt, now)}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ))
+          ) : (
+            <p className="z-muted z-small">
+              {search
+                ? `No matches in ${filter}.`
+                : filter === "all"
+                  ? "No Work Sessions yet."
+                  : `No ${filter} sessions.`}
+            </p>
+          )}
+        </section>
+        {status === "CanLoadMore" && (
+          <Button variant="secondary" block onClick={() => loadMore(20)}>
+            Show older sessions
+          </Button>
+        )}
+      </div>
       <div className="z-home-nav__links">
         <button
           type="button"
@@ -142,127 +268,6 @@ export function SessionList({
           Settings
         </button>
       </div>
-      <TextInput
-        value={search}
-        aria-label="Search chats and work sessions"
-        placeholder="Search…"
-        onChange={(event) => setSearch(event.target.value)}
-      />
-      <div className="z-row z-row--between">
-        <h2 className="z-section-title">Chats</h2>
-        <span className="z-xsmall z-muted">{chats?.length ?? ""}</span>
-      </div>
-      <section className="z-home-session-list" aria-label="Chats">
-        {chats === undefined ? (
-          <p className="z-muted z-small" role="status">
-            Loading chats…
-          </p>
-        ) : visibleChats.length ? (
-          groupByRecency(visibleChats, (chat) => chat.lastActivityAt, now).map((group) => (
-            <div className="z-home-session-list" key={group.label}>
-              <p className="z-home-group">{group.label}</p>
-              {group.items.map((chat) => (
-                <div className="z-home-chat" key={chat._id}>
-                  <button
-                    type="button"
-                    className={`z-home-session${chat._id === chatId ? " z-home-session--active" : ""}`}
-                    aria-current={chat._id === chatId ? "page" : undefined}
-                    onClick={() => {
-                      setDrawerOpen(false);
-                      onOpenChat(chat._id);
-                    }}
-                  >
-                    <span className="z-home-session__title">{chat.title}</span>
-                    <span className="z-xsmall z-muted">
-                      {relativeTime(chat.lastActivityAt, now)}
-                    </span>
-                  </button>
-                  <Button
-                    variant="ghost"
-                    size="small"
-                    className="z-home-chat__menu"
-                    aria-label={`Options for chat ${chat.title}`}
-                    onClick={() => setChatMenu(chat)}
-                  >
-                    …
-                  </Button>
-                </div>
-              ))}
-            </div>
-          ))
-        ) : (
-          <p className="z-muted z-small">
-            {search ? "No chats match." : "No chats yet. Your first message starts one."}
-          </p>
-        )}
-      </section>
-      <div className="z-row z-row--between">
-        <h2 className="z-section-title">Work Sessions</h2>
-        <span className="z-xsmall z-muted">{sessions.length}</span>
-      </div>
-      <fieldset className="z-home-filters">
-        <legend className="z-visually-hidden">Filter work sessions</legend>
-        {(["all", "active", "waiting", "completed"] as const).map((value) => (
-          <button
-            type="button"
-            key={value}
-            className={`z-home-filter${filter === value ? " z-home-filter--active" : ""}`}
-            aria-pressed={filter === value}
-            onClick={() => setFilter(value)}
-          >
-            {value[0]?.toUpperCase()}
-            {value.slice(1)}
-          </button>
-        ))}
-      </fieldset>
-      <section className="z-home-session-list" aria-label="Work Sessions">
-        {status === "LoadingFirstPage" ? (
-          <p className="z-muted z-small" role="status">
-            Loading sessions…
-          </p>
-        ) : visible.length ? (
-          groupByRecency(visible, (session) => session.lastActivityAt, now).map((group) => (
-            <div className="z-home-session-list" key={group.label}>
-              <p className="z-home-group">{group.label}</p>
-              {group.items.map((session) => (
-                <button
-                  type="button"
-                  className="z-home-session"
-                  key={session._id}
-                  onClick={() => {
-                    setDrawerOpen(false);
-                    onOpen(session._id);
-                  }}
-                >
-                  <span className="z-list-item__title">{session.title}</span>
-                  <span className="z-row z-xsmall z-muted">
-                    <SessionStatusBadge status={session.status} />
-                    {session.totalTaskCount > 0 && (
-                      <span>
-                        {session.completedTaskCount}/{session.totalTaskCount}
-                      </span>
-                    )}
-                    <span>{relativeTime(session.lastActivityAt, now)}</span>
-                  </span>
-                </button>
-              ))}
-            </div>
-          ))
-        ) : (
-          <p className="z-muted z-small">
-            {search
-              ? `No matches in ${filter}.`
-              : filter === "all"
-                ? "No Work Sessions yet."
-                : `No ${filter} sessions.`}
-          </p>
-        )}
-      </section>
-      {status === "CanLoadMore" && (
-        <Button variant="secondary" block onClick={() => loadMore(20)}>
-          Show older sessions
-        </Button>
-      )}
     </div>
   );
   return (
@@ -294,8 +299,7 @@ export function SessionList({
               onClick={() => setDrawerOpen(true)}
             />
           }
-          title={chatId ? (openChat?.title ?? "Chat") : "Home"}
-          subtitle={indicator}
+          title={chatId ? (openChat?.title ?? "Chat") : "New chat"}
           trailing={<IconButton icon="settings" label="Settings" onClick={() => onSettings()} />}
         />
         <main className="z-home-conversation">
@@ -641,33 +645,36 @@ function OrchestratorConversation({
           Loading conversation…
         </p>
       ) : messages.length ? (
-        <div className="z-stack" aria-live="polite">
+        <div className="z-chat-timeline" aria-live="polite">
           {messages.map((message) => (
-            <div className="z-stack" key={message._id}>
-              <Message author="user" label="You">
-                {message.text}
-              </Message>
-              <Message
-                author="assistant"
-                label="Zamolxis"
-                meta={routeMeta(message, thinking(message))}
-              >
-                {thinking(message) && <Thinking label="Writing a reply…" />}
-                <Markdown>{message.reply}</Markdown>
-                {message.route === "propose" && message.proposal && (
-                  <div className="z-stack">
-                    <Markdown>{message.proposal}</Markdown>
-                    <OpenProposal message={message} onOpen={(id) => onOpen(id)} />
-                  </div>
-                )}
-                {message.links.length > 0 && (
-                  <div className="z-row z-links">
-                    {message.links.map((link) => (
-                      <OrchestratorLinkButton key={link._id} link={link} onOpen={onOpen} />
-                    ))}
-                  </div>
-                )}
-              </Message>
+            <div className="z-chat-timeline__item" key={message._id}>
+              <span className="z-chat-timeline__marker" aria-hidden="true" />
+              <div className="z-chat-timeline__exchange">
+                <Message author="user" label="You" meta={relativeTime(message.createdAt, now)}>
+                  {message.text}
+                </Message>
+                <Message
+                  author="assistant"
+                  label="Zamolxis"
+                  meta={routeMeta(message, thinking(message))}
+                >
+                  {thinking(message) && <Thinking label="Writing a reply…" />}
+                  <Markdown>{message.reply}</Markdown>
+                  {message.route === "propose" && message.proposal && (
+                    <div className="z-stack">
+                      <Markdown>{message.proposal}</Markdown>
+                      <OpenProposal message={message} onOpen={(id) => onOpen(id)} />
+                    </div>
+                  )}
+                  {message.links.length > 0 && (
+                    <div className="z-row z-links">
+                      {message.links.map((link) => (
+                        <OrchestratorLinkButton key={link._id} link={link} onOpen={onOpen} />
+                      ))}
+                    </div>
+                  )}
+                </Message>
+              </div>
             </div>
           ))}
         </div>

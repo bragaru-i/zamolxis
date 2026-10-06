@@ -183,7 +183,7 @@ code,
   position: sticky;
   top: 0;
   height: 100dvh;
-  overflow: auto;
+  overflow: hidden;
   background: var(--z-surface);
   border-right: 1px solid var(--z-border);
   z-index: 30;
@@ -191,11 +191,39 @@ code,
 .z-home-nav__content {
   display: flex;
   flex-direction: column;
-  gap: var(--z-space-3);
-  padding: var(--z-space-4);
+  height: 100%;
+  min-height: 0;
 }
-.z-button.z-home-nav__close,
-.z-button.z-home-sessions-trigger {
+.z-home-nav__top,
+.z-home-nav__scroll,
+.z-home-nav__links {
+  padding-inline: var(--z-space-4);
+}
+.z-home-nav__top {
+  display: flex;
+  flex-direction: column;
+  gap: var(--z-space-2);
+  padding-top: calc(var(--z-space-4) + var(--z-safe-top));
+  padding-bottom: var(--z-space-3);
+  border-bottom: 1px solid var(--z-border);
+}
+.z-home-nav__connection {
+  padding-inline: var(--z-space-1);
+}
+.z-home-nav__scroll {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--z-space-3);
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-top: var(--z-space-3);
+  padding-bottom: var(--z-space-4);
+  -webkit-overflow-scrolling: touch;
+}
+.z-icon-button.z-home-nav__close,
+.z-icon-button.z-home-sessions-trigger {
   display: none;
 }
 .z-home-link,
@@ -332,8 +360,8 @@ code,
   .z-home-nav--open {
     transform: translateX(0);
   }
-  .z-button.z-home-nav__close,
-  .z-button.z-home-sessions-trigger {
+  .z-icon-button.z-home-nav__close,
+  .z-icon-button.z-home-sessions-trigger {
     display: inline-flex;
   }
   .z-home-backdrop {
@@ -589,15 +617,76 @@ code,
   white-space: normal;
 }
 
+/* Conversation timeline: one event per owner request and its Zamolxis response. */
+.z-chat-timeline {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.z-chat-timeline__item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: var(--z-space-2);
+  min-width: 0;
+  padding-bottom: var(--z-space-5);
+}
+.z-chat-timeline__item:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  top: 12px;
+  bottom: -2px;
+  left: 8px;
+  width: 2px;
+  background: linear-gradient(var(--z-primary), var(--z-border));
+}
+.z-chat-timeline__marker {
+  position: relative;
+  z-index: 1;
+  width: 12px;
+  height: 12px;
+  margin: 6px 0 0 3px;
+  border: 3px solid var(--z-bg);
+  border-radius: 50%;
+  background: var(--z-primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--z-primary) 25%, var(--z-border));
+}
+.z-chat-timeline__exchange {
+  display: flex;
+  flex-direction: column;
+  gap: var(--z-space-3);
+  min-width: 0;
+}
+
 /* Work cards (task / run) */
 .z-work {
+  --z-work-accent: var(--z-neutral);
+  --z-work-tint: var(--z-neutral-bg);
   display: flex;
   flex-direction: column;
   gap: var(--z-space-2);
   padding: var(--z-space-3);
-  border: 1px solid var(--z-border);
+  border: 1px solid color-mix(in srgb, var(--z-work-accent) 35%, var(--z-border));
+  border-left: 4px solid var(--z-work-accent);
   border-radius: var(--z-radius-md);
-  background: var(--z-surface);
+  background: linear-gradient(135deg, var(--z-work-tint) 0, var(--z-surface) 120px);
+  box-shadow: var(--z-shadow-subtle);
+}
+.z-work--build {
+  --z-work-accent: var(--z-primary);
+  --z-work-tint: var(--z-info-bg);
+}
+.z-work--check {
+  --z-work-accent: #6d4ab0;
+  --z-work-tint: #f0eafb;
+}
+.z-work--fix {
+  --z-work-accent: var(--z-warning);
+  --z-work-tint: var(--z-warning-bg);
+}
+.z-work--ready {
+  --z-work-accent: var(--z-success);
+  --z-work-tint: var(--z-success-bg);
 }
 .z-work__head {
   display: flex;
@@ -1672,6 +1761,11 @@ code,
 .z-home-nav__links {
   display: flex;
   flex-direction: column;
+  flex: none;
+  padding-top: var(--z-space-2);
+  padding-bottom: calc(var(--z-space-2) + var(--z-safe-bottom));
+  border-top: 1px solid var(--z-border);
+  background: var(--z-surface);
 }
 @media (min-width: 720px) {
   .z-sheet.z-sheet--xl {
@@ -1755,7 +1849,91 @@ code,
   padding-block: var(--z-space-2);
 }
 .z-home-nav__links {
-  margin-top: calc(var(--z-space-2) * -1);
+  margin-top: 0;
+}
+
+/* A small per-task process track: the task's own path through independent verification. */
+.z-task-progress {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  min-width: 0;
+  margin: var(--z-space-1) 0 var(--z-space-2);
+  padding: 0;
+  list-style: none;
+}
+.z-task-progress__step {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  color: var(--z-muted);
+}
+.z-task-progress__step:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 8px;
+  left: calc(50% + 9px);
+  right: calc(-50% + 9px);
+  height: 2px;
+  background: var(--z-border);
+}
+.z-task-progress__step--done:not(:last-child)::after {
+  background: var(--z-success);
+}
+.z-task-progress__marker {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--z-border);
+  border-radius: 50%;
+  background: var(--z-surface);
+  color: white;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+}
+.z-task-progress__step--done .z-task-progress__marker {
+  border-color: var(--z-success);
+  background: var(--z-success);
+}
+.z-task-progress__step--active {
+  color: var(--z-work-accent);
+  font-weight: 700;
+}
+.z-task-progress__step--active .z-task-progress__marker {
+  border-color: var(--z-work-accent);
+  background: var(--z-work-accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--z-work-accent) 16%, transparent);
+  animation: z-flow-pulse 1.6s ease-in-out infinite;
+}
+.z-task-progress__step--attention {
+  color: var(--z-warning);
+  font-weight: 700;
+}
+.z-task-progress__step--attention .z-task-progress__marker {
+  border-color: var(--z-warning);
+  background: var(--z-warning);
+}
+.z-task-progress__step--skipped .z-task-progress__marker {
+  border-style: dashed;
+}
+.z-task-progress__label {
+  max-width: 100%;
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (prefers-reduced-motion: reduce) {
+  .z-task-progress__step--active .z-task-progress__marker {
+    animation: none;
+  }
 }
 
 /* Session work map: the steps every piece of work goes through, in plain words. */
