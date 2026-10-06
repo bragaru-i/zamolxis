@@ -25,7 +25,25 @@ export interface StartRunInput {
   readonly model?: string;
   readonly reasoningEffort?: string;
 }
+/**
+ * Cumulative usage counters of a run, each reported by the provider and never decreasing.
+ * `inputTokens` counts every input token the model processed, cached ones included;
+ * `cachedInputTokens` is the cache-read part of it and `cacheWriteInputTokens` the part
+ * written to the cache; `reasoningOutputTokens` is the reasoning part of `outputTokens`;
+ * `totalTokens` is input plus output; `modelCalls` counts model responses (one per usage
+ * report). Adapters emit the counters their provider reports; the rest stay absent.
+ */
 export const USAGE_COUNTERS = [
+  "inputTokens",
+  "cachedInputTokens",
+  "cacheWriteInputTokens",
+  "outputTokens",
+  "reasoningOutputTokens",
+  "totalTokens",
+  "modelCalls",
+] as const;
+/** Counters Codex reports with every usage update; the others are optional. */
+export const REQUIRED_USAGE_COUNTERS = [
   "inputTokens",
   "cachedInputTokens",
   "outputTokens",

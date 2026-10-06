@@ -99,7 +99,12 @@ describe("turnUsage", () => {
         output_tokens: 799,
         server_tool_use: { web_search_requests: 0 },
       }),
-    ).toEqual({ inputTokens: 109560, cachedInputTokens: 105268, outputTokens: 799 });
+    ).toEqual({
+      inputTokens: 109560,
+      cachedInputTokens: 105268,
+      cacheWriteInputTokens: 4250,
+      outputTokens: 799,
+    });
   });
   it("reports nothing it cannot trust", () => {
     expect(turnUsage(undefined)).toBeUndefined();
@@ -109,6 +114,7 @@ describe("turnUsage", () => {
     expect(turnUsage({ input_tokens: 1, output_tokens: 3 })).toEqual({
       inputTokens: 1,
       cachedInputTokens: 0,
+      cacheWriteInputTokens: 0,
       outputTokens: 3,
     });
   });

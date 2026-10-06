@@ -280,11 +280,18 @@ export function mapModels(models: unknown): RuntimeModelDto[] {
 /**
  * Usage of a turn from a `result` frame. Input tokens count everything the model read
  * (new, cache-written and cache-read input); cached input is the cache-read part, so
- * cached <= input like Codex reports. Undefined unless every counter is a safe integer.
+ * cached <= input like Codex reports; cache-write input is the part written to the cache.
+ * The CLI does not report reasoning tokens separately. Undefined unless every counter is
+ * a safe integer.
  */
-export function turnUsage(
-  usage: unknown,
-): { inputTokens: number; cachedInputTokens: number; outputTokens: number } | undefined {
+export function turnUsage(usage: unknown):
+  | {
+      inputTokens: number;
+      cachedInputTokens: number;
+      cacheWriteInputTokens: number;
+      outputTokens: number;
+    }
+  | undefined {
   if (!usage || typeof usage !== "object" || Array.isArray(usage)) return undefined;
   const raw = usage as Record<string, unknown>;
   const count = (value: unknown) =>
@@ -300,5 +307,10 @@ export function turnUsage(
   if ([input, written, read, output].some(Number.isNaN)) return undefined;
   if (typeof raw.input_tokens !== "number" || typeof raw.output_tokens !== "number")
     return undefined;
-  return { inputTokens: input + written + read, cachedInputTokens: read, outputTokens: output };
+  return {
+    inputTokens: input + written + read,
+    cachedInputTokens: read,
+    cacheWriteInputTokens: written,
+    outputTokens: output,
+  };
 }

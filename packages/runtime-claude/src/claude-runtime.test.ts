@@ -378,11 +378,43 @@ describe("ClaudeRuntime events", () => {
       ["run.activity", { label: "Changed a file outside the workspace" }],
       [
         "run.usage",
-        { inputTokens: 1110, cachedInputTokens: 1000, outputTokens: 50, totalTokens: 1160 },
+        {
+          inputTokens: 1110,
+          cachedInputTokens: 1000,
+          cacheWriteInputTokens: 100,
+          outputTokens: 50,
+          totalTokens: 1160,
+        },
       ],
       ["run.completed", { summary: "Changed src/a.ts" }],
     ]);
     expect(cli.ended).toBe(true);
+  });
+  it("counts model calls by assistant message id across the frames of one response", async () => {
+    const { runtime, current } = harness();
+    const { nativeSessionId: id } = await runtime.start(input());
+    const cli = current();
+    for (const [messageId, text] of [
+      ["msg_1", "Looking"],
+      ["msg_1", "Still looking"],
+      ["msg_2", "Done"],
+    ])
+      cli.emit({
+        type: "assistant",
+        parent_tool_use_id: null,
+        message: { id: messageId, model: "claude-test-1", content: [{ type: "text", text }] },
+      });
+    // Sub-agent frames are not the run's own calls.
+    cli.emit({
+      type: "assistant",
+      parent_tool_use_id: "tool_1",
+      message: { id: "msg_3", model: "claude-test-1", content: [] },
+    });
+    cli.result();
+    const events = await all(runtime, id);
+    expect(
+      events.find((event) => event.type === "run.usage" && "inputTokens" in event.payload)?.payload,
+    ).toMatchObject({ modelCalls: 2 });
   });
   it("leaves the Supervisor's reply unredacted (the Node redacts it) and bounded", async () => {
     const { runtime, current } = harness();
@@ -599,6 +631,7 @@ describe("ClaudeRuntime resume", () => {
     ).toEqual({
       inputTokens: 1115,
       cachedInputTokens: 1001,
+      cacheWriteInputTokens: 100,
       outputTokens: 52,
       totalTokens: 1167,
     });

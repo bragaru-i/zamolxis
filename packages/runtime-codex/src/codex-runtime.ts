@@ -26,7 +26,7 @@ import {
   type RuntimeSessionSnapshot,
   redactSecrets,
   type StartRunInput,
-  USAGE_COUNTERS,
+  REQUIRED_USAGE_COUNTERS,
   type UsageCounter,
 } from "@zamolxis/runtime-core";
 import { knownCommit } from "@zamolxis/runtime-core/known-commits";
@@ -70,6 +70,9 @@ interface Session {
   approvalScope: string;
   // Usage already reported for the run; resumed totals never go below it.
   usageFloor: Partial<Record<UsageCounter, number>>;
+  // Model responses seen by this process: usage reports whose total grew.
+  calls: number;
+  lastTotal: number;
   events: NormalizedRunEventDto[];
   seen: Set<string>;
   uncertain: boolean;
@@ -253,6 +256,8 @@ export class CodexRuntime implements AgentRuntime {
       base,
       approvalScope: resumed ? `r${base}.` : "",
       usageFloor: { ...(resumed?.usage ?? {}) },
+      calls: 0,
+      lastTotal: -1,
       events: [],
       seen: new Set(),
       uncertain: false,
@@ -580,12 +585,25 @@ export class CodexRuntime implements AgentRuntime {
       if (event.method === "thread/tokenUsage/updated") {
         const usage = record(record(params.tokenUsage).total);
         const payload: Record<string, number> = {};
-        for (const field of USAGE_COUNTERS) {
+        for (const field of REQUIRED_USAGE_COUNTERS) {
           const value = usage[field];
           if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) return;
           // A resumed thread's totals never go below what was already reported.
           payload[field] = Math.max(value, session.usageFloor[field] ?? 0);
         }
+        for (const field of ["cacheWriteInputTokens", "reasoningOutputTokens"] as const) {
+          const value = usage[field];
+          if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0)
+            payload[field] = Math.max(value, session.usageFloor[field] ?? 0);
+        }
+        // Codex reports usage once per model response; a repeated report (same thread
+        // total) is not another call.
+        const total = usage.totalTokens as number;
+        if (total > session.lastTotal) {
+          session.lastTotal = total;
+          session.calls += 1;
+        }
+        payload.modelCalls = (session.usageFloor.modelCalls ?? 0) + session.calls;
         this.#emit(session, "run.usage", payload);
         return;
       }

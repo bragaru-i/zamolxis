@@ -10,6 +10,7 @@ import {
   type SupervisorLogStepKind,
   TRACE_BATCH_LIMIT,
 } from "@zamolxis/contracts";
+import { USAGE_COUNTERS } from "@zamolxis/runtime-core";
 import type { LocalStateStore } from "../persistence/local-state";
 import { type TraceStepInput, traceStep } from "./recorder";
 
@@ -24,8 +25,11 @@ export interface SupervisorLogUsage {
   readonly modelActual?: string;
   readonly inputTokens?: number;
   readonly cachedInputTokens?: number;
+  readonly cacheWriteInputTokens?: number;
   readonly outputTokens?: number;
+  readonly reasoningOutputTokens?: number;
   readonly totalTokens?: number;
+  readonly modelCalls?: number;
 }
 
 type LogStepInput = Omit<TraceStepInput, "kind"> & { readonly kind: SupervisorLogStepKind };
@@ -46,16 +50,25 @@ function errorCode(error: unknown): string {
 function count(value: number, one: string, many = `${one}s`): string {
   return `${value.toLocaleString("en-US")} ${value === 1 ? one : many}`;
 }
+// "1,200 tokens processed (3 calls · 200 fresh · 900 cached · 100 out, 20 reasoning)":
+// processed is input (cached included) plus output, fresh is input minus cached.
 function usageLine(usage: SupervisorLogUsage): string | undefined {
   if (usage.totalTokens === undefined) return undefined;
   const parts: string[] = [];
+  if (usage.modelCalls) parts.push(count(usage.modelCalls, "call"));
   if (usage.inputTokens !== undefined)
-    parts.push(`${usage.inputTokens.toLocaleString("en-US")} in`);
+    parts.push(
+      usage.cachedInputTokens === undefined
+        ? `${usage.inputTokens.toLocaleString("en-US")} in`
+        : `${Math.max(usage.inputTokens - usage.cachedInputTokens, 0).toLocaleString("en-US")} fresh`,
+    );
   if (usage.cachedInputTokens)
     parts.push(`${usage.cachedInputTokens.toLocaleString("en-US")} cached`);
   if (usage.outputTokens !== undefined)
-    parts.push(`${usage.outputTokens.toLocaleString("en-US")} out`);
-  const total = count(usage.totalTokens, "token");
+    parts.push(
+      `${usage.outputTokens.toLocaleString("en-US")} out${usage.reasoningOutputTokens ? `, ${usage.reasoningOutputTokens.toLocaleString("en-US")} reasoning` : ""}`,
+    );
+  const total = `${count(usage.totalTokens, "token")} processed`;
   return parts.length ? `${total} (${parts.join(" · ")})` : total;
 }
 
@@ -162,15 +175,16 @@ export class SupervisorLog {
     const at = this.now();
     switch (event.type) {
       case "run.usage": {
-        const { modelActual, inputTokens, cachedInputTokens, outputTokens, totalTokens } =
-          event.payload;
+        const { modelActual } = event.payload;
+        const usage: Record<string, number> = {};
+        for (const counter of USAGE_COUNTERS) {
+          const value = event.payload[counter];
+          if (value !== undefined) usage[counter] = value;
+        }
         this.#usage = {
           ...this.#usage,
           ...(typeof modelActual === "string" && modelActual ? { modelActual } : {}),
-          ...(inputTokens !== undefined ? { inputTokens } : {}),
-          ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
-          ...(outputTokens !== undefined ? { outputTokens } : {}),
-          ...(totalTokens !== undefined ? { totalTokens } : {}),
+          ...usage,
         };
         return;
       }
