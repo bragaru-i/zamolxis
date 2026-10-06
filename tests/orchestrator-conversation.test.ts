@@ -185,3 +185,141 @@ it("opens work only for an explicit command, continues its link and stays idempo
   expect(messages[0]?.links[0]).toMatchObject({ workSessionId: first.workSessionId });
   expect(messages[1]?.links[0]).toMatchObject({ workSessionId: first.workSessionId });
 });
+
+it("links approvals, pull requests, attention Tasks, trust and active Runs in a status answer", async () => {
+  const f = await fixture();
+  const seeded = await f.t.run(async (ctx) => {
+    const product = await ctx.db.get("products", f.productId);
+    const location = await ctx.db.query("repositoryLocations").first();
+    if (!product || !location) throw new Error("Missing fixture");
+    const now = 10;
+    const sessionId = await ctx.db.insert("workSessions", {
+      ownerId: product.ownerId,
+      productId: f.productId,
+      title: "Checkout",
+      goal: "Fix checkout",
+      status: "running",
+      activeRunCount: 1,
+      completedTaskCount: 0,
+      totalTaskCount: 3,
+      needsInputCount: 1,
+      lastActivityAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const task = (title: string, extra: Record<string, unknown>) =>
+      ctx.db.insert("tasks", {
+        workSessionId: sessionId,
+        title,
+        description: title,
+        kind: "code",
+        status: "running",
+        runtimePolicyMode: "auto",
+        priority: 0,
+        createdAt: now,
+        updatedAt: now,
+        ...extra,
+      });
+    const blockedTaskId = await task("Pick a payment provider", { phase: "needs_input" });
+    const publishedTaskId = await task("Fix totals", {
+      phase: "completed",
+      status: "completed",
+      publishStatus: "published",
+      prUrl: "https://github.com/acme/shop/pull/7",
+    });
+    const unsafeTaskId = await task("Unsafe link", { prUrl: "javascript:alert(1)" });
+    const workspaceId = await ctx.db.insert("workspaces", {
+      workSessionId: sessionId,
+      taskId: blockedTaskId,
+      repositoryId: f.repositoryId,
+      repositoryLocationId: location._id,
+      workstationId: location.workstationId,
+      kind: "worktree",
+      status: "in_use",
+      baseRef: "HEAD",
+      dirty: false,
+      changedFileCount: 0,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const run = (taskId: typeof blockedTaskId, status: "running" | "completed") =>
+      ctx.db.insert("agentRuns", {
+        workSessionId: sessionId,
+        taskId,
+        workspaceId,
+        workstationId: location.workstationId,
+        role: "builder",
+        runtime: "codex",
+        status,
+        attempt: 1,
+        lastActivityAt: now,
+      });
+    const activeRunId = await run(blockedTaskId, "running");
+    await run(publishedTaskId, "completed");
+    const trustId = await ctx.db.insert("trustDecisions", {
+      candidateRunId: activeRunId,
+      subjectSha: "abc",
+      eligible: false,
+      reasons: ["verifier failed"],
+      createdAt: now,
+    });
+    await ctx.db.patch("tasks", blockedTaskId, { lastTrustDecisionId: trustId });
+    const approvalId = await ctx.db.insert("approvals", {
+      ownerId: product.ownerId,
+      workSessionId: sessionId,
+      runId: activeRunId,
+      action: "network access",
+      risk: "medium",
+      request: {},
+      status: "pending",
+      requestedAt: now,
+    });
+    return {
+      sessionId,
+      blockedTaskId,
+      publishedTaskId,
+      unsafeTaskId,
+      activeRunId,
+      trustId,
+      approvalId,
+    };
+  });
+
+  const result = await f.user.mutation(api.orchestrator.submit, {
+    text: "What needs me?",
+    idempotencyKey: "typed-links",
+    productId: f.productId,
+  });
+  expect(result.route).toBe("answer");
+  const [message] = await f.user.query(api.orchestrator.messages, {});
+  const links = (message?.links ?? []).map(
+    (link: { targetType: string; targetId: string; status?: string; url?: string }) => ({
+      targetType: link.targetType,
+      targetId: link.targetId,
+      status: link.status,
+      url: link.url,
+    }),
+  );
+  expect(links).toEqual([
+    { targetType: "session", targetId: seeded.sessionId, status: "running", url: undefined },
+    { targetType: "approval", targetId: seeded.approvalId, status: "medium", url: undefined },
+    {
+      targetType: "pull_request",
+      targetId: seeded.publishedTaskId,
+      status: "published",
+      url: "https://github.com/acme/shop/pull/7",
+    },
+    { targetType: "task", targetId: seeded.blockedTaskId, status: "needs_input", url: undefined },
+    { targetType: "trust", targetId: seeded.trustId, status: "not_trusted", url: undefined },
+    { targetType: "run", targetId: seeded.activeRunId, status: "running", url: undefined },
+  ]);
+  for (const link of message?.links ?? []) expect(link.workSessionId).toBe(seeded.sessionId);
+  expect(await f.other.query(api.orchestrator.messages, {})).toEqual([]);
+  // A status answer stays read-only.
+  const counts = await f.t.run(async (ctx) => ({
+    sessions: (await ctx.db.query("workSessions").collect()).length,
+    runs: (await ctx.db.query("agentRuns").collect()).length,
+    commands: (await ctx.db.query("textCommands").collect()).length,
+  }));
+  expect(counts).toEqual({ sessions: 1, runs: 2, commands: 0 });
+});
