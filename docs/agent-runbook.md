@@ -108,8 +108,10 @@ against a written contract. When lanes are integrated:
 - Setup's service reload must wait for launchd to finish unloading (#70).
 - GitHub CI sometimes leaves a job queued without a runner until it is cancelled
   after 15 minutes; re-run it before treating it as a failure.
-- The `gh` account active on the Mac opens PRs from the Node's "Open pull request";
-  the owner set it to `bragaru-i`.
+- Setup records a publishing account per GitHub repository. The Node resolves it
+  with `gh auth token --user` for each push and PR; it never changes the globally
+  active account. Rerun setup's repository flow to select an account for a new or
+  legacy repository.
 
 ## Waiting on the owner
 

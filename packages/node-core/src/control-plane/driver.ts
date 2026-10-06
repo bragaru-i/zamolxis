@@ -27,6 +27,7 @@ import {
   supervisorInstruction,
 } from "../capabilities/supervisor";
 import {
+  type GithubCredentialProvider,
   ghPullRequestOpener,
   type PublishRequest,
   type PublishResult,
@@ -263,6 +264,7 @@ export interface ControlPlaneDriverOptions {
   readonly progressIntervalMs?: number;
   // Opens pull requests for integration.publish; defaults to the signed-in GitHub CLI.
   readonly pullRequests?: PullRequestOpener;
+  readonly githubCredentials?: GithubCredentialProvider;
   readonly githubHosts?: readonly string[];
 }
 export type Delivery =
@@ -681,6 +683,9 @@ export class ControlPlaneDriver {
         const workspace = this.workspaces.inspect(command.payload.workspaceId);
         const result = await publishIntegration(workspace, command.payload, {
           pullRequests: this.options.pullRequests ?? ghPullRequestOpener,
+          ...(this.options.githubCredentials
+            ? { githubCredentials: this.options.githubCredentials }
+            : {}),
           ...(this.options.githubHosts ? { githubHosts: this.options.githubHosts } : {}),
         });
         deliveries.push({

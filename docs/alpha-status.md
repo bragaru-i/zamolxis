@@ -172,12 +172,15 @@ planned capability as shipped.
    and the sessions screen shows a "Get started" checklist derived from real backend
    state (`onboarding.progress`) until the first session. Limits: a missing Codex login
    usually shows as "no heartbeat"; QR scanning before approval is not tracked.
-7. **Integration, shipped for single tasks.** On the owner's explicit "Open pull
+7. **Integration, shipped for single tasks.** Setup selects and verifies a publishing
+   account per GitHub repository; the Node supplies that account's saved credential
+   only to the matching push and PR command without changing global `gh` state. On
+   the owner's explicit "Open pull
    request", the Node pushes the trusted integration commit as
    `zamolxis/<task>-<sha7>` (no force, hooks respected, never the default branch) and
-   opens a PR with `gh` (or returns a compare link when `gh` is missing or signed
-   out). Nothing merges automatically. PRs are authored by whichever `gh` account is
-   active on the Mac. Missing: combining several task branches into one PR; base
+   opens a PR with `gh` (or returns a compare link when no account was configured).
+   Nothing merges automatically. Missing: changing/reconnecting the account from web
+   Settings and combining several task branches into one PR; base
    branch comes from the checkout's branch when the remote default is unknown.
    Worktree retention: an hourly sweep removes eligible managed worktrees (default 3
    days, 1–30 per owner; planning worktrees after 1 day; unpublished trusted work is

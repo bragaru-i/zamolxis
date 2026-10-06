@@ -15,7 +15,7 @@ import { homedir, hostname } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkbox, confirm, input, select } from "@inquirer/prompts";
-import { inspectRepository } from "@zamolxis/git";
+import { inspectRepository, remoteIdentity } from "@zamolxis/git";
 import { ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
 import QRCode from "qrcode";
@@ -34,10 +34,22 @@ export interface NodeConfig {
   managedRoot: string;
   builderSlots: 3;
   verifierSlots: 1;
-  repositories: Array<{ path: string; remoteUrl: string; name: string; repositoryId?: string }>;
+  repositories: RepositoryConfig[];
   workstationId?: string;
   credential?: string;
   pendingPairing?: { pairingId: string; pollSecret: string; approvalCode: string };
+}
+export interface PublishingIdentity {
+  provider: "github";
+  host: string;
+  login: string;
+}
+export interface RepositoryConfig {
+  path: string;
+  remoteUrl: string;
+  name: string;
+  repositoryId?: string;
+  publishingIdentity?: PublishingIdentity;
 }
 export const configDirectory = () => join(homedir(), "Library", "Application Support", "Zamolxis");
 export const configPath = () => join(configDirectory(), "config.json");
@@ -56,6 +68,13 @@ export function validateConfig(config: NodeConfig) {
   for (const repository of config.repositories) {
     if (!isAbsolute(repository.path) || !repository.remoteUrl)
       throw new Error("INVALID_REPOSITORY_CONFIG");
+    if (
+      repository.publishingIdentity &&
+      (repository.publishingIdentity.provider !== "github" ||
+        !/^[A-Za-z0-9.-]{1,253}$/.test(repository.publishingIdentity.host) ||
+        !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(repository.publishingIdentity.login))
+    )
+      throw new Error("INVALID_PUBLISHING_IDENTITY");
     for (const [a, b] of [
       [repository.path, config.managedRoot],
       [config.managedRoot, repository.path],
@@ -431,7 +450,63 @@ export interface SetupEnvironment {
   /** Repository roots offered in the checklist. */
   discover(): RepositoryChoice[];
   inspectRepository(path: string): RepositoryChoice;
+  githubAccounts(host: string): string[];
+  verifyGithubAccount(host: string, login: string, owner: string, repo: string): boolean;
   secret(): string;
+}
+interface GhAuthStatus {
+  hosts?: Record<string, Array<{ login?: string; state?: string }>>;
+}
+export function authenticatedGithubAccounts(host: string): string[] {
+  try {
+    const status = JSON.parse(
+      execFileSync("gh", ["auth", "status", "--hostname", host, "--json", "hosts"], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 15_000,
+      }),
+    ) as GhAuthStatus;
+    return [
+      ...new Set(
+        (status.hosts?.[host] ?? [])
+          .filter(({ login, state }) => login && state === "logged_in")
+          .map(({ login }) => login as string),
+      ),
+    ];
+  } catch {
+    return [];
+  }
+}
+export function verifyGithubAccount(
+  host: string,
+  login: string,
+  owner: string,
+  repo: string,
+): boolean {
+  try {
+    const token = execFileSync("gh", ["auth", "token", "--hostname", host, "--user", login], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 10_000,
+    }).trim();
+    const env = { ...process.env, GH_TOKEN: token, GH_PROMPT_DISABLED: "1", NO_COLOR: "1" };
+    const actual = execFileSync("gh", ["api", "--hostname", host, "user", "--jq", ".login"], {
+      encoding: "utf8",
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 15_000,
+    }).trim();
+    if (actual !== login) return false;
+    return (
+      execFileSync(
+        "gh",
+        ["api", "--hostname", host, `repos/${owner}/${repo}`, "--jq", ".permissions.push"],
+        { encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"], timeout: 15_000 },
+      ).trim() === "true"
+    );
+  } catch {
+    return false;
+  }
 }
 export function repositoryCandidates() {
   const candidates = new Set([process.cwd()]);
@@ -463,6 +538,8 @@ export function defaultEnvironment(): SetupEnvironment {
     pause,
     discover: () => discoverRepositories(repositoryCandidates()),
     inspectRepository: inspectRepositoryChoice,
+    githubAccounts: authenticatedGithubAccounts,
+    verifyGithubAccount,
     secret: () => randomBytes(32).toString("hex"),
   };
 }
@@ -597,13 +674,44 @@ export async function chooseRepositories(
     );
   }
   const kept = current.filter(({ path }) => selected.includes(path));
-  const added = [...new Map(chosen.map((choice) => [choice.path, choice])).values()]
+  const added: RepositoryConfig[] = [
+    ...new Map(chosen.map((choice) => [choice.path, choice])).values(),
+  ]
     .filter(({ path }) => !kept.some((repository) => repository.path === path))
     .map(({ path, remoteUrl, problem }) => {
       if (problem || !remoteUrl) throw new Error(`${path}: ${problem ?? "no origin remote"}`);
       return { path, remoteUrl, name: basename(path) };
     });
-  return [...kept, ...added];
+  const repositories = [...kept, ...added];
+  for (let index = 0; index < repositories.length; index++) {
+    const repository = repositories[index];
+    if (!repository) continue;
+    let identity: string;
+    try {
+      identity = remoteIdentity(repository.remoteUrl);
+    } catch {
+      continue;
+    }
+    const [host, owner, repo, ...rest] = identity.split("/");
+    if (host !== "github.com" || !owner || !repo || rest.length) continue;
+    const accounts = env.githubAccounts(host);
+    if (!accounts.length)
+      throw new Error(`GITHUB_AUTH_REQUIRED: run gh auth login for ${host}, then rerun setup`);
+    const preferred = repository.publishingIdentity?.login ?? owner;
+    const login = await env.io.select(
+      `GitHub account for publishing ${owner}/${repo}`,
+      accounts.map((account) => ({ name: account, value: account })),
+      accounts.includes(preferred) ? preferred : accounts[0],
+    );
+    if (!env.verifyGithubAccount(host, login, owner, repo))
+      throw new Error(`GITHUB_PUSH_ACCESS_REQUIRED: ${login} cannot push ${owner}/${repo}`);
+    repositories[index] = {
+      ...repository,
+      publishingIdentity: { provider: "github", host, login },
+    };
+    env.io.log(`✓ ${owner}/${repo} pull requests will be published as ${login}`);
+  }
+  return repositories;
 }
 async function firstRun(env: SetupEnvironment): Promise<NodeConfig> {
   const { io } = env;

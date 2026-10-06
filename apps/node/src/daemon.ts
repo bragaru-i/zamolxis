@@ -170,6 +170,42 @@ try {
       manager,
       new ConvexControlPlaneTransport(client, config.workstationId, identity.instanceId),
       config.workstationId,
+      {
+        githubCredentials: {
+          get: async ({ repositoryId, host }) => {
+            const repository = config.repositories.find(
+              (candidate) => candidate.repositoryId === repositoryId,
+            );
+            const identity = repository?.publishingIdentity;
+            if (identity?.provider !== "github" || identity.host !== host) return undefined;
+            try {
+              const token = execFileSync(
+                "gh",
+                ["auth", "token", "--hostname", host, "--user", identity.login],
+                {
+                  encoding: "utf8",
+                  timeout: 10_000,
+                  stdio: ["ignore", "pipe", "pipe"],
+                },
+              ).trim();
+              const login = execFileSync(
+                "gh",
+                ["api", "--hostname", host, "user", "--jq", ".login"],
+                {
+                  encoding: "utf8",
+                  timeout: 15_000,
+                  env: { ...process.env, GH_TOKEN: token, GH_PROMPT_DISABLED: "1" },
+                  stdio: ["ignore", "pipe", "pipe"],
+                },
+              ).trim();
+              if (login !== identity.login) throw new Error("GITHUB_IDENTITY_MISMATCH");
+              return { login, token };
+            } catch {
+              throw new Error("PUBLISH_GITHUB_AUTH_REQUIRED");
+            }
+          },
+        },
+      },
     );
     // Discovery is performed before every assigned run by the driver. Its first tick
     // reattaches the runs a previous Node process left unfinished (resumed from the

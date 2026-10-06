@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MemoryCredentialStore } from "./credential-store";
 import {
   type ControlPlane,
+  chooseRepositories,
   classifyCredentialError,
   discoverRepositories,
   inspectServicePlist,
@@ -354,6 +355,8 @@ beforeEach(() => {
       path,
       remoteUrl: `https://example.invalid/${path.split("/").pop()}.git`,
     }),
+    githubAccounts: () => [],
+    verifyGithubAccount: () => false,
     secret: () => {
       secrets += 1;
       return secrets === 3 ? NEW_SECRET : String(secrets).padStart(64, "0");
@@ -372,6 +375,31 @@ beforeEach(() => {
     node,
     config: () => readConfig(configPath),
   };
+});
+
+it("selects and verifies a publishing account per GitHub repository", async () => {
+  const path = join(harness.root, "personal");
+  const current: NodeConfig["repositories"] = [
+    {
+      path,
+      name: "personal",
+      remoteUrl: "https://github.com/bragaru-i/personal.git",
+    },
+  ];
+  harness.answers.checkbox.push([path]);
+  harness.answers.select.push("bragaru-i" as MenuAction);
+  harness.env.githubAccounts = () => ["ion-wellcopy", "bragaru-i"];
+  harness.env.verifyGithubAccount = (host, login, owner, repo) =>
+    host === "github.com" && login === "bragaru-i" && owner === "bragaru-i" && repo === "personal";
+  await expect(chooseRepositories(harness.env, current)).resolves.toEqual([
+    {
+      ...current[0],
+      publishingIdentity: { provider: "github", host: "github.com", login: "bragaru-i" },
+    },
+  ]);
+  expect(harness.logs.at(-1)).toBe(
+    "✓ bragaru-i/personal pull requests will be published as bragaru-i",
+  );
 });
 afterEach(() => rmSync(harness.root, { recursive: true, force: true }));
 

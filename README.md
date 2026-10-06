@@ -76,12 +76,12 @@ request"; after confirming the branch, base and title, `integration.publish`
 to the Node holding the integration workspace, only while that workspace is clean
 at the exact trusted SHA. The Node re-checks clean state and HEAD, then pushes that
 exact commit to `origin` as `zamolxis/<short-task>-<sha7>` with the repository's
-own Git credentials and hooks (no `--no-verify`, never forced, never the default
-branch). If the GitHub CLI is installed and signed in for the remote's host, it
-opens a pull request against the default branch (body: task description,
+own hooks (no `--no-verify`, never forced, never the default branch). Setup selects
+and verifies a GitHub publishing account for each GitHub repository; the Node uses
+that account's saved `gh` credential for the push without changing the globally
+active account. It then opens a pull request against the default branch (body: task description,
 verification evidence, trust decision, "Opened by Zamolxis; merge is a human
-decision"); otherwise the Task shows a compare link to open it yourself. Note that
-`gh` acts as whichever account is signed in on that Mac. Failures are reported as
+decision"); otherwise the Task shows a compare link to open it yourself. Failures are reported as
 codes (`PUBLISH_DIRTY`, `PUBLISH_SHA_MISMATCH`, `PUBLISH_PUSH_FAILED`,
 `PUBLISH_PR_FAILED`, `PUBLISH_BASE_UNKNOWN`, `PUBLISH_INTERRUPTED`, …) explained in
 plain language, never with remote output; a failed publication can be retried and
@@ -192,7 +192,10 @@ pnpm zamolxis setup --repair   # non-interactive check and repair
 pnpm zamolxis doctor
 ```
 
-The wizard selects repositories, validates a managed root outside canonical
+The wizard selects repositories and, for each GitHub repository, asks which
+authenticated GitHub account may publish it and verifies push access. Only the host
+and login are stored in Zamolxis config; tokens remain in the GitHub CLI credential
+store. It validates a managed root outside canonical
 checkouts, pairs the Node, stores its device credential in the macOS login Keychain
 (service `app.zamolxis.node`) and installs its launchd service. Running setup again
 offers Check and repair (default: Keychain migration of an older plaintext
