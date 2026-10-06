@@ -290,7 +290,7 @@ const ACTIVITY_LIMIT = 200;
 const PROGRESS_MIN_INTERVAL_MS = 500;
 const IN_FLIGHT = ["claimed", "acknowledged"];
 
-const usageArgs = v.object({
+export const usageArgs = v.object({
   modelActual: v.optional(v.string()),
   inputTokens: v.optional(v.number()),
   cachedInputTokens: v.optional(v.number()),
@@ -298,7 +298,7 @@ const usageArgs = v.object({
   totalTokens: v.optional(v.number()),
 });
 type Usage = typeof usageArgs.type;
-function assertUsage(usage: Usage) {
+export function assertUsage(usage: Usage) {
   if (usage.modelActual !== undefined && (!usage.modelActual || usage.modelActual.length > 256))
     fail("INVALID_ARGUMENT");
   for (const value of [

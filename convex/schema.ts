@@ -263,9 +263,30 @@ export default defineSchema({
     text: v.string(),
     productId: v.optional(v.id("products")),
     repositoryId: v.optional(v.id("repositories")),
-    route: v.union(v.literal("answer"), v.literal("create"), v.literal("continue")),
+    route: v.union(
+      v.literal("answer"),
+      v.literal("ask"),
+      v.literal("propose"),
+      v.literal("create"),
+      v.literal("continue"),
+    ),
+    // The deterministic summary until the Orchestrator model replies (or if it cannot).
     reply: v.string(),
     workSessionId: v.optional(v.id("workSessions")),
+    // Absent on rows written before the model-backed Orchestrator: they are answered.
+    status: v.optional(v.union(v.literal("thinking"), v.literal("answered"))),
+    answeredBy: v.optional(v.union(v.literal("model"), v.literal("deterministic"))),
+    modelError: v.optional(v.string()),
+    // An inert proposal: nothing starts until the owner opens it into a Session.
+    proposal: v.optional(v.string()),
+    proposalSessionId: v.optional(v.id("workSessions")),
+    runtime: v.optional(v.string()),
+    modelRequested: v.optional(v.string()),
+    modelActual: v.optional(v.string()),
+    inputTokens: v.optional(v.number()),
+    cachedInputTokens: v.optional(v.number()),
+    outputTokens: v.optional(v.number()),
+    totalTokens: v.optional(v.number()),
     createdAt: v.number(),
   })
     .index("by_owner_key", ["ownerId", "idempotencyKey"])
@@ -486,6 +507,7 @@ export default defineSchema({
     productId: v.optional(v.id("products")),
     name: v.string(),
     role: v.union(
+      v.literal("orchestrator"),
       v.literal("supervisor"),
       v.literal("builder"),
       v.literal("verifier"),

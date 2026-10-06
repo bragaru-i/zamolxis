@@ -4,6 +4,7 @@ import { fail, requireUser } from "./lib/access";
 import { instructionsDigest, normalizeInstructions } from "./lib/agentProfiles";
 
 const role = v.union(
+  v.literal("orchestrator"),
   v.literal("supervisor"),
   v.literal("builder"),
   v.literal("verifier"),

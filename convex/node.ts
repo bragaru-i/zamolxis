@@ -8,6 +8,7 @@ import { bounded, fail, load, nodeRun, requireNode } from "./lib/access";
 import { decideVerification, refreshSession } from "./lib/lifecycle";
 import { recordCleanupFailure, recordCleanupRemoved } from "./lib/retention";
 import { refreshDependents } from "./lib/settlement";
+import { settleFailedAnswer } from "./orchestrator";
 import { settleStoppedText } from "./supervisor";
 import { settleRun } from "./lib/settlement";
 import { recordIntegrationStep } from "./traces";
@@ -264,6 +265,11 @@ export const failCommand = mutation({
     // A failed publication is reported on the task; the trusted work itself is unaffected.
     if (command.type === "integration.publish") {
       await failPublish(ctx, command, args.code);
+      return null;
+    }
+    // Without a model reply the deterministic answer stands; no Session needs input.
+    if (command.type === "orchestrator.answer") {
+      await settleFailedAnswer(ctx, command.targetId, args.code);
       return null;
     }
     // A refused or failed cleanup is recorded on the worktree; nothing else needs input.
@@ -695,6 +701,10 @@ export const recoverCompletedCommand = mutation({
         fail("RECONCILIATION_REQUIRED");
     } else if (command.type === "integration.publish") {
       if (!(await publishRecorded(ctx, command))) fail("RECONCILIATION_REQUIRED");
+    } else if (command.type === "orchestrator.answer") {
+      const id = ctx.db.normalizeId("orchestratorMessages", command.targetId);
+      if (!id || (await load(ctx, "orchestratorMessages", id)).status === "thinking")
+        fail("RECONCILIATION_REQUIRED");
     } else if (command.type === "supervisor.stop") {
       // Delivered (or a no-op); the plan reports what followed through its own command.
       if (!ctx.db.normalizeId("textCommands", command.targetId)) fail("INVALID_ARGUMENT");

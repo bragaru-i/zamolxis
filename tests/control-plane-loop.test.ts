@@ -44,6 +44,7 @@ import { seedHuman } from "./fixtures/auth";
 const modules = {
   "./trust.ts": () => import("../convex/trust"),
   "./supervisor.ts": () => import("../convex/supervisor"),
+  "./orchestrator.ts": () => import("../convex/orchestrator"),
   "./agentProfiles.ts": () => import("../convex/agentProfiles"),
   "./_generated/server.ts": () => import("../convex/_generated/server"),
   "./profiles.ts": () => import("../convex/profiles"),
@@ -306,6 +307,41 @@ it("rejects wrong targets and arbitrary cloud commands before any local operatio
       payload: { runId: "run", workspaceId: "workspace", runtime: "fake", instruction: "Task" },
     }),
   ).toThrow("TARGET");
+});
+
+it("parses orchestrator.answer only for its own message with bounded conversation", () => {
+  const base = {
+    _id: "command",
+    workstationId: "node",
+    idempotencyKey: "orchestrator:message",
+    type: "orchestrator.answer",
+    targetType: "orchestratorMessage",
+    targetId: "message",
+  };
+  const payload = {
+    orchestratorMessageId: "message",
+    text: "What is going on?",
+    context: "Scope: all",
+    conversation: Array.from({ length: 30 }, (_, index) => ({
+      role: index % 2 ? "supervisor" : "user",
+      text: `m${index}`,
+    })),
+    orchestrator: { runtime: "codex", model: "gpt-x" },
+  };
+  const parsed = parseExecutionCommand({ ...base, payload });
+  expect(parsed).toMatchObject({
+    type: "orchestrator.answer",
+    payload: {
+      orchestratorMessageId: "message",
+      orchestrator: { runtime: "codex", model: "gpt-x" },
+    },
+  });
+  if (parsed.type !== "orchestrator.answer") throw new Error("Unexpected command");
+  expect(parsed.payload.conversation).toHaveLength(20);
+  expect(() => parseExecutionCommand({ ...base, targetId: "other", payload })).toThrow("TARGET");
+  expect(() => parseExecutionCommand({ ...base, payload: { ...payload, context: "" } })).toThrow(
+    "INVALID_COMMAND",
+  );
 });
 
 it("fails unknown and unsupported commands individually and still stops a waiting run", async () => {
@@ -1134,6 +1170,195 @@ it("answers a question through the Supervisor without starting builders", async 
   expect(git(f.path, ["status", "--porcelain"])).toBe(f.originalStatus);
 }, 60_000);
 
+async function orchestratorFixture(
+  script: ConstructorParameters<typeof FakeRuntime>[0],
+  beforeStart: (input: StartRunInput) => Promise<void> | undefined = () => undefined,
+) {
+  const f = await fixture();
+  const productId = await f.t.run(async (ctx) => {
+    const session = await ctx.db.get("workSessions", f.workSessionId);
+    const id = await ctx.db.insert("products", {
+      ownerId: session!.ownerId,
+      name: "Shop",
+      slug: "shop",
+      createdAt: 0,
+      updatedAt: 0,
+    });
+    await ctx.db.patch("repositories", f.repositoryId, { productId: id });
+    await ctx.db.patch("repositoryLocations", f.repositoryLocationId, {
+      lastKnownHead: f.originalHead,
+    });
+    return id;
+  });
+  for (const role of ["orchestrator", "supervisor", "builder", "verifier", "repair"] as const)
+    await f.user.mutation(api.agentProfiles.upsert, {
+      name: role,
+      role,
+      runtime: "fake",
+      enabled: true,
+      ...(role === "orchestrator" ? { model: "fake-model" } : {}),
+    });
+  const starts: StartRunInput[] = [];
+  const runtime = new (class extends FakeRuntime {
+    override async start(input: StartRunInput) {
+      starts.push(input);
+      await beforeStart(input);
+      return super.start(input);
+    }
+  })(script);
+  const n = await f.boot(runtime);
+  const driver = n.driver();
+  const { RepositoryDiscovery } = await import(
+    "../packages/node-core/src/capabilities/repository-discovery"
+  );
+  driver.setRepositoryDiscovery(new RepositoryDiscovery(n.workspaces));
+  const run = async () => {
+    for (let tick = 0; tick < 5; tick++) {
+      await f.node.mutation(api.supervisor.dispatch, { workstationId: f.workstationId });
+      await driver.tick();
+      await driver.idle();
+    }
+  };
+  return { f, n, driver, productId, starts, run };
+}
+
+it("answers a top-level question with the Orchestrator model and opens its proposal only on request", async () => {
+  const { f, n, productId, starts, run } = await orchestratorFixture((input) => [
+    {
+      type: "success",
+      summary: input.instruction.includes("What should we do about checkout?")
+        ? `\`\`\`json\n${JSON.stringify({ decision: "propose", reply: "Checkout totals look wrong; I can fix them.", proposal: "Fix checkout totals rounding; add a test." })}\n\`\`\``
+        : `\`\`\`json\n${JSON.stringify({ decision: "answer", reply: "Planned.", tasks: [] })}\n\`\`\``,
+    },
+  ]);
+  const sessionsBefore = await f.t.run((ctx) => ctx.db.query("workSessions").collect());
+  const submitted = await f.user.mutation(api.orchestrator.submit, {
+    text: "What should we do about checkout?",
+    idempotencyKey: "orch-model",
+    productId,
+    repositoryId: f.repositoryId,
+  });
+  expect(submitted.route).toBe("answer");
+  let [message] = await f.user.query(api.orchestrator.messages, {});
+  expect(message).toMatchObject({
+    status: "thinking",
+    runtime: "fake",
+    modelRequested: "fake-model",
+  });
+  await run();
+  expect(starts).toHaveLength(1);
+  const start = starts[0]!;
+  expect(start).toMatchObject({ role: "supervisor", model: "fake-model" });
+  // No repository: an empty scratch directory that is removed afterwards.
+  expect(start.workspace.cwd).not.toContain(f.path);
+  expect(existsSync(start.workspace.cwd)).toBe(false);
+  expect(start.instruction).toContain("Zamolxis Orchestrator");
+  expect(start.instruction).toContain('Scope: Product "Shop"');
+  [message] = await f.user.query(api.orchestrator.messages, {});
+  expect(message).toMatchObject({
+    status: "answered",
+    answeredBy: "model",
+    route: "propose",
+    reply: "Checkout totals look wrong; I can fix them.",
+    proposal: "Fix checkout totals rounding; add a test.",
+  });
+  // A proposal is inert: nothing was opened or dispatched.
+  expect(await f.t.run((ctx) => ctx.db.query("workSessions").collect())).toHaveLength(
+    sessionsBefore.length,
+  );
+  expect(await f.t.run((ctx) => ctx.db.query("textCommands").collect())).toEqual([]);
+
+  const sessionId = await f.user.mutation(api.orchestrator.openProposal, {
+    messageId: message!._id,
+    productId,
+    repositoryId: f.repositoryId,
+  });
+  expect(
+    await f.user.mutation(api.orchestrator.openProposal, {
+      messageId: message!._id,
+      productId,
+      repositoryId: f.repositoryId,
+    }),
+  ).toBe(sessionId);
+  const commands = await f.t.run((ctx) => ctx.db.query("textCommands").collect());
+  expect(commands).toHaveLength(1);
+  expect(commands[0]).toMatchObject({
+    workSessionId: sessionId,
+    text: "Open this work: Fix checkout totals rounding; add a test.",
+  });
+  [message] = await f.user.query(api.orchestrator.messages, {});
+  expect(message?.proposalSessionId).toBe(sessionId);
+  expect(message?.links.at(-1)).toMatchObject({ targetType: "session", workSessionId: sessionId });
+  expect(n.store.listInterruptedCommands()).toEqual([]);
+  expect(git(f.path, ["rev-parse", "HEAD"])).toBe(f.originalHead);
+  expect(git(f.path, ["status", "--porcelain"])).toBe(f.originalStatus);
+}, 60_000);
+
+it("keeps the deterministic answer when the Orchestrator model fails", async () => {
+  const { f, run } = await orchestratorFixture(() => [{ type: "failure", message: "boom" }]);
+  await f.user.mutation(api.orchestrator.submit, {
+    text: "What is going on?",
+    idempotencyKey: "orch-fail",
+  });
+  const [before] = await f.user.query(api.orchestrator.messages, {});
+  expect(before?.status).toBe("thinking");
+  await run();
+  const [message] = await f.user.query(api.orchestrator.messages, {});
+  expect(message).toMatchObject({
+    status: "answered",
+    answeredBy: "deterministic",
+    modelError: "ORCHESTRATOR_FAILED",
+    route: "answer",
+    reply: before?.reply,
+  });
+  const session = await f.user.query(api.sessions.get, { workSessionId: f.workSessionId });
+  expect(session.status).not.toBe("needs_input");
+}, 60_000);
+
+it("does not hold up Session planning while the Orchestrator model is replying", async () => {
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const { f, driver, productId } = await orchestratorFixture(
+    (input) => [
+      {
+        type: "success",
+        summary: `\`\`\`json\n${JSON.stringify(
+          input.instruction.includes("Zamolxis Orchestrator")
+            ? { decision: "answer", reply: "Late reply." }
+            : { decision: "answer", reply: "Planned answer.", tasks: [] },
+        )}\n\`\`\``,
+      },
+    ],
+    (input) => (input.instruction.includes("Zamolxis Orchestrator") ? gate : undefined),
+  );
+  await f.user.mutation(api.orchestrator.submit, {
+    text: "What is going on?",
+    idempotencyKey: "slow",
+  });
+  const sessionId = await f.user.mutation(api.supervisor.submit, {
+    productId,
+    repositoryId: f.repositoryId,
+    text: "What does source.txt contain?",
+    idempotencyKey: "plan-while-answering",
+  });
+  for (let tick = 0; tick < 5; tick++) {
+    await f.node.mutation(api.supervisor.dispatch, { workstationId: f.workstationId });
+    await driver.tick();
+  }
+  const [plan] = await f.user.query(api.supervisor.messages, { workSessionId: sessionId });
+  expect(plan).toMatchObject({ decision: "answer", reply: "Planned answer." });
+  expect((await f.user.query(api.orchestrator.messages, {}))[0]?.status).toBe("thinking");
+  release();
+  await driver.idle();
+  await driver.tick();
+  expect((await f.user.query(api.orchestrator.messages, {}))[0]).toMatchObject({
+    status: "answered",
+    reply: "Late reply.",
+  });
+}, 60_000);
+
 it("parses supervisor.stop only for its own text command", () => {
   const base = {
     _id: "command",
@@ -1438,6 +1663,64 @@ it.skipIf(process.env.ZAMOLXIS_CODEX_ACCEPTANCE !== "1")(
     );
     expect(git(f.path, ["rev-parse", "HEAD"])).toBe(canonicalSha);
     expect(git(f.path, ["status", "--porcelain"])).toBe("");
+  },
+  900_000,
+);
+
+it.skipIf(process.env.ZAMOLXIS_CODEX_ACCEPTANCE !== "1")(
+  "real Codex Orchestrator answers a top-level question without a repository",
+  async () => {
+    const f = await fixture("codex");
+    const profile = mkdtempSync(join(tmpdir(), "zamolxis-orchestrator-native-"));
+    cleanup.push(() => rmSync(profile, { recursive: true, force: true }));
+    chmodSync(profile, 0o700);
+    copyFileSync(
+      join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "auth.json"),
+      join(profile, "auth.json"),
+    );
+    chmodSync(join(profile, "auth.json"), 0o600);
+    const children: ReturnType<typeof spawn>[] = [];
+    cleanup.push(() => {
+      for (const child of children) child.kill();
+    });
+    const canonicalSha = git(f.path, ["rev-parse", "HEAD"]);
+    const runtime = new CodexRuntime({
+      connect: (cwd) =>
+        new AppServerClient({
+          cwd,
+          launch: (executable, assignedCwd) => {
+            const child = spawn(executable, ["app-server", "--listen", "stdio://"], {
+              cwd: assignedCwd,
+              env: { ...process.env, CODEX_HOME: profile },
+              shell: false,
+              stdio: ["pipe", "pipe", "ignore"],
+            });
+            children.push(child);
+            return child;
+          },
+        }),
+    });
+    const n = await f.boot(runtime);
+    const driver = n.driver();
+    await f.user.mutation(api.orchestrator.submit, {
+      text: "Question only: how many Work Sessions are listed in the current state? Reply in one short sentence that contains the number as digits.",
+      idempotencyKey: "native-orchestrator",
+    });
+    for (let tick = 0; tick < 5; tick++) {
+      await driver.tick();
+      await driver.idle();
+      const [message] = await f.user.query(api.orchestrator.messages, {});
+      if (message?.status === "answered") break;
+    }
+    const [message] = await f.user.query(api.orchestrator.messages, {});
+    expect(message).toMatchObject({ status: "answered", answeredBy: "model" });
+    expect(["answer", "ask"]).toContain(message?.route);
+    expect(String(message?.reply)).toMatch(/\d/);
+    expect(message?.totalTokens).toBeGreaterThan(0);
+    expect(await f.t.run((ctx) => ctx.db.query("textCommands").collect())).toEqual([]);
+    expect(n.store.listInterruptedCommands()).toEqual([]);
+    expect(git(f.path, ["rev-parse", "HEAD"])).toBe(canonicalSha);
+    expect(git(f.path, ["status", "--porcelain"])).toBe(f.originalStatus);
   },
   900_000,
 );
