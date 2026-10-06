@@ -39,7 +39,8 @@ export const upsert = mutation({
   returns: v.id("agentProfiles"),
   handler: async (ctx, args) => {
     const owner = await requireUser(ctx);
-    if (!args.name.trim() || !args.runtime.trim()) fail("INVALID_ARGUMENT");
+    if (!args.name.trim() || args.name.trim().length > 64 || !args.runtime.trim())
+      fail("INVALID_ARGUMENT");
     if (
       args.maxConcurrency !== undefined &&
       (!Number.isInteger(args.maxConcurrency) ||
@@ -95,5 +96,27 @@ export const upsert = mutation({
       createdAt: now,
       updatedAt: now,
     });
+  },
+});
+
+// Removes a per-product override so the product falls back to the All products profile
+// (#48). Global profiles are turned off instead. Refused while unfinished runs started
+// from it still count against its concurrency limit; past runs keep their snapshot.
+export const removeOverride = mutation({
+  args: { profileId: v.id("agentProfiles") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const owner = await requireUser(ctx);
+    const profile = await ctx.db.get(args.profileId);
+    if (!profile || profile.ownerId !== owner._id) fail("NOT_FOUND");
+    if (!profile.productId) fail("INVALID_STATE", "Only a product override can be removed");
+    const runs = await ctx.db
+      .query("agentRuns")
+      .withIndex("by_profile", (q) => q.eq("agentProfileId", profile._id))
+      .take(1001);
+    if (runs.length > 1000 || runs.some((run) => run.completedAt === undefined))
+      fail("AGENT_PROFILE_IN_USE", "Runs started with this profile are still active");
+    await ctx.db.delete(profile._id);
+    return null;
   },
 });
