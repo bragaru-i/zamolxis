@@ -7,13 +7,15 @@ import { inspectRepository, remoteIdentity } from "@zamolxis/git";
 import {
   ControlPlaneDriver,
   GitHubAccessMonitor,
+  ghCliAccountTokens,
   githubRepositoryFromRemote,
   KeychainRepositoryTokenStore,
   LocalStateStore,
+  PublishingCredentials,
   RepositoryDiscovery,
   RepositoryRegistry,
-  RuntimeManager,
   RestGitHubClient,
+  RuntimeManager,
   RuntimeModelCatalog,
   WorkspaceManager,
 } from "@zamolxis/node-core";
@@ -117,17 +119,31 @@ try {
   const catalog = new RuntimeModelCatalog((id) =>
     runtimes.ids().includes(id) ? runtimes.get(id) : undefined,
   );
-  // Per-repository GitHub tokens (login Keychain): used only by this process, only to
-  // publish; agents never receive them. Their status (never the token) is reported at
-  // most every 30 minutes per repository and soon after a token is added or replaced.
-  const githubTokens = new KeychainRepositoryTokenStore();
+  // GitHub publishing credentials per repository, in this order: its own token in the
+  // login Keychain, else the gh account setup chose for it (read with `gh auth token
+  // --user` for one publication or check). Used only by this process, only to publish;
+  // agents never receive them, and the global Git/gh identity is never used. Their status
+  // (never a credential) is reported at most every 30 minutes per repository and soon
+  // after a credential changes.
+  const githubCredentials = new PublishingCredentials({
+    tokens: new KeychainRepositoryTokenStore(),
+    account: ({ repositoryId, github: target }) => {
+      const identity = config.repositories.find(
+        (candidate) => candidate.repositoryId === repositoryId,
+      )?.publishingIdentity;
+      return identity?.provider === "github" && identity.host === target.host
+        ? identity.login
+        : undefined;
+    },
+    ghTokens: ghCliAccountTokens,
+  });
   const github = new RestGitHubClient();
   const githubAccess = new GitHubAccessMonitor(
     config.repositories.flatMap(({ repositoryId, remoteUrl }) => {
       const repository = githubRepositoryFromRemote(remoteUrl);
       return repository && repositoryId ? [{ repositoryId, github: repository }] : [];
     }),
-    githubTokens,
+    githubCredentials,
     github,
     async (repositoryId, access) => {
       await client.mutation(makeFunctionReference<"mutation">("node:reportGithubAccess"), {
@@ -235,7 +251,7 @@ try {
       manager,
       new ConvexControlPlaneTransport(client, config.workstationId, identity.instanceId),
       config.workstationId,
-      { githubTokens, github },
+      { githubCredentials, github },
     );
     // Discovery is performed before every assigned run by the driver. Its first tick
     // reattaches the runs a previous Node process left unfinished (resumed from the

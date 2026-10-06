@@ -126,7 +126,7 @@ export class MemoryRepositoryTokenStore implements RepositoryTokenStore {
   }
 }
 
-/** No tokens at all: publishing to GitHub fails with PUBLISH_GITHUB_TOKEN_MISSING. */
+/** No tokens at all (a repository can still publish with its chosen gh account). */
 export const NO_REPOSITORY_TOKENS: RepositoryTokenStore = {
   read: () => undefined,
   write: () => {
@@ -143,4 +143,5 @@ export {
   githubRepositoryFromRemote,
   githubSlug,
   githubTokenUrl,
+  type PublishingSource,
 } from "@zamolxis/application";

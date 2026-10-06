@@ -46,6 +46,8 @@ function harness(
   const checked: string[] = [];
   const prompts: string[] = [];
   const tokens = new MemoryRepositoryTokenStore();
+  // GitHub CLI accounts signed in on this Mac, by login.
+  const signedIn = new Map<string, string>();
   const env: GitHubTokenEnvironment = {
     io: {
       log: (message) => logs.push(message),
@@ -70,6 +72,7 @@ function harness(
       },
     },
     tokens,
+    ghTokens: { read: (_host, login) => signedIn.get(login) },
     github: {
       checkAccess: async (_repository, token) => {
         checked.push(token);
@@ -88,7 +91,7 @@ function harness(
     },
     now: () => NOW,
   };
-  return { env, logs, opened, reports, checked, prompts, tokens };
+  return { env, logs, opened, reports, checked, prompts, tokens, signedIn };
 }
 
 describe("GitHub tokens on the Mac", () => {
@@ -105,8 +108,8 @@ describe("GitHub tokens on the Mac", () => {
     await manageGitHubTokens(repositories, h.env, { offer: "when-needed" });
     expect(h.prompts).toEqual([]);
     expect(h.logs).toEqual([
-      "GitHub bragaru-i/zamolxis: publishing as bragaru-i · token expires in 80 days",
-      "GitHub wellcopy/site: not connected: no token for this repository yet",
+      "GitHub bragaru-i/zamolxis: publishing as bragaru-i (token, expires in 80 days)",
+      "GitHub wellcopy/site: not connected: no token and no GitHub account chosen for this repository yet",
       "To add or replace a token, run pnpm zamolxis github-token in Terminal on this Mac.",
     ]);
     expect(h.reports.map(({ repositoryId, access }) => [repositoryId, access.status])).toEqual([
@@ -156,6 +159,44 @@ describe("GitHub tokens on the Mac", () => {
     );
   });
 
+  it("uses the repository's chosen gh account until a token is added, and again after removal", async () => {
+    const GH = `gho_${"Gh4cc0unt0".repeat(4)}`;
+    const withAccount = repositories.map((repository) =>
+      repository.repositoryId === "r1"
+        ? {
+            ...repository,
+            publishingIdentity: {
+              provider: "github" as const,
+              host: "github.com",
+              login: "bragaru-i",
+            },
+          }
+        : repository,
+    );
+    expect(githubEntries(withAccount)[0]?.account).toBe("bragaru-i");
+    const h = harness({ interactive: false });
+    await manageGitHubTokens(withAccount, h.env, { repository: "zamolxis" });
+    // Not signed in to gh: unavailable, and GitHub is not asked.
+    expect(h.logs[0]).toContain("isn't signed in to gh on this Mac");
+    expect(h.checked).toEqual([]);
+    expect(h.reports.at(-1)?.access).toMatchObject({
+      status: "account_unavailable",
+      source: "gh_account",
+    });
+    h.signedIn.set("bragaru-i", GH);
+    await manageGitHubTokens(withAccount, h.env, { repository: "zamolxis" });
+    expect(h.checked).toEqual([GH]);
+    expect(h.logs.at(-1)).toBe("GitHub bragaru-i/zamolxis: publishing as bragaru-i (gh account)");
+    // A stored token takes precedence; removing it goes back to the account.
+    h.tokens.write(ZAMOLXIS, TOKEN);
+    await manageGitHubTokens(withAccount, h.env, { repository: "zamolxis" });
+    expect(h.checked.at(-1)).toBe(TOKEN);
+    expect(h.reports.at(-1)?.access).toMatchObject({ status: "ok", source: "token" });
+    await manageGitHubTokens(withAccount, h.env, { repository: "zamolxis", remove: true });
+    expect(h.reports.at(-1)?.access).toMatchObject({ status: "ok", source: "gh_account" });
+    expect(h.logs.join("\n")).not.toContain(GH);
+  });
+
   it("lets the owner pick among several repositories", async () => {
     const h = harness({ selects: ["wellcopy/site", "Done"], passwords: [TOKEN] });
     await manageGitHubTokens(repositories, h.env);
@@ -167,12 +208,23 @@ describe("GitHub tokens on the Mac", () => {
     const at = (status: GitHubAccessStatus, extra: Partial<GitHubAccess> = {}) =>
       describeAccess({ status, checkedAt: NOW, ...extra }, NOW);
     expect(at("ok", { login: "bragaru-i" })).toBe(
-      "publishing as bragaru-i · token has no expiry date",
+      "publishing as bragaru-i (token, no expiry date)",
     );
     expect(at("expiring", { login: "bragaru-i", expiresAt: NOW + DAY })).toContain(
-      "1 day, replace it soon",
+      "(token, expires in 1 day), replace it soon",
     );
-    for (const status of ["expired", "invalid", "no_push", "missing", "unreachable"] as const)
+    expect(at("ok", { login: "bragaru-i", source: "gh_account" })).toBe(
+      "publishing as bragaru-i (gh account)",
+    );
+    expect(at("account_unavailable", { login: "bragaru-i" })).toContain("gh auth login");
+    for (const status of [
+      "expired",
+      "invalid",
+      "no_push",
+      "missing",
+      "account_unavailable",
+      "unreachable",
+    ] as const)
       expect(at(status)).not.toMatch(/[A-Z_]{4,}/);
   });
 });

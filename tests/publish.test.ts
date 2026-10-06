@@ -12,6 +12,7 @@ import schema from "../convex/schema";
 import { git } from "../packages/git/src/repository-inspector";
 import { ControlPlaneDriver } from "../packages/node-core/src/control-plane/driver";
 import type { PullRequestRequest } from "../packages/node-core/src/github/github-api";
+import { PublishingCredentials } from "../packages/node-core/src/github/publishing-credentials";
 import { MemoryRepositoryTokenStore } from "../packages/node-core/src/github/token-store";
 import { LocalStateStore } from "../packages/node-core/src/persistence/local-state";
 import { RepositoryRegistry } from "../packages/node-core/src/repository/repository-registry";
@@ -420,7 +421,7 @@ it("publishes end to end: owner request → Node push to a local bare origin →
     f.workstationId,
     {
       githubHosts: ["example.invalid"],
-      githubTokens,
+      githubCredentials: new PublishingCredentials({ tokens: githubTokens }),
       github: {
         checkAccess: async () => ({ status: "ok", login: "publisher", checkedAt: Date.now() }),
         openPullRequest: async (input) => {

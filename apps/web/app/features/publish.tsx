@@ -22,23 +22,23 @@ const PUBLISH_FAILURES: Record<string, string> = {
   PUBLISH_DIRTY: "The integration branch on your Mac has uncommitted changes.",
   PUBLISH_SHA_MISMATCH: "The integration branch on your Mac no longer matches the trusted commit.",
   PUBLISH_PUSH_FAILED:
-    "Your Mac couldn't push the branch. The repository's GitHub token may only allow reading (it needs Contents: Read and write), a push check on your Mac may have refused it, or the branch name is already taken.",
-  PUBLISH_GITHUB_TOKEN_MISSING:
-    "This repository isn't connected to GitHub on your Mac yet. On your Mac, run pnpm zamolxis github-token and add a token for it, then try again.",
+    "Your Mac couldn't push the branch. The repository's GitHub token or account may only allow reading (it needs Contents: Read and write), a push check on your Mac may have refused it, or the branch name is already taken.",
+  PUBLISH_GITHUB_NOT_CONNECTED:
+    "This repository isn't connected to GitHub on your Mac yet. On your Mac, run pnpm zamolxis github-token to add a token for it, or choose a signed-in GitHub account for it in pnpm zamolxis setup, then try again.",
+  PUBLISH_GITHUB_AUTH_REQUIRED:
+    "The GitHub account chosen for this repository isn't signed in on your Mac anymore. On your Mac, sign it in again with gh auth login, or add a token with pnpm zamolxis github-token, then try again.",
   PUBLISH_GITHUB_TOKEN_INVALID:
     "GitHub no longer accepts this repository's token (it was revoked, expired or mistyped). On your Mac, run pnpm zamolxis github-token to add a new one, then try again.",
   PUBLISH_GITHUB_TOKEN_EXPIRED:
     "This repository's GitHub token has expired. On your Mac, run pnpm zamolxis github-token to add a new one, then try again.",
   PUBLISH_GITHUB_NO_PUSH:
-    "This repository's GitHub token can't push to it. Create a token that includes this repository with Contents and Pull requests set to Read and write, add it on your Mac with pnpm zamolxis github-token, then try again.",
+    "The GitHub token or account used for this repository can't push to it. Add a token that includes this repository with Contents and Pull requests set to Read and write (pnpm zamolxis github-token on your Mac), or choose an account with write access in setup, then try again.",
   PUBLISH_GITHUB_UNREACHABLE:
     "Your Mac couldn't reach GitHub. Check its internet connection and try again.",
   PUBLISH_GITHUB_TOKEN_UNREADABLE:
     "Your Mac couldn't read this repository's GitHub token. Unlock your Mac (its login Keychain), then try again.",
-  PUBLISH_GITHUB_AUTH_REQUIRED:
-    "The GitHub account selected for this repository needs to reconnect. Run Zamolxis setup on its Mac and update the repository publishing account.",
   PUBLISH_PR_FAILED:
-    "The branch was pushed, but the pull request couldn't be opened. Check that the repository's GitHub token has Pull requests: Read and write, then try again, or open it on GitHub.",
+    "The branch was pushed, but the pull request couldn't be opened. Check that the repository's GitHub token or account may open pull requests (Pull requests: Read and write), then try again, or open it on GitHub.",
   PUBLISH_NO_REMOTE: "The repository has no origin remote to push to.",
   PUBLISH_BASE_UNKNOWN: "The repository's default branch isn't known on your Mac.",
   PUBLISH_DEFAULT_BRANCH: "Zamolxis never pushes to the default branch.",

@@ -132,8 +132,9 @@ export const registerLocation = mutation({
   },
 });
 const DAY = 24 * 60 * 60 * 1000;
-// The Node reports a repository's GitHub publishing access on this Mac: status, login and
-// token expiry only. Bounded and owner-isolated; the token never leaves the Mac.
+// The Node reports a repository's GitHub publishing access on this Mac: status, credential
+// source (its token or its gh account), login and token expiry only. Bounded and
+// owner-isolated; no credential ever leaves the Mac.
 export const reportGithubAccess = mutation({
   args: { ...deviceArgs, repositoryId: v.id("repositories"), access: githubAccess },
   returns: v.null(),
@@ -149,7 +150,7 @@ export const reportGithubAccess = mutation({
       .unique();
     if (!location) fail("NOT_FOUND");
     const now = Date.now();
-    const { status, login, expiresAt, checkedAt } = args.access;
+    const { status, source, login, expiresAt, checkedAt } = args.access;
     if (login !== undefined && !GITHUB_LOGIN.test(login)) fail("INVALID_ARGUMENT");
     if (
       expiresAt !== undefined &&
@@ -163,6 +164,7 @@ export const reportGithubAccess = mutation({
     await ctx.db.patch("repositoryLocations", location._id, {
       githubAccess: {
         status,
+        ...(source ? { source } : {}),
         ...(login ? { login } : {}),
         ...(expiresAt !== undefined ? { expiresAt } : {}),
         checkedAt: Math.min(checkedAt, now),

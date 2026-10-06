@@ -27,7 +27,8 @@ import {
   supervisorInstruction,
 } from "../capabilities/supervisor";
 import type { GitHubClient } from "../github/github-api";
-import { NO_REPOSITORY_TOKENS, type RepositoryTokenStore } from "../github/token-store";
+import { PublishingCredentials } from "../github/publishing-credentials";
+import { NO_REPOSITORY_TOKENS } from "../github/token-store";
 import {
   type PublishRequest,
   type PublishResult,
@@ -261,9 +262,10 @@ interface Planning {
 export interface ControlPlaneDriverOptions {
   readonly now?: () => number;
   readonly progressIntervalMs?: number;
-  // Per-repository GitHub tokens for integration.publish (none: GitHub publishing fails
-  // with PUBLISH_GITHUB_TOKEN_MISSING) and the GitHub API client (default: REST over fetch).
-  readonly githubTokens?: RepositoryTokenStore;
+  // Per-repository GitHub publishing credentials for integration.publish (its own token,
+  // else its chosen gh account; none: GitHub publishing fails with
+  // PUBLISH_GITHUB_NOT_CONNECTED) and the GitHub API client (default: REST over fetch).
+  readonly githubCredentials?: PublishingCredentials;
   readonly github?: GitHubClient;
   readonly githubHosts?: readonly string[];
 }
@@ -682,7 +684,9 @@ export class ControlPlaneDriver {
       } else if (command.type === "integration.publish") {
         const workspace = this.workspaces.inspect(command.payload.workspaceId);
         const result = await publishIntegration(workspace, command.payload, {
-          tokens: this.options.githubTokens ?? NO_REPOSITORY_TOKENS,
+          credentials:
+            this.options.githubCredentials ??
+            new PublishingCredentials({ tokens: NO_REPOSITORY_TOKENS }),
           ...(this.options.github ? { github: this.options.github } : {}),
           ...(this.options.githubHosts ? { githubHosts: this.options.githubHosts } : {}),
         });

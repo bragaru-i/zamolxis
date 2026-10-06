@@ -40,9 +40,12 @@ export function remoteDefaultBranch(path: string, remote = "origin"): string | u
 
 /** Child environment variable carrying a publishing token; never a command-line value. */
 export const PUBLISH_TOKEN_ENV = "ZAMOLXIS_PUBLISH_TOKEN";
+/** Child environment variable carrying the GitHub login the token belongs to, if known. */
+export const PUBLISH_USERNAME_ENV = "ZAMOLXIS_PUBLISH_USERNAME";
 // The inline credential helper prints the token from the child's environment, so neither
 // argv nor the repository's config ever holds it.
-const TOKEN_HELPER = `!f() { test "$1" = get || exit 0; echo username=x-access-token; echo "password=$${PUBLISH_TOKEN_ENV}"; }; f`;
+const TOKEN_HELPER = `!f() { test "$1" = get || exit 0; echo "username=\${${PUBLISH_USERNAME_ENV}:-x-access-token}"; echo "password=$${PUBLISH_TOKEN_ENV}"; }; f`;
+const LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
 
 /**
  * Git options and environment for a push that uses exactly one token: every other
@@ -50,9 +53,14 @@ const TOKEN_HELPER = `!f() { test "$1" = get || exit 0; echo username=x-access-t
  * global configuration are not read (no global `insteadOf` rewriting to SSH, no other
  * account), and Git never prompts. Repository configuration and hooks still apply.
  */
-export function tokenPushOptions(token: string): { args: string[]; env: NodeJS.ProcessEnv } {
+export function tokenPushOptions(
+  token: string,
+  username?: string,
+): { args: string[]; env: NodeJS.ProcessEnv } {
+  if (/[\r\n\0]/.test(token)) throw new Error("INVALID_PUSH_TOKEN");
+  if (username !== undefined && !LOGIN.test(username)) throw new Error("INVALID_PUSH_USERNAME");
   const env = environment();
-  for (const key of ["SSH_ASKPASS", "GCM_INTERACTIVE"]) delete env[key];
+  for (const key of ["SSH_ASKPASS", "GCM_INTERACTIVE", PUBLISH_USERNAME_ENV]) delete env[key];
   return {
     args: [
       "-c",
@@ -68,6 +76,7 @@ export function tokenPushOptions(token: string): { args: string[]; env: NodeJS.P
       GIT_CONFIG_GLOBAL: "/dev/null",
       GIT_ASKPASS: "",
       [PUBLISH_TOKEN_ENV]: token,
+      ...(username ? { [PUBLISH_USERNAME_ENV]: username } : {}),
     },
   };
 }
@@ -77,6 +86,8 @@ export interface PushOptions {
   readonly target?: string;
   /** A GitHub token: only this credential is used (see tokenPushOptions). */
   readonly token?: string;
+  /** The GitHub login the token belongs to (sent as the HTTPS username). */
+  readonly username?: string;
 }
 
 /**
@@ -99,7 +110,7 @@ export function pushCommit(
   try {
     if (options.token === undefined) run(path, args, 300_000);
     else {
-      const { args: config, env } = tokenPushOptions(options.token);
+      const { args: config, env } = tokenPushOptions(options.token, options.username);
       execFileSync("git", [...config, "-C", path, ...args], {
         encoding: "utf8",
         env,

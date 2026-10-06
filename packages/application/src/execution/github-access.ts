@@ -1,8 +1,9 @@
 /**
- * GitHub access for publishing. Each repository has its own GitHub token, kept only in
- * the login Keychain of the Mac that publishes; only the Node uses it, only to push a
- * trusted branch and open its pull request. What leaves the Mac is this status, never
- * the token.
+ * GitHub access for publishing, per repository on the Mac that publishes. The credential
+ * is, in this order: the repository's own token in that Mac's login Keychain, else the
+ * GitHub CLI account setup chose for the repository (its token read from `gh` for one
+ * publication). Only the Node uses it, only to push a trusted branch and open its pull
+ * request. What leaves the Mac is this status, never the credential.
  */
 export const GITHUB_ACCESS_STATUSES = [
   "ok",
@@ -13,13 +14,21 @@ export const GITHUB_ACCESS_STATUSES = [
   "invalid",
   // The token works but cannot push to this repository (not selected, or read-only).
   "no_push",
+  // Neither a token nor a GitHub CLI account is set up for this repository.
   "missing",
+  // The GitHub CLI account chosen for this repository is not signed in on this Mac, or
+  // its credential now belongs to another login.
+  "account_unavailable",
   // GitHub could not be reached; says nothing about the token.
   "unreachable",
 ] as const;
 export type GitHubAccessStatus = (typeof GITHUB_ACCESS_STATUSES)[number];
+export const PUBLISHING_SOURCES = ["token", "gh_account"] as const;
+/** Which credential publishes: the repository's own token, or its chosen `gh` account. */
+export type PublishingSource = (typeof PUBLISHING_SOURCES)[number];
 export interface GitHubAccess {
   readonly status: GitHubAccessStatus;
+  readonly source?: PublishingSource;
   readonly login?: string;
   readonly expiresAt?: number;
   readonly checkedAt: number;

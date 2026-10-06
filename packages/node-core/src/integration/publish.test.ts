@@ -6,7 +6,8 @@ import { RuntimeRegistry } from "@zamolxis/runtime-core";
 import { afterEach, describe, expect, it } from "vitest";
 import { ControlPlaneDriver, type Delivery, type ExecutionCommand } from "../control-plane/driver";
 import type { GitHubClient, PullRequestRequest } from "../github/github-api";
-import { MemoryRepositoryTokenStore } from "../github/token-store";
+import { PublishingCredentials } from "../github/publishing-credentials";
+import { MemoryRepositoryTokenStore, type RepositoryTokenStore } from "../github/token-store";
 import { LocalStateStore } from "../persistence/local-state";
 import { RepositoryRegistry } from "../repository/repository-registry";
 import { RuntimeManager } from "../runtime/runtime-manager";
@@ -16,6 +17,7 @@ import { type PublishRequest, publishIntegration } from "./publish";
 
 const cleanup: Array<() => void> = [];
 const TOKEN = `github_pat_${"A1b2C3d4E5".repeat(8)}`;
+const GH_TOKEN = `gho_${"Gh0Acc0unt".repeat(4)}`;
 afterEach(() => {
   for (const fn of cleanup.splice(0).reverse()) fn();
 });
@@ -92,8 +94,20 @@ function fixture() {
       return undefined;
     }
   };
-  const options = (client: GitHubClient = github()) => ({
-    tokens,
+  const credentials = (
+    store: RepositoryTokenStore = tokens,
+    account?: { login: string; token?: string },
+  ) =>
+    new PublishingCredentials({
+      tokens: store,
+      account: ({ repositoryId }) => (repositoryId === "repo" ? account?.login : undefined),
+      ghTokens: {
+        read: (host, login) =>
+          host === "example.invalid" && login === account?.login ? account.token : undefined,
+      },
+    });
+  const options = (client: GitHubClient = github(), using = credentials()) => ({
+    credentials: using,
     github: client,
     githubHosts: ["example.invalid"],
   });
@@ -110,6 +124,7 @@ function fixture() {
     opened,
     checked,
     github,
+    credentials,
     options,
     remoteRef,
   };
@@ -171,9 +186,9 @@ describe("publishing a trusted integration branch", () => {
   it("needs this repository's own GitHub token and never falls back to another identity", async () => {
     const f = fixture();
     const workspace = f.workspaces.inspect("integration");
-    const empty = { ...f.options(), tokens: new MemoryRepositoryTokenStore() };
+    const empty = f.options(undefined, f.credentials(new MemoryRepositoryTokenStore()));
     await expect(publishIntegration(workspace, f.request, empty)).rejects.toThrow(
-      /^PUBLISH_GITHUB_TOKEN_MISSING$/,
+      /^PUBLISH_GITHUB_NOT_CONNECTED$/,
     );
     for (const [status, code] of [
       ["invalid", "PUBLISH_GITHUB_TOKEN_INVALID"],
@@ -184,16 +199,16 @@ describe("publishing a trusted integration branch", () => {
       await expect(
         publishIntegration(workspace, f.request, f.options(f.github(undefined, status))),
       ).rejects.toThrow(new RegExp(`^${code}$`));
-    const unreadable = {
-      ...f.options(),
-      tokens: {
+    const unreadable = f.options(
+      undefined,
+      f.credentials({
         read: () => {
           throw new Error("KEYCHAIN_UNAVAILABLE");
         },
         write: () => undefined,
         remove: () => undefined,
-      },
-    };
+      }),
+    );
     await expect(publishIntegration(workspace, f.request, unreadable)).rejects.toThrow(
       "PUBLISH_GITHUB_TOKEN_UNREADABLE",
     );
@@ -209,10 +224,91 @@ describe("publishing a trusted integration branch", () => {
     expect(expiring.prUrl).toBe("https://example.invalid/team/repo/pull/7");
   });
 
+  it("publishes with the repository's chosen gh account when it has no token of its own", async () => {
+    const f = fixture();
+    const workspace = f.workspaces.inspect("integration");
+    const none = new MemoryRepositoryTokenStore();
+    const hooks = join(f.repo.path, ".git", "hooks");
+    const seen = join(f.repo.root, "seen-gh.txt");
+    mkdirSync(hooks, { recursive: true });
+    writeFileSync(
+      join(hooks, "pre-push"),
+      `#!/bin/sh\n{ echo "env=\${ZAMOLXIS_PUBLISH_TOKEN:+set} user=\${ZAMOLXIS_PUBLISH_USERNAME}"; ps -o args= -p $PPID; } > '${seen}'\nexit 0\n`,
+    );
+    chmodSync(join(hooks, "pre-push"), 0o755);
+    const result = await publishIntegration(
+      workspace,
+      f.request,
+      f.options(undefined, f.credentials(none, { login: "publisher", token: GH_TOKEN })),
+    );
+    const observed = readFileSync(seen, "utf8");
+    expect(observed).toContain("env=set user=publisher");
+    expect(observed).not.toContain(GH_TOKEN);
+    expect(f.checked).toEqual([GH_TOKEN]);
+    expect(f.remoteRef(f.request.branch)).toBe(f.sha);
+    expect(result.prUrl).toBe("https://example.invalid/team/repo/pull/7");
+    // The pull request is opened through the same REST path, with the account's token.
+    expect(f.opened[0]).toMatchObject({ repository: f.repository, token: GH_TOKEN });
+    // A stored token takes precedence over the account.
+    await publishIntegration(
+      workspace,
+      f.request,
+      f.options(undefined, f.credentials(f.tokens, { login: "publisher", token: GH_TOKEN })),
+    );
+    expect(f.checked).toEqual([GH_TOKEN, TOKEN]);
+    expect(f.opened[1]?.token).toBe(TOKEN);
+  });
+
+  it("refuses a GitHub publication when the configured repository account is unavailable", async () => {
+    const f = fixture();
+    const workspace = f.workspaces.inspect("integration");
+    const none = new MemoryRepositoryTokenStore();
+    // Not signed in to gh on this Mac: no fallback to any other account.
+    await expect(
+      publishIntegration(
+        workspace,
+        f.request,
+        f.options(undefined, f.credentials(none, { login: "publisher" })),
+      ),
+    ).rejects.toThrow(/^PUBLISH_GITHUB_AUTH_REQUIRED$/);
+    // The saved credential now belongs to another login.
+    await expect(
+      publishIntegration(
+        workspace,
+        f.request,
+        f.options(undefined, f.credentials(none, { login: "someone-else", token: GH_TOKEN })),
+      ),
+    ).rejects.toThrow(/^PUBLISH_GITHUB_AUTH_REQUIRED$/);
+    // GitHub rejects the account's credential: sign in again.
+    await expect(
+      publishIntegration(
+        workspace,
+        f.request,
+        f.options(
+          f.github(undefined, "invalid"),
+          f.credentials(none, { login: "publisher", token: GH_TOKEN }),
+        ),
+      ),
+    ).rejects.toThrow(/^PUBLISH_GITHUB_AUTH_REQUIRED$/);
+    // The account cannot push this repository.
+    await expect(
+      publishIntegration(
+        workspace,
+        f.request,
+        f.options(
+          f.github(undefined, "no_push"),
+          f.credentials(none, { login: "publisher", token: GH_TOKEN }),
+        ),
+      ),
+    ).rejects.toThrow(/^PUBLISH_GITHUB_NO_PUSH$/);
+    expect(f.remoteRef(f.request.branch)).toBeUndefined();
+    expect(f.opened).toHaveLength(0);
+  });
+
   it("pushes a non-GitHub remote with the repository's own credentials, without links", async () => {
     const f = fixture();
     const plain = await publishIntegration(f.workspaces.inspect("integration"), f.request, {
-      tokens: new MemoryRepositoryTokenStore(),
+      credentials: f.credentials(new MemoryRepositoryTokenStore()),
       github: f.github(),
     });
     expect(plain).toEqual({ remoteBranch: f.request.branch, base: "main" });
@@ -337,7 +433,7 @@ describe("publishing a trusted integration branch", () => {
       },
       "node",
       {
-        githubTokens: f.tokens,
+        githubCredentials: f.credentials(),
         github: f.github("https://example.invalid/team/repo/pull/9"),
         githubHosts: ["example.invalid"],
       },
@@ -389,7 +485,7 @@ describe("publishing a trusted integration branch", () => {
     );
     await tokenless.execute(command("publish-3", f.request));
     expect(deliveries).toEqual([
-      { kind: "command.failed", commandId: "publish-3", code: "PUBLISH_GITHUB_TOKEN_MISSING" },
+      { kind: "command.failed", commandId: "publish-3", code: "PUBLISH_GITHUB_NOT_CONNECTED" },
     ]);
   });
 });

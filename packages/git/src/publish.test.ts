@@ -49,5 +49,17 @@ describe("token pushes", () => {
     expect(output).toContain(`password=${TOKEN}`);
     expect(output).not.toContain("secret");
     expect(output).not.toContain("global");
+    // With a known login (a gh account's token) it is the HTTPS username.
+    const named = tokenPushOptions(TOKEN, "bragaru-i");
+    expect(named.args.join(" ")).not.toContain(TOKEN);
+    const asLogin = execFileSync("git", [...named.args, "-C", repo, "credential", "fill"], {
+      encoding: "utf8",
+      env: named.env,
+      input: "protocol=https\nhost=github.com\npath=owner/repo.git\n\n",
+    });
+    expect(asLogin).toContain("username=bragaru-i");
+    expect(asLogin).toContain(`password=${TOKEN}`);
+    expect(() => tokenPushOptions(TOKEN, "bad\nname")).toThrow("INVALID_PUSH_USERNAME");
+    expect(() => tokenPushOptions(`${TOKEN}\n`)).toThrow("INVALID_PUSH_TOKEN");
   });
 });

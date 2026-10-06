@@ -1,5 +1,7 @@
 import { execFileSync } from "node:child_process";
 import {
+  checkPublishing,
+  type GhAccountTokens,
   type GitHubAccess,
   type GitHubClient,
   type GitHubRepository,
@@ -7,6 +9,7 @@ import {
   githubSlug,
   githubTokenUrl,
   isGitHubToken,
+  PublishingCredentials,
   type RepositoryTokenStore,
 } from "@zamolxis/node-core";
 
@@ -16,6 +19,8 @@ export interface GitHubEntry {
   readonly path: string;
   readonly repositoryId?: string;
   readonly github: GitHubRepository;
+  /** The GitHub CLI account setup chose for it, used when it has no token of its own. */
+  readonly account?: string;
 }
 export interface TokenIo {
   log(message: string): void;
@@ -31,6 +36,8 @@ export interface TokenIo {
 export interface GitHubTokenEnvironment {
   readonly io: TokenIo;
   readonly tokens: RepositoryTokenStore;
+  /** Reads a chosen gh account's credential; absent: gh accounts are not consulted. */
+  readonly ghTokens?: GhAccountTokens;
   readonly github: Pick<GitHubClient, "checkAccess">;
   /** Opens a URL in the browser (best effort). */
   openUrl(url: string): void;
@@ -43,57 +50,85 @@ export interface GitHubTokenEnvironment {
 
 export const GITHUB_TOKEN_COMMAND = "pnpm zamolxis github-token";
 
-export function githubEntries(
-  repositories: ReadonlyArray<{
-    name: string;
-    path: string;
-    remoteUrl: string;
-    repositoryId?: string;
-  }>,
-): GitHubEntry[] {
-  return repositories.flatMap(({ name, path, remoteUrl, repositoryId }) => {
+/** A configured repository, as setup stores it. */
+export interface RepositoryEntry {
+  name: string;
+  path: string;
+  remoteUrl: string;
+  repositoryId?: string;
+  publishingIdentity?: { provider: "github"; host: string; login: string };
+}
+export function githubEntries(repositories: ReadonlyArray<RepositoryEntry>): GitHubEntry[] {
+  return repositories.flatMap(({ name, path, remoteUrl, repositoryId, publishingIdentity }) => {
     const github = githubRepositoryFromRemote(remoteUrl);
-    return github ? [{ name, path, ...(repositoryId ? { repositoryId } : {}), github }] : [];
+    if (!github) return [];
+    const account =
+      publishingIdentity?.provider === "github" && publishingIdentity.host === github.host
+        ? publishingIdentity.login
+        : undefined;
+    return [
+      {
+        name,
+        path,
+        ...(repositoryId ? { repositoryId } : {}),
+        github,
+        ...(account ? { account } : {}),
+      },
+    ];
   });
 }
 
 const DAY = 24 * 60 * 60 * 1000;
 function expiry(access: GitHubAccess, now: number) {
-  if (access.expiresAt === undefined) return "token has no expiry date";
+  if (access.expiresAt === undefined) return "no expiry date";
   const days = Math.max(0, Math.floor((access.expiresAt - now) / DAY));
-  return days === 0
-    ? "token expires today"
-    : `token expires in ${days} day${days === 1 ? "" : "s"}`;
+  return days === 0 ? "expires today" : `expires in ${days} day${days === 1 ? "" : "s"}`;
 }
-/** The access status in plain language. */
+/** The access status in plain language, naming which credential publishes. */
 export function describeAccess(access: GitHubAccess, now = Date.now()): string {
   const as = access.login ? `publishing as ${access.login}` : "connected";
+  const account = access.source === "gh_account";
+  const via = account ? "(gh account)" : `(token, ${expiry(access, now)})`;
   switch (access.status) {
     case "ok":
-      return `${as} · ${expiry(access, now)}`;
+      return `${as} ${via}`;
     case "expiring":
-      return `${as} · ${expiry(access, now)}, replace it soon`;
+      return `${as} ${via}, replace it soon`;
     case "expired":
-      return "the token has expired; add a new one";
+      return account
+        ? `GitHub no longer accepts the saved sign-in of gh account ${access.login ?? ""}; run gh auth login for it, or add a token`
+        : "the token has expired; add a new one";
     case "invalid":
-      return "GitHub doesn't accept the token (revoked, expired or mistyped); add a new one";
+      return account
+        ? `GitHub no longer accepts the saved sign-in of gh account ${access.login ?? ""}; run gh auth login for it, or add a token`
+        : "GitHub doesn't accept the token (revoked, expired or mistyped); add a new one";
     case "no_push":
-      return `the token${access.login ? ` (${access.login})` : ""} can't push to this repository; it must include this repository with Contents and Pull requests set to Read and write`;
+      return account
+        ? `gh account ${access.login ?? ""} can't push to this repository; choose another account in setup or add a token`
+        : `the token${access.login ? ` (${access.login})` : ""} can't push to this repository; it must include this repository with Contents and Pull requests set to Read and write`;
     case "missing":
-      return "not connected: no token for this repository yet";
+      return "not connected: no token and no GitHub account chosen for this repository yet";
+    case "account_unavailable":
+      return `the GitHub account chosen for it (${access.login ?? "unknown"}) isn't signed in to gh on this Mac; run gh auth login for it, or add a token`;
     case "unreachable":
-      return "couldn't reach GitHub to check the token";
+      return "couldn't reach GitHub to check access";
   }
 }
 
-/** The status of one repository's token, without changing anything. */
+/**
+ * The publishing access of one repository, without changing anything: its own token if
+ * one is stored, else its chosen gh account.
+ */
 export async function checkEntry(
   entry: GitHubEntry,
-  env: Pick<GitHubTokenEnvironment, "tokens" | "github" | "now">,
+  env: Pick<GitHubTokenEnvironment, "tokens" | "ghTokens" | "github" | "now">,
 ): Promise<GitHubAccess> {
-  const token = env.tokens.read(entry.github);
-  if (!token) return { status: "missing", checkedAt: (env.now ?? Date.now)() };
-  return env.github.checkAccess(entry.github, token);
+  const credentials = new PublishingCredentials({
+    tokens: env.tokens,
+    account: () => entry.account,
+    ...(env.ghTokens ? { ghTokens: env.ghTokens } : {}),
+  });
+  return checkPublishing(credentials, entry, env.github, env.now ?? Date.now);
 }
 
 export function tokenSteps(entry: GitHubEntry): string[] {
@@ -147,7 +182,10 @@ export async function addToken(
       io.log("That doesn't look like a GitHub token; fine-grained tokens start with github_pat_.");
       continue;
     }
-    const access = await env.github.checkAccess(entry.github, token);
+    const access = {
+      ...(await env.github.checkAccess(entry.github, token)),
+      source: "token" as const,
+    };
     if (access.status === "ok" || access.status === "expiring") {
       env.tokens.write(entry.github, token);
       io.log(`✓ ${githubSlug(entry.github)}: ${describeAccess(access, env.now?.())}`);
@@ -176,7 +214,18 @@ export async function removeToken(entry: GitHubEntry, env: GitHubTokenEnvironmen
   env.io.log(
     `✓ Removed the GitHub token for ${githubSlug(entry.github)} from this Mac. Revoke it on GitHub too: https://github.com/settings/personal-access-tokens`,
   );
-  await report(entry, { status: "missing", checkedAt: (env.now ?? Date.now)() }, env);
+  // Without the token, the repository's chosen gh account (if any) publishes.
+  const access = entry.account
+    ? await checkEntry(entry, env)
+    : { status: "missing" as const, checkedAt: (env.now ?? Date.now)() };
+  if (entry.account)
+    env.io.log(`GitHub ${githubSlug(entry.github)}: ${describeAccess(access, env.now?.())}`);
+  if (access.status !== "unreachable") await report(entry, access, env);
+}
+
+function label(access: GitHubAccess | undefined) {
+  if (access?.status !== "ok" && access?.status !== "expiring") return "needs a token";
+  return access.source === "gh_account" ? "gh account" : "token";
 }
 
 function match(entries: GitHubEntry[], wanted: string) {
@@ -196,12 +245,7 @@ function match(entries: GitHubEntry[], wanted: string) {
  * offers to add or replace its token. Without a terminal it only reports and never asks.
  */
 export async function manageGitHubTokens(
-  repositories: ReadonlyArray<{
-    name: string;
-    path: string;
-    remoteUrl: string;
-    repositoryId?: string;
-  }>,
+  repositories: ReadonlyArray<RepositoryEntry>,
   env: GitHubTokenEnvironment,
   options: { repository?: string; remove?: boolean; offer?: "always" | "when-needed" } = {},
 ): Promise<void> {
@@ -266,10 +310,13 @@ export async function manageGitHubTokens(
   if (offered.length === 1) {
     const [entry] = offered;
     if (!entry) return;
-    const working = ["ok", "expiring"].includes(statuses.get(entry)?.status ?? "");
-    const question = working
-      ? `Replace the GitHub token for ${githubSlug(entry.github)}?`
-      : `Add a GitHub token for ${githubSlug(entry.github)} now? (needed to open pull requests)`;
+    const access = statuses.get(entry);
+    const working = ["ok", "expiring"].includes(access?.status ?? "");
+    const question = !working
+      ? `Add a GitHub token for ${githubSlug(entry.github)} now? (needed to open pull requests)`
+      : access?.source === "gh_account"
+        ? `Add a dedicated GitHub token for ${githubSlug(entry.github)}? (it would be used instead of gh account ${access.login ?? entry.account})`
+        : `Replace the GitHub token for ${githubSlug(entry.github)}?`;
     if (await io.confirm(question, !working)) await addToken(entry, env);
     return;
   }
@@ -278,7 +325,7 @@ export async function manageGitHubTokens(
       "Add or replace a GitHub token?",
       [
         ...offered.map((entry) => ({
-          name: `${githubSlug(entry.github)} (${statuses.get(entry)?.status === "ok" ? "connected" : "needs a token"})`,
+          name: `${githubSlug(entry.github)} (${label(statuses.get(entry))})`,
           value: githubSlug(entry.github),
         })),
         { name: "Done", value: "\0done" },

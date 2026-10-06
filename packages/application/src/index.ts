@@ -15,4 +15,6 @@ export {
   githubRepositoryFromRemote,
   githubSlug,
   githubTokenUrl,
+  PUBLISHING_SOURCES,
+  type PublishingSource,
 } from "./execution/github-access";

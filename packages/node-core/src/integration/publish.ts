@@ -6,7 +6,7 @@ import {
 import { configuredRemoteUrl, pushCommit, remoteDefaultBranch } from "@zamolxis/git";
 import { redactSecrets } from "@zamolxis/runtime-core";
 import { type GitHubClient, RestGitHubClient } from "../github/github-api";
-import type { RepositoryTokenStore } from "../github/token-store";
+import { assessCredential, type PublishingCredentials } from "../github/publishing-credentials";
 import type { ManagedWorkspace } from "../persistence/local-state";
 
 /** What the backend authorized: the exact trusted commit and where it may go. */
@@ -27,28 +27,39 @@ export interface PublishResult {
   readonly compareUrl?: string;
 }
 export interface PublishOptions {
-  // This Mac's per-repository GitHub tokens; the global Git/gh identity is never used.
-  readonly tokens: RepositoryTokenStore;
+  // Each repository's own token, else its chosen gh account; the Mac's global Git
+  // credentials and active gh account are never used.
+  readonly credentials: PublishingCredentials;
   readonly github?: GitHubClient;
   // Hosts treated as GitHub for tokens, pull requests and compare links.
   readonly githubHosts?: readonly string[];
 }
 
-// Why a repository's token cannot publish, as failure codes.
+// Why a repository cannot publish, as failure codes.
 const ACCESS_FAILURES: Partial<Record<GitHubAccess["status"], string>> = {
-  missing: "PUBLISH_GITHUB_TOKEN_MISSING",
+  missing: "PUBLISH_GITHUB_NOT_CONNECTED",
+  account_unavailable: "PUBLISH_GITHUB_AUTH_REQUIRED",
   invalid: "PUBLISH_GITHUB_TOKEN_INVALID",
   expired: "PUBLISH_GITHUB_TOKEN_EXPIRED",
   no_push: "PUBLISH_GITHUB_NO_PUSH",
   unreachable: "PUBLISH_GITHUB_UNREACHABLE",
 };
+function refusal(access: GitHubAccess): string | undefined {
+  // A gh account's credential that GitHub rejects needs the account signed in again.
+  if (
+    access.source === "gh_account" &&
+    (access.status === "invalid" || access.status === "expired")
+  )
+    return "PUBLISH_GITHUB_AUTH_REQUIRED";
+  return ACCESS_FAILURES[access.status];
+}
 
 const BASE = /^(?!-)(?!.*\.\.)[A-Za-z0-9._/-]{1,200}$/;
 
 /**
  * Publishes a trusted integration worktree: pushes its exact HEAD to a Zamolxis branch on
  * `origin` and, for GitHub, opens a pull request against the default branch with the
- * repository's own token. Never merges, never forces and never pushes to the default branch.
+ * repository's own token or, without one, its chosen gh account. Never merges, never forces and never pushes to the default branch.
  */
 export async function publishIntegration(
   workspace: ManagedWorkspace,
@@ -80,26 +91,26 @@ export async function publishIntegration(
     }
     return { remoteBranch: request.branch, base };
   }
-  // Only this repository's own token publishes; there is no fallback to the Mac's
-  // global Git credentials or GitHub CLI account.
-  let token: string | undefined;
+  // The repository's own token, else its chosen gh account; nothing else ever publishes.
+  const target = { repositoryId: workspace.repositoryId, github };
+  let credential: ReturnType<PublishingCredentials["resolve"]>;
   try {
-    token = options.tokens.read(github);
+    credential = options.credentials.resolve(target);
   } catch {
     throw new Error("PUBLISH_GITHUB_TOKEN_UNREADABLE");
   }
-  if (!token) throw new Error("PUBLISH_GITHUB_TOKEN_MISSING");
   const client = options.github ?? new RestGitHubClient();
-  const access = await client
-    .checkAccess(github, token)
-    .catch((): GitHubAccess => ({ status: "unreachable", checkedAt: Date.now() }));
-  const refused = ACCESS_FAILURES[access.status];
-  if (refused) throw new Error(refused);
+  const access = await assessCredential(credential, target, client);
+  const refused = refusal(access);
+  if (refused || credential.kind !== "ready")
+    throw new Error(refused ?? "PUBLISH_GITHUB_NOT_CONNECTED");
+  const { token } = credential;
   try {
     // Over HTTPS, whatever transport origin uses, so the token is the only credential.
     pushCommit(workspace.path, request.subjectSha, request.branch, {
       target: `https://${github.host}/${github.owner}/${github.repo}.git`,
       token,
+      ...(access.login ? { username: access.login } : {}),
     });
   } catch {
     throw new Error("PUBLISH_PUSH_FAILED");
