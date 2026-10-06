@@ -18,6 +18,8 @@ export interface Profile {
   reasoningEffort?: string;
   enabled: boolean;
   maxConcurrency?: number;
+  instructions?: string;
+  instructionsDigest?: string;
   updatedAt: number;
 }
 interface Product {
@@ -86,11 +88,25 @@ export function describeProfile(profile: Pick<Profile, "runtime" | "model" | "re
     .join(" · ");
 }
 
+/** Mirrors the backend bound on owner instructions (#48). */
+export const INSTRUCTIONS_LIMIT = 4000;
+export function instructionsProblem(value: string): string | undefined {
+  return value.trim().length > INSTRUCTIONS_LIMIT
+    ? `Use at most ${INSTRUCTIONS_LIMIT} characters of instructions.`
+    : undefined;
+}
+/** A one-line preview of stored instructions for the profile summary. */
+export function instructionsPreview(text: string | undefined, limit = 80): string | undefined {
+  const line = text?.replace(/\s+/g, " ").trim();
+  if (!line) return undefined;
+  return line.length > limit ? `${line.slice(0, limit - 1).trimEnd()}…` : line;
+}
+
 const PROFILE_ERRORS: Record<string, string> = {
   AGENT_PROFILE_CONFLICT:
     "Another profile is already on for this role here. Turn that one off first, then try again.",
   INVALID_ARGUMENT:
-    "Check the profile: a name of 1 to 64 characters, a runtime, and at most 32 concurrent runs.",
+    "Check the profile: a name of 1 to 64 characters, a runtime, at most 32 concurrent runs and at most 4000 characters of instructions.",
   AGENT_PROFILE_IN_USE:
     "Runs started with this override are still active. Remove it once they have finished.",
   INVALID_STATE:
@@ -123,7 +139,8 @@ export function concurrencyProblem(value: string): string | undefined {
 
 /**
  * Arguments for `agentProfiles.upsert`; empty model/effort mean the runtime default and
- * an empty concurrency means no limit (clearing an existing one).
+ * an empty concurrency means no limit (clearing an existing one). Instructions, when given,
+ * are sent trimmed; an empty value clears them.
  */
 export function upsertArgs(input: {
   role: Role;
@@ -135,6 +152,7 @@ export function upsertArgs(input: {
   effort: string;
   enabled: boolean;
   maxConcurrency: string;
+  instructions?: string;
 }) {
   const { existing } = input;
   const concurrency = input.maxConcurrency.trim();
@@ -148,6 +166,7 @@ export function upsertArgs(input: {
     ...(input.effort ? { reasoningEffort: input.effort } : {}),
     enabled: input.enabled,
     ...(concurrency ? { maxConcurrency: Number(concurrency) } : {}),
+    ...(input.instructions !== undefined ? { instructions: input.instructions.trim() } : {}),
   };
 }
 
@@ -229,6 +248,11 @@ export function AgentsSettings({
                   {shown?.maxConcurrency ? ` · up to ${shown.maxConcurrency} at once` : ""}
                 </span>
                 {shown && <span className="z-xsmall z-muted">{shown.name}</span>}
+                {instructionsPreview(shown?.instructions) && (
+                  <span className="z-xsmall z-muted" title={shown?.instructions}>
+                    Instructions: {instructionsPreview(shown?.instructions)}
+                  </span>
+                )}
                 {(own && !own.enabled) || (productId && effective.source !== "product") ? (
                   <span className="z-xsmall z-muted">
                     {own && !own.enabled ? `Your ${scopeName} profile is off. ` : ""}
@@ -294,6 +318,8 @@ export function ProfileEditor({
   const modelId = useId();
   const nameId = useId();
   const concurrencyId = useId();
+  const instructionsId = useId();
+  const instructionsHelpId = useId();
   const [name, setName] = useState(existing?.name ?? `${label} · ${scopeName}`);
   const [concurrency, setConcurrency] = useState(
     existing?.maxConcurrency !== undefined ? String(existing.maxConcurrency) : "",
@@ -301,6 +327,7 @@ export function ProfileEditor({
   const [runtime, setRuntime] = useState(prefill?.runtime ?? runtimes[0] ?? DEFAULT_RUNTIME);
   const [model, setModel] = useState(prefill?.model ?? "");
   const [effort, setEffort] = useState(prefill?.reasoningEffort ?? "");
+  const [instructions, setInstructions] = useState(prefill?.instructions ?? "");
   const [enabled, setEnabled] = useState(existing?.enabled ?? true);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState("");
@@ -318,7 +345,10 @@ export function ProfileEditor({
     }
   };
   const save = async (nextEnabled: boolean) => {
-    const invalid = profileNameProblem(name) ?? concurrencyProblem(concurrency);
+    const invalid =
+      profileNameProblem(name) ??
+      concurrencyProblem(concurrency) ??
+      instructionsProblem(instructions);
     if (invalid) return setProblem(invalid);
     await run(() =>
       upsert(
@@ -332,6 +362,7 @@ export function ProfileEditor({
           effort,
           enabled: nextEnabled,
           maxConcurrency: concurrency,
+          instructions,
         }),
       ),
     );
@@ -410,6 +441,25 @@ export function ProfileEditor({
           onChange={(event) => setConcurrency(event.target.value)}
         />
       </label>
+      <label className="z-field" htmlFor={instructionsId}>
+        Instructions
+        <textarea
+          id={instructionsId}
+          className="z-textarea"
+          style={{ padding: "8px", resize: "vertical" }}
+          rows={3}
+          maxLength={INSTRUCTIONS_LIMIT}
+          aria-describedby={instructionsHelpId}
+          placeholder="Optional, e.g. Always run pnpm lint before finishing; prefer small focused commits."
+          value={instructions}
+          onChange={(event) => setInstructions(event.target.value)}
+        />
+      </label>
+      <span className="z-xsmall z-muted" id={instructionsHelpId}>
+        {instructions.trim().length} / {INSTRUCTIONS_LIMIT} characters. Added to this role&apos;s
+        prompt for new runs; it never overrides Zamolxis trust, approval or sandbox rules. Secrets
+        are removed when you save.
+      </span>
       <label className="z-check">
         <input
           type="checkbox"

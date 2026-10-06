@@ -330,6 +330,17 @@ describe("RunDetail", () => {
     // Chronological order: started before completed.
     expect(html.indexOf("Started</span>")).toBeLessThan(html.indexOf("Completed</span>"));
     expect(html).not.toContain("Load earlier</button>");
+    // Built-in default: no profile line.
+    expect(html).not.toContain("owner instructions");
+  });
+
+  it("shows which profile revision and owner instructions applied", () => {
+    state.events = [];
+    const run = { ...detail().run, agentProfileRevision: 3 };
+    expect(render(detail({ run }))).toContain("revision 3 · no owner instructions");
+    expect(
+      render(detail({ run: { ...run, instructionsDigest: `${"ab".repeat(6)}${"0".repeat(52)}` } })),
+    ).toContain("revision 3 · owner instructions abababababab");
   });
 
   it("streams an active run from loaded events and offers older pages", () => {

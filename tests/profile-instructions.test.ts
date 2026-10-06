@@ -18,6 +18,7 @@ const modules = {
   "./node.ts": () => import("../convex/node"),
   "./profiles.ts": () => import("../convex/profiles"),
   "./repositories.ts": () => import("../convex/repositories"),
+  "./runDetail.ts": () => import("../convex/runDetail"),
   "./runs.ts": () => import("../convex/runs"),
   "./supervisor.ts": () => import("../convex/supervisor"),
   "./workstations.ts": () => import("../convex/workstations"),
@@ -195,6 +196,11 @@ describe("profile instructions", () => {
       agentProfileId: overrideId,
       agentProfileRevision: 1,
       instructionsDigest: override!.instructionsDigest,
+    });
+    // Run detail diagnostics expose which profile revision and instructions applied.
+    expect((await user.query(api.runDetail.get, { runId })).run).toMatchObject({
+      agentProfileRevision: 1,
+      instructionsDigest: override?.instructionsDigest,
     });
     const command = await startCommand(runId);
     expect(command.payload.instruction).toContain(

@@ -23,6 +23,9 @@ import {
   concurrencyProblem,
   effectiveProfile,
   explainProfileError,
+  INSTRUCTIONS_LIMIT,
+  instructionsPreview,
+  instructionsProblem,
   type Profile,
   ProfileEditor,
   profileNameProblem,
@@ -145,6 +148,38 @@ describe("profile resolution", () => {
     });
   });
 
+  it("sends trimmed instructions, clears them when empty and keeps them when omitted", () => {
+    const base = {
+      role: "builder" as const,
+      name: "Mine",
+      productId: undefined,
+      existing: undefined,
+      runtime: "codex",
+      model: "",
+      effort: "",
+      enabled: true,
+      maxConcurrency: "",
+    };
+    expect(upsertArgs({ ...base, instructions: "  Run pnpm lint.\n" })).toMatchObject({
+      instructions: "Run pnpm lint.",
+    });
+    expect(upsertArgs({ ...base, instructions: "   " })).toMatchObject({ instructions: "" });
+    expect(upsertArgs(base)).not.toHaveProperty("instructions");
+  });
+
+  it("bounds and previews instructions like the backend", () => {
+    expect(instructionsProblem(` ${"x".repeat(INSTRUCTIONS_LIMIT)} `)).toBeUndefined();
+    expect(instructionsProblem("x".repeat(INSTRUCTIONS_LIMIT + 1))).toContain("4000");
+    expect(instructionsPreview(undefined)).toBeUndefined();
+    expect(instructionsPreview("  \n ")).toBeUndefined();
+    expect(instructionsPreview("Run lint.\n\nKeep commits small.")).toBe(
+      "Run lint. Keep commits small.",
+    );
+    const long = instructionsPreview("word ".repeat(40));
+    expect(long?.length).toBeLessThanOrEqual(80);
+    expect(long?.endsWith("…")).toBe(true);
+  });
+
   it("validates names and concurrency like the backend", () => {
     expect(profileNameProblem(" ")).toBe("Enter a name.");
     expect(profileNameProblem("x".repeat(65))).toContain("64");
@@ -194,8 +229,18 @@ describe("AgentsSettings", () => {
     expect(html).toContain("codex · default model");
     expect(html).toContain("Your All products profile is off.");
     expect(html).toContain("Changes apply to new runs.");
+    expect(html).not.toContain("Instructions:");
     // No products yet: no scope picker.
     expect(html).not.toContain("Applies to");
+  });
+
+  it("previews the effective profile's instructions", () => {
+    state.data = {
+      "supervisor:products": [],
+      "agentProfiles:list": [profile({ instructions: "Always run pnpm lint before finishing." })],
+    };
+    const html = renderToStaticMarkup(createElement(AgentsSettings, { active: true, devices: [] }));
+    expect(html).toContain("Instructions: Always run pnpm lint before finishing.");
   });
 
   it("offers a product scope when products exist", () => {
@@ -233,6 +278,26 @@ describe("ProfileEditor", () => {
     expect(html).toContain("Remove override");
     expect(html).toContain('value="Builder"');
     expect(html).toContain("Max concurrent runs");
+    expect(html).toContain("Instructions");
+    expect(html).toContain("0 / 4000 characters");
+    expect(html).toContain("never overrides Zamolxis trust, approval or sandbox rules");
+  });
+
+  it("prefills instructions with their character count", () => {
+    const html = renderToStaticMarkup(
+      createElement(ProfileEditor, {
+        role: "supervisor",
+        label: "Supervisor",
+        scopeName: "All products",
+        productId: undefined,
+        existing: profile({ role: "supervisor", instructions: "Plan small tasks." }),
+        prefill: profile({ role: "supervisor", instructions: "Plan small tasks." }),
+        runtimes: ["codex"],
+        onDone: () => {},
+      }),
+    );
+    expect(html).toMatch(/<textarea[^>]*maxLength="4000"[^>]*>Plan small tasks\.<\/textarea>/);
+    expect(html).toContain("17 / 4000 characters");
   });
 
   it("prefills the concurrency limit and never offers removal for All products", () => {

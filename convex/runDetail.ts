@@ -85,6 +85,8 @@ export const get = query({
         status: run.status,
         runtime: run.runtime,
         runtimeVersion: run.runtimeVersion,
+        agentProfileRevision: run.agentProfileRevision,
+        instructionsDigest: run.instructionsDigest,
         modelRequested: run.modelRequested,
         modelActual: run.modelActual,
         reasoningEffort: run.reasoningEffort,
