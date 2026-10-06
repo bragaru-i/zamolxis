@@ -197,8 +197,27 @@ input. Operators can still edit `users.accessStatus` in the Dashboard.
 Everyone with access sees **Settings → Signed-in devices**: their own Convex Auth
 sessions (signed in, last active, expiry; the current device is marked). **Sign
 out…** ends one other browser; **Sign out all other devices** ends all but the
-current one. Convex Auth does not record browser or device names, so entries are
-described by time. Use **Sign out** for the current device.
+current one. Use **Sign out** for the current device. Convex Auth stores no user
+agent, so each browser names its own sign-in: while Settings is open it derives a
+label such as "Safari on iPhone" from `navigator.userAgent` (browser family and
+device kind only, no versions, at most 64 characters) and records it with
+`admin.labelThisDevice`, which only ever writes the caller's current auth session
+(`signInLabels`, deleted when that session is signed out). The raw user agent is
+never sent or stored. Sign-ins whose browser has not opened Settings since this
+change are still described by time ("Another browser").
+
+## Installing the app (PWA)
+
+The manifest makes Zamolxis installable ("Add to Home Screen" on iPhone). In
+production the layout registers a minimal service worker, `apps/web/public/sw.js`,
+in secure contexts only. It precaches exactly one file, the static
+`/offline.html`, and answers a top-level page load with it only when the network
+request fails. It never handles or stores API calls (Convex queries, mutations,
+auth), Next.js assets or app data: every other request goes to the network as if
+there were no service worker, so nothing a signed-in user saw survives on the
+device through it. Changing the offline page or the worker requires bumping the
+`CACHE` name in `sw.js`; old caches are deleted on activation. To remove it from a
+device, delete the home-screen app or clear the site's data.
 
 There is no first-user auto-approval; the first approval is a Dashboard edit.
 Ordinary web users cannot change grants. Returning Google sign-in never resets a grant.
@@ -229,7 +248,14 @@ unverified or client-supplied email. This change does not rewrite existing data.
 
 Tests exercise pending/allowed/blocked access, direct API denial, live/mismatched/
 deleted/expired sessions, Node denial, immutable user identity, verified Google
-profiles, redirect confinement and the existing isolated trust lifecycle. The
+profiles, redirect confinement and the existing isolated trust lifecycle.
+`tests/isolation.test.ts` walks every user-facing query and mutation (sessions,
+messages, tasks, workspaces, runs, events, traces, trust, run detail, usage,
+approvals, admin, agent profiles, workstations, repositories) as a second approved
+account against the owner's data and expects FORBIDDEN/NOT_FOUND or empty
+results, with nothing of the owner's changed; a pending account gets
+ACCESS_DENIED. It runs in convex-test with fixture identities, not against a
+deployment with two real Google accounts. The
 schema preserves Convex Auth's runtime validators/indexes without relaxing strict
 TypeScript optional-field checks.
 
