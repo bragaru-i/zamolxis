@@ -203,7 +203,7 @@ function Settings({
   const { signOut } = useAuthActions();
   const [message, setMessage] = useState("");
   return (
-    <Sheet open={open} title="Settings" onClose={onClose}>
+    <Sheet open={open} title="Settings" size="lg" onClose={onClose}>
       <section className="z-stack">
         <h3 className="z-section-title">Macs</h3>
         {devices?.length ? (

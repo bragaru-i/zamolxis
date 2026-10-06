@@ -35,6 +35,24 @@ grant, open PRs, report CI and state the merge order.
 8. Record the change in `docs/alpha-status.md` in the same PR when it closes or
    opens a gap, and comment progress on the related GitHub issue.
 
+## Checking the web UI in a browser (preview harness)
+
+The owner uses the app on an iPhone; check phone layouts before shipping UI changes.
+
+```bash
+cd apps/web && ZAMOLXIS_PREVIEW=1 pnpm exec next dev -p 3123     # real app, fixture backend
+open "http://localhost:3123/?scenario=owner"                     # also: empty, attention, busy
+open "http://localhost:3123/?session=s1&run=r1"                  # running Session, Run detail
+```
+
+`apps/web/preview/` replaces `convex/react` and `@convex-dev/auth/react` with an in-memory
+store (`fixtures.ts` holds the scenarios; mutations such as sending a message animate a
+reply). For automated checks install Playwright in a scratch directory
+(`npm i playwright && npx playwright install chromium webkit`) and drive the pages with
+`devices["iPhone 14 Pro Max"]` (WebKit) and a 1280px Chromium viewport; assert
+`document.documentElement.scrollWidth <= clientWidth` on every screen (iOS zooms the whole
+layout out when anything overflows horizontally) and that the console stays free of errors.
+
 ## Updating the Node on the owner's Mac
 
 ```bash

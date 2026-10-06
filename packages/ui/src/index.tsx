@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 
+export { AgentRow, compactCount, costLabel, elapsed } from "./agent";
 export { KeyValueList, SegmentedControl, Stat, StatGrid, TextInput } from "./data";
 export type { Block as MarkdownBlock, Inline as MarkdownInline } from "./markdown";
 export { Markdown, parseInline, parseMarkdown, safeHref } from "./markdown";
@@ -333,18 +334,41 @@ export function Composer({
   );
 }
 
+/** True on wide screens (≥720px) after mount; false during server rendering. */
+export function useWide(): boolean {
+  const [wide, setWide] = useState(false);
+  useEffect(() => {
+    const query = matchMedia("(min-width: 720px)");
+    const update = () => setWide(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+  return wide;
+}
+
+/**
+ * A modal surface: a centered dialog on wide screens, a bottom drawer with a grab handle on
+ * phones. Closes on the backdrop, the close button and Escape.
+ */
 export function Sheet({
   open,
   title,
+  description,
+  size = "md",
   onClose,
   children,
 }: {
   open: boolean;
   title: string;
+  description?: ReactNode;
+  /** md fits a form or a list; lg is for long content such as Settings or Run detail. */
+  size?: "md" | "lg";
   onClose: () => void;
   children: ReactNode;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
   useEffect(() => {
     const element = dialog.current;
     if (!element) return;
@@ -354,8 +378,8 @@ export function Sheet({
   return (
     <dialog
       ref={dialog}
-      className="z-sheet"
-      aria-label={title}
+      className={`z-sheet z-sheet--${size}`}
+      aria-labelledby={titleId}
       onClose={onClose}
       onClick={(event) => {
         if (event.target === event.currentTarget) onClose();
@@ -365,11 +389,17 @@ export function Sheet({
       }}
     >
       <div className="z-sheet__head">
-        <h2 className="z-header__title">{title}</h2>
-        <span className="z-spacer" />
-        <Button variant="ghost" onClick={onClose}>
-          Done
-        </Button>
+        <div className="z-sheet__titles">
+          <h2 className="z-sheet__title" id={titleId}>
+            {title}
+          </h2>
+          {description && <p className="z-sheet__description">{description}</p>}
+        </div>
+        <button type="button" className="z-sheet__close" aria-label="Close" onClick={onClose}>
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" strokeWidth="1.8" />
+          </svg>
+        </button>
       </div>
       <div className="z-sheet__body">{children}</div>
     </dialog>
@@ -382,9 +412,17 @@ export interface PickerOption {
   readonly description?: string;
 }
 
+function CheckIcon() {
+  return (
+    <svg className="z-picker__check" viewBox="0 0 16 16" aria-hidden="true">
+      <path d="M3 8.5l3.2 3L13 5" fill="none" stroke="currentColor" strokeWidth="2" />
+    </svg>
+  );
+}
+
 /**
- * A choice control that looks the same on every platform: a field-styled button that opens a
- * sheet of options with descriptions, instead of the native select wheel.
+ * A select control that looks the same on every platform: a field-styled trigger that opens a
+ * popover list under it on wide screens and a bottom drawer on phones, never the native wheel.
  */
 export function Picker({
   label,
@@ -401,21 +439,100 @@ export function Picker({
   onChange: (value: string) => void;
   placeholder?: string;
   disabled?: boolean;
-  // The label still names the control and its sheet for assistive technology.
+  // The label still names the control and its list for assistive technology.
   hideLabel?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const wide = useWide();
+  const root = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const listId = useId();
   const selected = options.find((option) => option.value === value);
+  const popover = open && wide;
+  // The popover closes on an outside press or Escape; the drawer handles its own.
+  useEffect(() => {
+    if (!popover) return;
+    const onPress = (event: PointerEvent) => {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+        trigger.current?.focus();
+      }
+    };
+    document.addEventListener("pointerdown", onPress);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPress);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [popover]);
+  useEffect(() => {
+    if (!popover) return;
+    const list = root.current?.querySelector<HTMLElement>(".z-popover");
+    (
+      list?.querySelector<HTMLElement>('[aria-selected="true"]') ??
+      list?.querySelector<HTMLElement>('[role="option"]')
+    )?.focus();
+  }, [popover]);
+  const choose = (next: string) => {
+    onChange(next);
+    setOpen(false);
+    if (wide) trigger.current?.focus();
+  };
+  const moveFocus = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    const items = [...event.currentTarget.querySelectorAll<HTMLElement>('[role="option"]')];
+    const index = items.indexOf(document.activeElement as HTMLElement);
+    const next = event.key === "ArrowDown" ? index + 1 : index - 1;
+    items[(next + items.length) % items.length]?.focus();
+  };
+  const list = (
+    <div
+      className="z-picker__list"
+      role="listbox"
+      id={listId}
+      aria-label={label}
+      onKeyDown={moveFocus}
+    >
+      {options.map((option) => {
+        const active = option.value === value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            role="option"
+            aria-selected={active}
+            className={active ? "z-picker__option z-picker__option--active" : "z-picker__option"}
+            onClick={() => choose(option.value)}
+          >
+            <span className="z-picker__text">
+              <span className="z-picker__label">{option.label}</span>
+              {option.description && (
+                <span className="z-picker__description">{option.description}</span>
+              )}
+            </span>
+            {active && <CheckIcon />}
+          </button>
+        );
+      })}
+    </div>
+  );
   return (
-    <div className="z-field">
+    <div className="z-field z-field--picker" ref={root}>
       {!hideLabel && <span>{label}</span>}
       <button
+        ref={trigger}
         type="button"
         className="z-picker"
         aria-haspopup="listbox"
+        aria-expanded={popover}
+        aria-controls={popover ? listId : undefined}
         aria-label={hideLabel ? `${label}: ${selected?.label ?? placeholder}` : undefined}
         disabled={disabled}
-        onClick={() => setOpen(true)}
+        onClick={() => setOpen((current) => !current)}
       >
         <span className={selected ? "z-picker__value" : "z-picker__value z-muted"}>
           {selected?.label ?? placeholder}
@@ -424,40 +541,47 @@ export function Picker({
           <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.8" />
         </svg>
       </button>
-      <Sheet open={open} title={label} onClose={() => setOpen(false)}>
-        <div className="z-picker__list" role="listbox" aria-label={label}>
-          {options.map((option) => {
-            const active = option.value === value;
-            return (
-              <button
-                key={option.value}
-                type="button"
-                role="option"
-                aria-selected={active}
-                className={
-                  active ? "z-picker__option z-picker__option--active" : "z-picker__option"
-                }
-                onClick={() => {
-                  onChange(option.value);
-                  setOpen(false);
-                }}
-              >
-                <span className="z-picker__text">
-                  <span className="z-picker__label">{option.label}</span>
-                  {option.description && (
-                    <span className="z-picker__description">{option.description}</span>
-                  )}
-                </span>
-                {active && (
-                  <svg className="z-picker__check" viewBox="0 0 16 16" aria-hidden="true">
-                    <path d="M3 8.5l3.2 3L13 5" fill="none" stroke="currentColor" strokeWidth="2" />
-                  </svg>
-                )}
-              </button>
-            );
-          })}
-        </div>
+      {popover && <div className="z-popover">{list}</div>}
+      <Sheet open={open && !wide} title={label} onClose={() => setOpen(false)}>
+        {list}
       </Sheet>
     </div>
+  );
+}
+
+/**
+ * A tappable reference inside a message (a Session, a Run, a pull request) with its status.
+ * Unlike a Button its label wraps, so a long title never widens the page.
+ */
+export function Chip({
+  label,
+  status,
+  href,
+  onClick,
+}: {
+  label: string;
+  status?: string | undefined;
+  href?: string | undefined;
+  onClick?: (() => void) | undefined;
+}) {
+  const body = (
+    <>
+      <span className="z-chip__label">{label}</span>
+      {status && <span className="z-chip__status">{status}</span>}
+    </>
+  );
+  if (href)
+    return (
+      <a className="z-chip" href={href} target="_blank" rel="noopener noreferrer">
+        {body}
+        <span className="z-chip__external" aria-hidden="true">
+          ↗
+        </span>
+      </a>
+    );
+  return (
+    <button type="button" className="z-chip" onClick={onClick}>
+      {body}
+    </button>
   );
 }

@@ -559,8 +559,8 @@ describe("SessionView run rows", () => {
         onOpen: () => {},
       }),
     );
-    expect(html).toContain(
-      '<button type="button" class="z-pressable" aria-haspopup="dialog"><strong>Verifier</strong>',
+    expect(html).toMatch(
+      /<button type="button" class="z-agent__main z-agent__main--button" aria-haspopup="dialog" aria-label="Open Verifier details">/,
     );
     // The detail sheet is mounted only after a row is opened.
     expect(html).not.toContain("Verifier run");

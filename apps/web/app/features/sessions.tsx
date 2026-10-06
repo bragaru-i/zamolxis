@@ -2,6 +2,7 @@
 import {
   AppHeader,
   Button,
+  Chip,
   Composer,
   Markdown,
   Message,
@@ -17,11 +18,12 @@ import {
   Thinking,
 } from "@zamolxis/ui";
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
 import { ApprovalsInbox } from "./approvals";
 import { explainError } from "./errors";
+import { LiveAgents } from "./live-agents";
 import { OnboardingChecklist } from "./onboarding";
 import { relativeTime } from "./time";
 import { useNow } from "./workspace";
@@ -203,6 +205,7 @@ export function SessionList({
           {notices}
           <OnboardingChecklist ready={ready} />
           <ApprovalsInbox ready={ready} onOpen={onOpen} />
+          <LiveAgents ready={ready} onOpen={onOpen} />
           <OrchestratorConversation ready={ready} onOpen={onOpen} />
         </main>
         <footer className="z-home-composer">
@@ -251,35 +254,23 @@ function OrchestratorLinkButton({
             : "Not trusted"
           : statusLabel(link.status).label
     : undefined;
-  const text = `${link.label}${status ? ` · ${status}` : ""}`;
   if (link.targetType === "pull_request") {
     const href = link.url ? safeHref(link.url) : undefined;
-    return href ? (
-      <a
-        className="z-button z-button--secondary z-button--small"
-        href={href}
-        target="_blank"
-        rel="noopener noreferrer"
-      >
-        {text}
-      </a>
-    ) : null;
+    return href ? <Chip label={link.label} status={status} href={href} /> : null;
   }
   const sessionId = link.workSessionId;
   if (!sessionId) return null;
   return (
-    <Button
-      variant="secondary"
-      size="small"
+    <Chip
+      label={link.label}
+      status={status}
       onClick={() =>
         onOpen(
           sessionId,
           link.targetType === "run" ? (link.targetId as Id<"agentRuns">) : undefined,
         )
       }
-    >
-      {text}
-    </Button>
+    />
   );
 }
 
@@ -405,6 +396,16 @@ function OrchestratorConversation({
   const now = Date.now();
   const thinking = (message: OrchestratorMessage) =>
     message.status === "thinking" && now - message.createdAt < THINKING_SHOWN_MS;
+  // A newly sent message scrolls into view; the first render stays at the top.
+  const end = useRef<HTMLDivElement>(null);
+  const seen = useRef<number | undefined>(undefined);
+  const count = messages?.length;
+  useEffect(() => {
+    if (count === undefined) return;
+    if (seen.current !== undefined && count > seen.current)
+      end.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+    seen.current = count;
+  }, [count]);
   return (
     <section className="z-stack" aria-label="Orchestrator conversation">
       <div className="z-row z-row--between">
@@ -436,7 +437,7 @@ function OrchestratorConversation({
                   </div>
                 )}
                 {message.links.length > 0 && (
-                  <div className="z-row">
+                  <div className="z-row z-links">
                     {message.links.map((link) => (
                       <OrchestratorLinkButton key={link._id} link={link} onOpen={onOpen} />
                     ))}
@@ -451,6 +452,7 @@ function OrchestratorConversation({
           Ask what is happening, how orchestration works, or tell Zamolxis explicitly to start work.
         </p>
       )}
+      <div ref={end} />
     </section>
   );
 }
