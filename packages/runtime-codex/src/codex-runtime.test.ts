@@ -681,7 +681,49 @@ it("propagates requested model/effort, reports provider usage and makes verifier
     cachedInputTokens: 40,
     outputTokens: 20,
     totalTokens: 120,
+    modelCalls: 1,
   });
+});
+
+it("reports cache writes and reasoning tokens when Codex does and counts one call per report", async () => {
+  const h = harness();
+  await h.runtime.start(input());
+  const total = {
+    inputTokens: 100,
+    cachedInputTokens: 40,
+    cacheWriteInputTokens: 30,
+    outputTokens: 20,
+    reasoningOutputTokens: 5,
+    totalTokens: 120,
+  };
+  h.connection.emit("thread/tokenUsage/updated", { tokenUsage: { total } });
+  // The same thread total again is not another model call.
+  h.connection.emit("thread/tokenUsage/updated", { tokenUsage: { total } });
+  h.connection.emit("thread/tokenUsage/updated", {
+    tokenUsage: {
+      total: { ...total, inputTokens: 250, totalTokens: 270, reasoningOutputTokens: "x" },
+    },
+  });
+  // A report missing a required counter is ignored, not partially applied.
+  h.connection.emit("thread/tokenUsage/updated", {
+    tokenUsage: { total: { inputTokens: 300, outputTokens: 20, totalTokens: 320 } },
+  });
+  h.connection.emit("turn/completed", { turn: { id: "turn", status: "completed" } });
+  const usage = (await events(h.runtime))
+    .filter((event) => event.type === "run.usage")
+    .map((event) => event.payload);
+  expect(usage).toEqual([
+    { ...total, modelCalls: 1 },
+    { ...total, modelCalls: 1 },
+    {
+      inputTokens: 250,
+      cachedInputTokens: 40,
+      cacheWriteInputTokens: 30,
+      outputTokens: 20,
+      totalTokens: 270,
+      modelCalls: 2,
+    },
+  ]);
 });
 
 it("runs the Supervisor read-only and reports the last agent message as the final summary", async () => {

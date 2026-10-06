@@ -739,7 +739,7 @@ describe("Supervisor activity log", { timeout: 30_000 }, () => {
     ]);
     expect(steps[0]?.references).toEqual({ sha: f.head });
     expect(steps[1]?.detail).toBe(
-      "Test runtime · model m-1 · reasoning high · reported model model-x\n15 tokens (10 in · 5 out)",
+      "Test runtime · model m-1 · reasoning high · reported model model-x\n15 tokens processed (10 in · 5 out)",
     );
     expect(steps[3]?.detail).toBe("Read convex/schema.ts");
     expect(steps[5]?.detail).toBe("Schema read; checking the API next.");

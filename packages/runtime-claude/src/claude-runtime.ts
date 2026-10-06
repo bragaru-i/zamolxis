@@ -100,6 +100,8 @@ interface Session {
   ready: { resolve: () => void; reject: (error: Error) => void } | undefined;
   stopping: boolean;
   model?: string;
+  // Ids of the assistant messages this process received: one per model call.
+  calls: Set<string>;
   // The latest assistant text: the final reply unless anything follows it, in which case
   // it was a progress note and is reported as `run.message`.
   held?: string | undefined;
@@ -254,6 +256,7 @@ export class ClaudeRuntime implements AgentRuntime {
       announceOnInit: !resumed,
       ready: undefined,
       stopping: false,
+      calls: new Set(),
       tools: new Map(),
       approvals: new Map(),
     };
@@ -557,6 +560,9 @@ export class ClaudeRuntime implements AgentRuntime {
       session.model = model;
       this.#emit(session, "run.usage", { modelActual: model });
     }
+    // One model response arrives as several frames sharing the message id.
+    const messageId = str(message.id);
+    if (messageId && session.calls.size < 10_000) session.calls.add(messageId);
     if (!Array.isArray(message.content)) return;
     for (const value of message.content) {
       const block = optionalRecord(value);
@@ -625,11 +631,15 @@ export class ClaudeRuntime implements AgentRuntime {
       const floor = session.usageFloor;
       const inputTokens = (floor.inputTokens ?? 0) + usage.inputTokens;
       const outputTokens = (floor.outputTokens ?? 0) + usage.outputTokens;
+      // Model calls are the distinct assistant messages of this process plus earlier ones.
+      const calls = (floor.modelCalls ?? 0) + session.calls.size;
       this.#emit(session, "run.usage", {
         inputTokens,
         cachedInputTokens: (floor.cachedInputTokens ?? 0) + usage.cachedInputTokens,
+        cacheWriteInputTokens: (floor.cacheWriteInputTokens ?? 0) + usage.cacheWriteInputTokens,
         outputTokens,
         totalTokens: Math.max(inputTokens + outputTokens, floor.totalTokens ?? 0),
+        ...(calls > 0 ? { modelCalls: calls } : {}),
       });
     }
     const succeeded = frame.subtype === "success" && frame.is_error !== true;

@@ -194,6 +194,10 @@ describe("supervisorInstruction and repositoryChecks", () => {
         "Supervisor: Hi there",
         "Why does CI fail?",
         '"decision":"answer"|"propose"|"delegate"|"ask"',
+        // #114: task descriptions name specific files and sections, never whole documents.
+        "Never ask an agent to read AGENTS.md",
+        "Split a large request into independent tasks",
+        "Read only what you need to decide",
       ])
         expect(prompt).toContain(fragment);
       expect(repositoryChecks(join(dir, "missing"))).toEqual({

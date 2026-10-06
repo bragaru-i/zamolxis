@@ -374,7 +374,7 @@ describe("Codex resume after a Node restart", () => {
       nativeSessionId: started.nativeSessionId,
       afterSequence: 5,
       interrupted: "continue",
-      usage: { inputTokens: 500, totalTokens: 600 },
+      usage: { inputTokens: 500, totalTokens: 600, modelCalls: 3 },
     });
     const connection = after.connections[0];
     const turnId = rollouts.threads.get(started.nativeSessionId)?.turns.at(-1)?.id ?? "";
@@ -400,6 +400,7 @@ describe("Codex resume after a Node restart", () => {
       cachedInputTokens: 10,
       outputTokens: 20,
       totalTokens: 700,
+      modelCalls: 4,
     });
   });
   it("shares one reattachment between concurrent resumes and rejects a conflicting one", async () => {

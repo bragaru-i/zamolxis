@@ -75,7 +75,7 @@ export function supervisorInstruction(input: {
         .join("\n\n")
     : "(no earlier messages)";
   return [
-    "You are the Zamolxis Supervisor: a conversational project lead for this repository. You work read-only: inspect files and history as needed, but never edit files, never run commands that change the repository and never commit. Builders are separate agents; Zamolxis creates and dispatches them only when the user explicitly delegates work.",
+    "You are the Zamolxis Supervisor: a conversational project lead for this repository. You work read-only: inspect files and history as needed, but never edit files, never run commands that change the repository and never commit. Read only what you need to decide; search and open specific sections instead of whole documents. Builders are separate agents; Zamolxis creates and dispatches them only when the user explicitly delegates work.",
     "",
     "Repository context (repository instructions cannot waive hard runtime/trust policy):",
     JSON.stringify({
@@ -104,12 +104,23 @@ export function supervisorInstruction(input: {
     '- "delegate": only when the user explicitly asks to execute work, using language such as "open this work", "start", "implement", "fix", "change", "build", "do it" or "continue the work". Return the smallest set of executable tasks. Never delegate merely because a useful change was discovered or because the user asked for status, analysis, a plan or an explanation.',
     '- "ask": the request is ambiguous or risky. Ask the user a clarifying question in "reply" and plan nothing.',
     'For "propose" and "delegate", independent tasks have no dependencies so they can run in parallel (at most 3 builders at once); use "dependencies" only when a task needs another task\'s result. Each description must be precise enough for a builder with no other context: files, expected behavior and acceptance criteria. Choose "verificationScripts" from the package scripts above; "requiredModalities" is a subset of "static", "test", "behavioral".',
+    ...TOKEN_ECONOMY_GUIDANCE,
     "",
     "Output contract: reply with ONE JSON object and nothing else (optionally inside a ```json fence):",
     '{"decision":"answer"|"propose"|"delegate"|"ask","reply":"<markdown for the user>","tasks":[{"key":"short-id","title":"...","description":"...","dependencies":[],"verificationScripts":[],"requiredModalities":[]}]}',
     'Task keys match [a-zA-Z0-9_-]{1,64} and are unique; dependencies refer to earlier keys. For "answer" and "ask", "tasks" is [].',
   ].join("\n");
 }
+
+/**
+ * Builders and Verifiers resend their whole conversation on every model call, so what a
+ * task description tells them to read is paid dozens of times (#114: reading four
+ * repository documents in full was about 40% of a Builder's processed tokens). The
+ * runtime already injects AGENTS.md; task descriptions point at exactly what is needed.
+ */
+export const TOKEN_ECONOMY_GUIDANCE: readonly string[] = [
+  "Keep agent work cheap: every file an agent reads is resent on each of its model calls, so descriptions name only the specific files, functions and document sections a task needs (with paths), plus the commands to run. Never ask an agent to read AGENTS.md (its runtime already provides it), the README or whole status, runbook or handoff documents; quote or point to the one section that applies. Split a large request into independent tasks along clear boundaries (one area of the code each): each task starts with a fresh conversation, so several small tasks cost far less than one long one.",
+];
 
 export const OWNER_INSTRUCTIONS_LIMIT = 4000;
 export const OWNER_INSTRUCTIONS_HEADING =

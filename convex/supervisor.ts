@@ -1,4 +1,5 @@
 import { validatePlan } from "@zamolxis/application";
+import { USAGE_COUNTERS } from "@zamolxis/runtime-core";
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { type MutationCtx, mutation, type QueryCtx, query } from "./_generated/server";
@@ -310,25 +311,28 @@ const ACTIVITY_LIMIT = 200;
 const PROGRESS_MIN_INTERVAL_MS = 500;
 const IN_FLIGHT = ["claimed", "acknowledged"];
 
+// Usage counters as runtimes report them (USAGE_COUNTERS in runtime-core): every value is
+// cumulative for the run. `modelCalls` counts model responses; cache-write and reasoning
+// tokens are present only when the provider reports them.
 export const usageArgs = v.object({
   modelActual: v.optional(v.string()),
   inputTokens: v.optional(v.number()),
   cachedInputTokens: v.optional(v.number()),
+  cacheWriteInputTokens: v.optional(v.number()),
   outputTokens: v.optional(v.number()),
+  reasoningOutputTokens: v.optional(v.number()),
   totalTokens: v.optional(v.number()),
+  modelCalls: v.optional(v.number()),
 });
 type Usage = typeof usageArgs.type;
 export function assertUsage(usage: Usage) {
   if (usage.modelActual !== undefined && (!usage.modelActual || usage.modelActual.length > 256))
     fail("INVALID_ARGUMENT");
-  for (const value of [
-    usage.inputTokens,
-    usage.cachedInputTokens,
-    usage.outputTokens,
-    usage.totalTokens,
-  ])
+  for (const counter of USAGE_COUNTERS) {
+    const value = usage[counter];
     if (value !== undefined && (!Number.isSafeInteger(value) || value < 0))
       fail("INVALID_ARGUMENT");
+  }
 }
 async function planCommandFor(ctx: QueryCtx, textCommandId: Id<"textCommands">) {
   return ctx.db

@@ -230,6 +230,7 @@ it("stores an answer without tasks and idles the Session", async () => {
       cachedInputTokens: 10,
       outputTokens: 20,
       totalTokens: 120,
+      modelCalls: 3,
     },
   });
   expect(await f.user.query(api.tasks.listBySession, { workSessionId: sessionId })).toEqual([]);
@@ -253,6 +254,7 @@ it("stores an answer without tasks and idles the Session", async () => {
     cachedInputTokens: 10,
     outputTokens: 20,
     totalTokens: 120,
+    modelCalls: 3,
   });
   // Identical replay is idempotent; a different reply or decision conflicts.
   expect(await f.node.mutation(api.supervisor.acceptPlan, args)).toBeNull();

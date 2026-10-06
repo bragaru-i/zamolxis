@@ -304,22 +304,58 @@ export function runDuration(run: RunTiming, now: number): string | undefined {
 }
 
 export interface RunUsage {
+  /** Every input token processed, cached ones included. */
   inputTokens?: number;
+  /** The cache-read part of `inputTokens`. */
   cachedInputTokens?: number;
+  cacheWriteInputTokens?: number;
   outputTokens?: number;
+  /** The reasoning part of `outputTokens`, when the provider reports it. */
+  reasoningOutputTokens?: number;
+  /** Input plus output: what subscription limits count ("processed"). */
   totalTokens?: number;
+  /** Model responses, when the provider reports them. */
+  modelCalls?: number;
   estimatedCostUsd?: number;
+}
+
+const count = (value: number) => value.toLocaleString("en-US");
+
+/**
+ * Where a run's processed tokens went: "41 calls · 85,660 fresh · 2,491,520 cached ·
+ * 13,815 out, 1,676 reasoning". Fresh input is input minus cached (derived, never
+ * estimated); a part is omitted when the provider did not report it.
+ */
+export function usageParts(run: RunUsage): string[] {
+  const parts: string[] = [];
+  if (run.modelCalls) parts.push(plural(run.modelCalls, "call"));
+  if (run.inputTokens !== undefined)
+    parts.push(
+      run.cachedInputTokens === undefined
+        ? `${count(run.inputTokens)} in`
+        : `${count(Math.max(run.inputTokens - run.cachedInputTokens, 0))} fresh`,
+    );
+  if (run.cachedInputTokens) parts.push(`${count(run.cachedInputTokens)} cached`);
+  if (run.outputTokens !== undefined)
+    parts.push(
+      `${count(run.outputTokens)} out${run.reasoningOutputTokens ? `, ${count(run.reasoningOutputTokens)} reasoning` : ""}`,
+    );
+  return parts;
 }
 
 /** Usage exactly as reported by the provider; nothing is estimated here. */
 export function tokensLabel(run: RunUsage): string | undefined {
   if (run.totalTokens === undefined) return undefined;
-  const parts: string[] = [];
-  if (run.inputTokens !== undefined) parts.push(`${run.inputTokens.toLocaleString("en-US")} in`);
-  if (run.cachedInputTokens) parts.push(`${run.cachedInputTokens.toLocaleString("en-US")} cached`);
-  if (run.outputTokens !== undefined) parts.push(`${run.outputTokens.toLocaleString("en-US")} out`);
+  const parts = usageParts(run);
   const total = plural(run.totalTokens, "token");
   return parts.length ? `${total} (${parts.join(" · ")})` : total;
+}
+
+/** Provider-reported cost, else the subscription the runtime's login belongs to. */
+export function costLabel(run: { estimatedCostUsd?: number }): string {
+  if (run.estimatedCostUsd === undefined) return "Subscription";
+  const usd = run.estimatedCostUsd;
+  return `$${usd < 0.01 && usd > 0 ? usd.toFixed(4) : usd.toFixed(2)}`;
 }
 
 export function runtimeLabel(run: {

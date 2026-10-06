@@ -925,8 +925,11 @@ it("accepts only runtime-reported usage and rejects negative or decreasing count
           modelActual: "reported-model",
           inputTokens: 100,
           cachedInputTokens: 40,
+          cacheWriteInputTokens: 30,
           outputTokens: 20,
+          reasoningOutputTokens: 5,
           totalTokens: 120,
+          modelCalls: 2,
         },
       },
     ],
@@ -934,7 +937,24 @@ it("accepts only runtime-reported usage and rejects negative or decreasing count
   const run = await f.user.query(api.runs.get, { runId });
   expect(run.modelActual).toBe("reported-model");
   expect(run.totalTokens).toBe(120);
+  expect(run).toMatchObject({ cacheWriteInputTokens: 30, reasoningOutputTokens: 5, modelCalls: 2 });
   expect(run.estimatedCostUsd).toBeUndefined();
+  // Counters never decrease: a lower call count is rejected like a lower token count.
+  await expect(
+    f.node.mutation(api.node.ingestBatch, {
+      workstationId: f.workstationId,
+      runId,
+      events: [
+        {
+          eventId: "fewer-calls",
+          sequence: 3,
+          type: "run.usage",
+          occurredAt: 3,
+          payload: { modelCalls: 1 },
+        },
+      ],
+    }),
+  ).rejects.toThrow("INVALID_USAGE");
   await expect(
     f.node.mutation(api.node.ingestBatch, {
       workstationId: f.workstationId,

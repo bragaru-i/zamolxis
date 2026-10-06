@@ -207,8 +207,29 @@ Each Run snapshots profile ID/revision, owner-instructions digest, runtime,
 requested model, reasoning effort and detected runtime version when available. Model/effort propagate through
 command parsing, RuntimeManager and Codex startup. Profile edits do not change
 historical Runs or replayed launch configuration. Provider-reported actual model
-and input/cached/output/total tokens are persisted from normalized usage events.
-Missing telemetry stays undefined. No token inference or cost estimate is made.
+and usage counters are persisted from normalized usage events: input (cached ones
+included), cached input, cache-write input, output, reasoning output, total
+("processed": input plus output, which is what subscription limits count) and the
+number of model calls, each only when the provider reports it (Codex reports all of
+them; Claude Code reports no reasoning split). Fresh input (input minus cached) is
+derived in `convex/usage.ts`, never estimated. Settings → Usage and Run detail show
+calls, fresh, cached and output (with reasoning) next to the processed total; cost
+shows a provider-reported price or "Subscription". Missing telemetry stays
+undefined. No token inference or cost estimate is made.
+
+**Keeping usage low (#114).** Every model call resends the whole conversation, so a
+Builder that reads four repository documents in full pays for them on every one of
+its calls (a measured Builder: 41 calls, 2.6M processed tokens, 97% cached, from a
+28k-token start). The Supervisor prompt therefore asks for task descriptions that
+name only the files, functions and sections a task needs, never AGENTS.md (the
+runtime injects it) or whole status/runbook documents, and splits large requests
+into independent tasks that each start with a fresh conversation. The Node's own
+Codex home (`packages/runtime-codex/src/codex-home.ts`) writes a lean `config.toml`
+that turns off multi-agent, skills, plugins, apps, goals, memories, hooks, browser,
+computer use, image generation, realtime and web search, so Builders and Verifiers
+carry none of those prompt blocks. Recommended profiles: a smaller model or low
+reasoning effort for the Verifier (it reviews one candidate) and for the Supervisor
+(it decides and plans, it does not build), chosen in Settings → Agents.
 
 The server reserves **3 Builder-class slots (Builder + Repair) and 1 Verifier
 slot**. Queued and lost/uncertain owned Runs continue reserving capacity until

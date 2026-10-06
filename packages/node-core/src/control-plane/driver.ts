@@ -9,7 +9,13 @@ import type {
   WorkstationId,
 } from "@zamolxis/contracts";
 import { addedOrModifiedFiles, commitCandidate, mergeDependencies } from "@zamolxis/git";
-import type { AgentRuntime, InterruptedTurnPolicy, RuntimeRegistry } from "@zamolxis/runtime-core";
+import {
+  type AgentRuntime,
+  type InterruptedTurnPolicy,
+  type RuntimeRegistry,
+  USAGE_COUNTERS,
+  type UsageCounter,
+} from "@zamolxis/runtime-core";
 import {
   type OrchestratorDecision,
   orchestratorInstruction,
@@ -166,14 +172,9 @@ export interface SupervisorSelection {
   readonly reasoningEffort?: string;
   readonly instructions?: string;
 }
-export interface SupervisorUsage {
+export type SupervisorUsage = Partial<Record<UsageCounter, number>> & {
   modelActual?: string;
-  inputTokens?: number;
-  cachedInputTokens?: number;
-  outputTokens?: number;
-  totalTokens?: number;
-}
-const USAGE_COUNTERS = ["inputTokens", "cachedInputTokens", "outputTokens", "totalTokens"] as const;
+};
 function boundedSummary(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const text = value.trim().slice(0, REPLY_LIMIT);

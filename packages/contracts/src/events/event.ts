@@ -43,8 +43,11 @@ export type NormalizedRunEventDto =
         modelActual?: string;
         inputTokens?: number;
         cachedInputTokens?: number;
+        cacheWriteInputTokens?: number;
         outputTokens?: number;
+        reasoningOutputTokens?: number;
         totalTokens?: number;
+        modelCalls?: number;
       }
     >
   | EventBase<"run.activity", { label: string; detail?: string }>

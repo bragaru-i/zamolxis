@@ -1,6 +1,11 @@
 import { applyRunEvent, GITHUB_LOGIN } from "@zamolxis/application";
 import { assertRunTransition, type RunStatus } from "@zamolxis/domain";
-import { boundRuntimeModels, RUNTIME_MODEL_LIMITS } from "@zamolxis/runtime-core";
+import {
+  boundRuntimeModels,
+  RUNTIME_MODEL_LIMITS,
+  USAGE_COUNTERS,
+  type UsageCounter,
+} from "@zamolxis/runtime-core";
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { applyApprovalEvent, expireRunApprovals } from "./approvals";
@@ -524,20 +529,9 @@ export const ingestBatch = mutation({
         runId: run._id,
         workstationId: args.workstationId,
       });
-      const usage: {
-        modelActual?: string;
-        inputTokens?: number;
-        cachedInputTokens?: number;
-        outputTokens?: number;
-        totalTokens?: number;
-      } = {};
+      const usage: Partial<Record<UsageCounter, number>> & { modelActual?: string } = {};
       if (event.type === "run.usage") {
-        for (const field of [
-          "inputTokens",
-          "cachedInputTokens",
-          "outputTokens",
-          "totalTokens",
-        ] as const) {
+        for (const field of USAGE_COUNTERS) {
           const value = event.payload?.[field];
           if (value !== undefined) {
             if (!Number.isSafeInteger(value) || value < 0 || value < (run[field] ?? 0))
