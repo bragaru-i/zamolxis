@@ -33,6 +33,9 @@ const modules = {
   "./profiles.ts": () => import("../convex/profiles"),
   "./repositories.ts": () => import("../convex/repositories"),
   "./sessions.ts": () => import("../convex/sessions"),
+  "./supervisor.ts": () => import("../convex/supervisor"),
+  "./agentProfiles.ts": () => import("../convex/agentProfiles"),
+  "./runs.ts": () => import("../convex/runs"),
   "./tasks.ts": () => import("../convex/tasks"),
   "./workspaces.ts": () => import("../convex/workspaces"),
   "./workstations.ts": () => import("../convex/workstations"),
@@ -779,4 +782,43 @@ describe("Node cleanup against a disposable repository", () => {
     expect(git(repo.path, ["rev-parse", "HEAD"])).toBe(originalHead);
     expect(git(repo.path, ["status", "--porcelain"])).toBe(originalStatus);
   });
+});
+
+it("keeps dispatching on a Mac with a long history of removed workspaces and settled runs", async () => {
+  const f = await fixture();
+  const sessionId = await f.session();
+  const taskId = await f.task(sessionId);
+  await f.t.run(async (ctx) => {
+    for (let index = 0; index < 1100; index++) {
+      const workspaceId = await ctx.db.insert("workspaces", {
+        workSessionId: sessionId,
+        taskId,
+        repositoryId: f.repositoryId,
+        repositoryLocationId: f.repositoryLocationId,
+        workstationId: f.workstationId,
+        kind: "worktree",
+        status: "removed",
+        baseRef: "main",
+        dirty: false,
+        changedFileCount: 0,
+        createdAt: NOW - 10 * DAY,
+        updatedAt: NOW - 9 * DAY,
+      });
+      await ctx.db.insert("agentRuns", {
+        workSessionId: sessionId,
+        taskId,
+        workspaceId,
+        workstationId: f.workstationId,
+        role: "builder",
+        runtime: "fake",
+        status: "completed",
+        attempt: 1,
+        lastActivityAt: NOW - 9 * DAY,
+        completedAt: NOW - 9 * DAY,
+      });
+    }
+  });
+  await expect(
+    f.node.mutation(api.supervisor.dispatch, { workstationId: f.workstationId }),
+  ).resolves.toBeNull();
 });

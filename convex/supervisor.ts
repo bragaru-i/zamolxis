@@ -546,17 +546,66 @@ export const acceptPlan = mutation({
   },
 });
 
+const DISPATCH_WORKSPACE_STATUSES = [
+  "requested",
+  "provisioning",
+  "ready",
+  "in_use",
+  "dirty",
+  "integrating",
+  "completed",
+  "error",
+] as const;
+const UNFINISHED_RUN_STATUSES = [
+  "queued",
+  "starting",
+  "running",
+  "waiting",
+  "needs_approval",
+  "stopping",
+  "lost",
+] as const;
+const TERMINAL_RUN_STATUSES = ["completed", "failed", "stopped"] as const;
+type RunStatus = Doc<"agentRuns">["status"];
+type RunQuery = {
+  take(n: number): Promise<Doc<"agentRuns">[]>;
+  order(order: "asc" | "desc"): { take(n: number): Promise<Doc<"agentRuns">[]> };
+};
+// Runs that still reserve capacity: every unfinished status, plus terminal runs whose
+// outcome has not been settled yet (always recent, so only the newest are read).
+// Settled runs accumulate forever and must not be scanned.
+async function unfinishedRuns(_ctx: MutationCtx, query: (status: RunStatus) => RunQuery) {
+  const runs: Doc<"agentRuns">[] = [];
+  for (const status of UNFINISHED_RUN_STATUSES) {
+    const rows = await query(status).take(1001);
+    if (rows.length > 1000) fail("RECONCILIATION_REQUIRED");
+    runs.push(...rows);
+  }
+  for (const status of TERMINAL_RUN_STATUSES) {
+    const recent = await query(status).order("desc").take(50);
+    runs.push(...recent.filter((run) => run.completedAt === undefined));
+  }
+  return runs;
+}
+
 // Each Node poll advances persisted intent; transactions reserve capacity.
 export const dispatch = mutation({
   args: { workstationId: v.id("workstations") },
   returns: v.null(),
   handler: async (ctx, args) => {
     await requireNode(ctx, args.workstationId);
-    const workspaces = await ctx.db
-      .query("workspaces")
-      .withIndex("by_workstation_status", (q) => q.eq("workstationId", args.workstationId))
-      .take(1001);
-    if (workspaces.length > 1000) fail("LIMIT_EXCEEDED");
+    // Removed and cleanup-pending workspaces accumulate forever; only live states matter here.
+    const workspaces: Doc<"workspaces">[] = [];
+    for (const status of DISPATCH_WORKSPACE_STATUSES) {
+      const rows = await ctx.db
+        .query("workspaces")
+        .withIndex("by_workstation_status", (q) =>
+          q.eq("workstationId", args.workstationId).eq("status", status),
+        )
+        .take(1001);
+      if (rows.length > 1000) fail("LIMIT_EXCEEDED");
+      workspaces.push(...rows);
+    }
     const taskIds = new Set(
       workspaces.flatMap((workspace) => (workspace.taskId ? [workspace.taskId] : [])),
     );
@@ -647,30 +696,29 @@ export const dispatch = mutation({
         continue;
       const workspace = await load(ctx, "workspaces", workspaceId);
       if (workspace.status !== "ready") continue;
-      const reservations = await ctx.db
-        .query("agentRuns")
-        .withIndex("by_workstation_status", (q) => q.eq("workstationId", args.workstationId))
-        .take(1001);
-      if (reservations.length > 1000) fail("RECONCILIATION_REQUIRED");
+      const reservations = await unfinishedRuns(ctx, (status) =>
+        ctx.db
+          .query("agentRuns")
+          .withIndex("by_workstation_status", (q) =>
+            q.eq("workstationId", args.workstationId).eq("status", status),
+          ),
+      );
       if (
-        reservations.filter(
-          (run) =>
-            run.completedAt === undefined && (run.role === "verifier") === (role === "verifier"),
-        ).length >= (role === "verifier" ? 1 : 3)
+        reservations.filter((run) => (run.role === "verifier") === (role === "verifier")).length >=
+        (role === "verifier" ? 1 : 3)
       )
         continue;
       const effective = await resolveAgentProfile(ctx, session.ownerId, session.productId, role);
       if (effective.profile?.maxConcurrency) {
-        const profileRuns = await ctx.db
-          .query("agentRuns")
-          .withIndex("by_profile", (q) => q.eq("agentProfileId", effective.profile!._id))
-          .take(1001);
-        if (profileRuns.length > 1000) fail("RECONCILIATION_REQUIRED");
-        if (
-          profileRuns.filter((run) => run.completedAt === undefined).length >=
-          effective.profile.maxConcurrency
-        )
-          continue;
+        const profileId = effective.profile._id;
+        const profileRuns = await unfinishedRuns(ctx, (status) =>
+          ctx.db
+            .query("agentRuns")
+            .withIndex("by_profile_status", (q) =>
+              q.eq("agentProfileId", profileId).eq("status", status),
+            ),
+        );
+        if (profileRuns.length >= effective.profile.maxConcurrency) continue;
       }
       const installation = await ctx.db
         .query("runtimeInstallations")

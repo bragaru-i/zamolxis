@@ -448,6 +448,7 @@ export default defineSchema({
     .index("by_workstation_status", ["workstationId", "status"])
     .index("by_parent", ["parentRunId"])
     .index("by_profile", ["agentProfileId"])
+    .index("by_profile_status", ["agentProfileId", "status"])
     .index("by_native_session", ["workstationId", "runtime", "nativeSessionId"]),
 
   runEvents: defineTable({

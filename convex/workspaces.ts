@@ -1,16 +1,17 @@
 import { v } from "convex/values";
+import type { Id } from "./_generated/dataModel";
 import {
   internalMutation,
-  mutation,
-  query,
   type MutationCtx,
+  mutation,
   type QueryCtx,
+  query,
 } from "./_generated/server";
-import type { Id } from "./_generated/dataModel";
 import { bounded, fail, load, ownSession, requireUser } from "./lib/access";
 import { enqueue } from "./lib/commands";
 import {
   assertRetentionDays,
+  CLEANUP_BATCH,
   CLEANUP_SCAN,
   DAY,
   DEFAULT_RETENTION_DAYS,
@@ -18,11 +19,10 @@ import {
   MAX_RETENTION_DAYS,
   MIN_RETENTION_DAYS,
   ONLINE_WITHIN,
-  requestWorkspaceCleanup,
   type RetentionCache,
+  requestWorkspaceCleanup,
   retentionDays,
   scheduleCleanupBatch,
-  CLEANUP_BATCH,
 } from "./lib/retention";
 export async function allocateWorkspace(
   ctx: MutationCtx,
@@ -54,10 +54,15 @@ export async function allocateWorkspace(
   if (input.taskId) {
     const task = await load(ctx, "tasks", input.taskId);
     if (task.workSessionId !== session._id) fail("FORBIDDEN");
-    const existing = await ctx.db
-      .query("workspaces")
-      .withIndex("by_task", (q) => q.eq("taskId", task._id))
-      .take(2);
+    // A removed workspace is history, never a reusable assignment.
+    const existing = (
+      await ctx.db
+        .query("workspaces")
+        .withIndex("by_task", (q) => q.eq("taskId", task._id))
+        .take(101)
+    )
+      .filter((workspace) => !["removed", "cleanup_pending"].includes(workspace.status))
+      .slice(0, 2);
     if (existing.length && !input.fresh) {
       const workspace = existing[0]!;
       if (
