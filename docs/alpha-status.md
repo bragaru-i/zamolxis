@@ -118,6 +118,23 @@ planned capability as shipped.
   treated as interrupted (the transcript is not read); real Repair and an approved
   real permission request are covered by controlled tests only; cost is not recorded
   (the CLI's cost figure is an estimate, not the subscription's billing).
+- **Per-repository GitHub publishing (branch `feat/repo-github-tokens`, not yet on main
+  or the Mac Node):** "Open pull request" pushes and opens the pull request with the
+  repository's own GitHub token from the Mac's login Keychain
+  (`app.zamolxis.github-token`, account `github.com/<owner>/<repo>`), via an inline
+  credential helper reading the token from the git child's environment (system/global
+  Git config ignored) and the GitHub REST API; the global Git/`gh` identity is never
+  used, a missing/invalid/expired/read-only token fails with `PUBLISH_GITHUB_*`.
+  `pnpm zamolxis github-token [owner/repo] [--remove]` (also a setup step) guides the
+  owner through GitHub's prefilled fine-grained token page and reads the token with
+  hidden input. The Node reports status/login/expiry (never the token) to
+  `repositoryLocations.githubAccess`, shown in Settings → Macs → Repositories. Codex,
+  Claude and verification checks run without `GH_TOKEN`/`GITHUB_TOKEN`/enterprise
+  variants. Tested with mocked GitHub API and a local bare remote only; no real token
+  or GitHub call has been exercised yet. Limits: `permissions.push` reflects the
+  account's role, so a read-only Contents token fails only at push time
+  (`PUBLISH_PUSH_FAILED`); repository hooks see the git environment during the push;
+  non-GitHub remotes still push with their own Git credentials.
 - **Run detail (#68):** tapping a run opens result, grouped live activity, changes
   (files, base → head, branch) and verification (evidence, trust decision, repairs).
 - **Setup repair (#69):** rerunning setup offers Check and repair, repositories,

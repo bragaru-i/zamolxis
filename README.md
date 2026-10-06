@@ -76,15 +76,45 @@ request"; after confirming the branch, base and title, `integration.publish`
 (owner-only, idempotent while pending or published) sends `integration.publish`
 to the Node holding the integration workspace, only while that workspace is clean
 at the exact trusted SHA. The Node re-checks clean state and HEAD, then pushes that
-exact commit to `origin` as `zamolxis/<short-task>-<sha7>` with the repository's
-own hooks (no `--no-verify`, never forced, never the default branch). Setup selects
-and verifies a GitHub publishing account for each GitHub repository; the Node uses
-that account's saved `gh` credential for the push without changing the globally
-active account. It then opens a pull request against the default branch (body: task description,
-verification evidence, trust decision, "Opened by Zamolxis; merge is a human
-decision"); otherwise the Task shows a compare link to open it yourself. Failures are reported as
+exact commit as `zamolxis/<short-task>-<sha7>` (repository hooks run; no
+`--no-verify`, never forced, never the default branch) and opens a pull request
+against the default branch (body: task description, verification evidence, trust
+decision, "Opened by Zamolxis; merge is a human decision"), or reuses the open one
+for that branch on a retry.
+
+**GitHub access is per repository.** Each GitHub repository uses its own GitHub token
+(a fine-grained personal access token with Contents and Pull requests: Read and write,
+limited to that repository), stored only in the login Keychain of the Mac that
+publishes (service `app.zamolxis.github-token`, account `github.com/<owner>/<repo>`
+from the origin remote). Add or replace it on that Mac with
+`pnpm zamolxis github-token [owner/repo]` (also offered by `pnpm zamolxis setup`): it
+explains the steps, opens GitHub's prefilled token page (repository selection can't be
+prefilled: choose "Only select repositories" and the repository), reads the token with
+hidden input and saves it only once GitHub confirms it can push; `--remove` deletes
+it. The Node checks it with `GET /user` and `GET /repos/{owner}/{repo}`
+(`permissions.push`, token expiry), pushes over HTTPS with an inline credential helper
+that reads the token from the git child's environment (never argv; system/global Git
+config and credential helpers are ignored, so a global `insteadOf` or the Mac's
+`osxkeychain` account is never used) and opens the pull request through the GitHub
+REST API with the same token. The global Git credentials and the `gh` CLI account are
+never used for GitHub; a missing, rejected, expired or read-only token fails with
+`PUBLISH_GITHUB_TOKEN_MISSING`, `PUBLISH_GITHUB_TOKEN_INVALID`,
+`PUBLISH_GITHUB_TOKEN_EXPIRED` or `PUBLISH_GITHUB_NO_PUSH`. The token never reaches
+Convex, the web app, logs or any agent (Codex, Claude and repository checks run with
+`GH_TOKEN`, `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN` and `GITHUB_ENTERPRISE_TOKEN`
+removed). The Node reports only the status (`ok`, `expiring` within 14 days,
+`expired`, `invalid`, `no_push`, `missing`, `unreachable`), the GitHub login and the
+expiry date, at most every 30 minutes per repository and within about a minute of a
+token change; Settings → Macs → Repositories shows it ("GitHub: publishing as … ·
+token expires in … days") with a "Create a token on GitHub" link. Limits: the
+`permissions.push` check reflects the account's role, so a token whose Contents
+permission is read-only passes the check and fails at push time
+(`PUBLISH_PUSH_FAILED`); repository hooks run during the push as the owner and can see
+the git process environment; non-GitHub remotes are still pushed with the
+repository's own Git credentials and get no pull request link. Failures are reported as
 codes (`PUBLISH_DIRTY`, `PUBLISH_SHA_MISMATCH`, `PUBLISH_PUSH_FAILED`,
-`PUBLISH_PR_FAILED`, `PUBLISH_BASE_UNKNOWN`, `PUBLISH_INTERRUPTED`, …) explained in
+`PUBLISH_PR_FAILED`, `PUBLISH_BASE_UNKNOWN`, `PUBLISH_GITHUB_*`, `PUBLISH_INTERRUPTED`,
+…) explained in
 plain language, never with remote output; a failed publication can be retried and
 does not change the Task or Session outcome. Merging stays a human decision.
 

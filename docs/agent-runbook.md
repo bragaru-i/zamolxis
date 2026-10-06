@@ -73,6 +73,35 @@ are expected; lines that keep appearing are not. Runs in flight resume after a
 restart (Codex `thread/resume`), but avoid restarting during active work anyway.
 `pnpm zamolxis setup --repair` is the non-interactive health check and repair.
 
+## GitHub tokens for publishing (per repository, on the Mac)
+
+Each GitHub repository a Mac publishes to needs its own fine-grained personal access
+token in that Mac's login Keychain (service `app.zamolxis.github-token`, account
+`github.com/<owner>/<repo>`). The Node uses it only to push the trusted
+`zamolxis/*` branch and open the pull request; it is never sent to Convex, logged,
+put on a command line or given to agents. The global `gh` account and Git credential
+helpers are deliberately not used: they belong to whichever account is signed in on
+the Mac, which differs per product.
+
+Add or rotate (run in Terminal on that Mac, signed in to GitHub as the account that
+should publish):
+
+```bash
+cd /Users/Shared/projects/zamolxis
+pnpm zamolxis github-token bragaru-i/zamolxis    # or without a name: all GitHub repositories
+```
+
+It opens GitHub's prefilled page (name, description, resource owner, 90 days,
+Contents + Pull requests: Read and write). Choose "Only select repositories" → the
+repository, generate, paste at the hidden prompt. The token is saved only after
+`GET /user` and `GET /repos/{owner}/{repo}` confirm push access. The running Node
+picks a new token up within about a minute (no restart) and Settings → Macs →
+Repositories shows "publishing as <login> · token expires in N days". Remove with
+`pnpm zamolxis github-token <owner/repo> --remove` (then revoke it on GitHub).
+Without a terminal (`setup --repair`, scripts) the command only prints statuses.
+Agents must never run `github-token` with a real token or read the Keychain item; tests
+use `MemoryRepositoryTokenStore` and mocked fetch.
+
 ## Inspecting production safely
 
 `node scripts/prod-inspect.mjs data <table> [limit] [fields]` prints recent rows
@@ -146,10 +175,10 @@ against a written contract. When lanes are integrated:
 - Setup's service reload must wait for launchd to finish unloading (#70).
 - GitHub CI sometimes leaves a job queued without a runner until it is cancelled
   after 15 minutes; re-run it before treating it as a failure.
-- Setup records a publishing account per GitHub repository. The Node resolves it
-  with `gh auth token --user` for each push and PR; it never changes the globally
-  active account. Rerun setup's repository flow to select an account for a new or
-  legacy repository.
+- "Open pull request" no longer uses the Mac's `gh` account or global Git credentials:
+  each repository publishes with its own token (see below). Before this change the
+  active `gh` account (`ion-wellcopy`) made pushes to `bragaru-i` repositories fail with
+  `PUBLISH_PUSH_FAILED`.
 
 ## Waiting on the owner
 
