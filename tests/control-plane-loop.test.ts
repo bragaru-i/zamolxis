@@ -1,45 +1,46 @@
 import { spawn } from "node:child_process";
-import { homedir, tmpdir } from "node:os";
 import {
-  rmSync,
-  mkdirSync,
-  symlinkSync,
-  existsSync,
-  copyFileSync,
   chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
   mkdtempSync,
+  rmSync,
+  symlinkSync,
 } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { convexTest } from "convex-test";
 import { afterEach, expect, it } from "vitest";
-import { api } from "../convex/_generated/api";
-import type { Id } from "../convex/_generated/dataModel";
-import schema from "../convex/schema";
-import { seedHuman } from "./fixtures/auth";
-import { runFakeLoopOnce } from "../apps/node/src/fake-loop";
 import {
   ConvexControlPlaneTransport,
   parseExecutionCommand,
   parsePendingCommand,
 } from "../apps/node/src/convex-control-plane";
-import { ControlPlaneDriver } from "../packages/node-core/src/control-plane/driver";
+import { runFakeLoopOnce } from "../apps/node/src/fake-loop";
+import { api } from "../convex/_generated/api";
+import type { Id } from "../convex/_generated/dataModel";
+import schema from "../convex/schema";
+import type { NormalizedRunEventDto } from "../packages/contracts/src";
+import type { WorkstationId } from "../packages/contracts/src/shared/ids";
+import { git } from "../packages/git/src/repository-inspector";
 import type { ControlPlaneTransport } from "../packages/node-core/src/control-plane/driver";
+import { ControlPlaneDriver } from "../packages/node-core/src/control-plane/driver";
 import { LocalStateStore } from "../packages/node-core/src/persistence/local-state";
 import { RepositoryRegistry } from "../packages/node-core/src/repository/repository-registry";
 import { RuntimeManager } from "../packages/node-core/src/runtime/runtime-manager";
-import { WorkspaceManager } from "../packages/node-core/src/workspace/workspace-manager";
 import { repositoryFixture } from "../packages/node-core/src/testing/git-fixture";
-import { FakeRuntime } from "../packages/runtime-core/src/fake/fake-runtime";
-import { RuntimeRegistry } from "../packages/runtime-core/src/runtime-registry";
-import type { NormalizedRunEventDto } from "../packages/contracts/src";
-import type { AgentRuntime, StartRunInput } from "../packages/runtime-core/src/agent-runtime";
-import type { WorkstationId } from "../packages/contracts/src/shared/ids";
-import { git } from "../packages/git/src/repository-inspector";
-import { CodexRuntime, type CodexConnection } from "../packages/runtime-codex/src/codex-runtime";
+import { WorkspaceManager } from "../packages/node-core/src/workspace/workspace-manager";
 import {
   AppServerClient,
   type AppServerNotification,
 } from "../packages/runtime-codex/src/app-server-client";
+import { type CodexConnection, CodexRuntime } from "../packages/runtime-codex/src/codex-runtime";
+import type { AgentRuntime, StartRunInput } from "../packages/runtime-core/src/agent-runtime";
+import { FakeRuntime } from "../packages/runtime-core/src/fake/fake-runtime";
+import { RuntimeRegistry } from "../packages/runtime-core/src/runtime-registry";
+import { seedHuman } from "./fixtures/auth";
+
 const modules = {
   "./trust.ts": () => import("../convex/trust"),
   "./supervisor.ts": () => import("../convex/supervisor"),
@@ -1217,3 +1218,128 @@ it("shows a blocking Supervisor's progress and stops it from the owner's message
   expect(git(f.path, ["rev-parse", "HEAD"])).toBe(f.originalHead);
   expect(git(f.path, ["status", "--porcelain"])).toBe(f.originalStatus);
 }, 60_000);
+
+it.skipIf(process.env.ZAMOLXIS_CODEX_ACCEPTANCE !== "1")(
+  "real Codex Supervisor answers a question without builders and can be stopped",
+  async () => {
+    const f = await fixture("codex");
+    const profile = mkdtempSync(join(tmpdir(), "zamolxis-supervisor-native-"));
+    cleanup.push(() => rmSync(profile, { recursive: true, force: true }));
+    chmodSync(profile, 0o700);
+    copyFileSync(
+      join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "auth.json"),
+      join(profile, "auth.json"),
+    );
+    chmodSync(join(profile, "auth.json"), 0o600);
+    const children: ReturnType<typeof spawn>[] = [];
+    cleanup.push(() => {
+      for (const child of children) child.kill();
+    });
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(
+      join(f.path, "package.json"),
+      JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"', lint: "true" } }),
+    );
+    git(f.path, ["add", "."]);
+    git(f.path, ["commit", "-m", "acceptance scripts"]);
+    const canonicalSha = git(f.path, ["rev-parse", "HEAD"]);
+    const productId = await f.t.run(async (ctx) => {
+      const session = await ctx.db.get("workSessions", f.workSessionId);
+      const id = await ctx.db.insert("products", {
+        ownerId: session!.ownerId,
+        name: "Native",
+        slug: "native-supervisor",
+        createdAt: 0,
+        updatedAt: 0,
+      });
+      await ctx.db.patch("repositories", f.repositoryId, { productId: id });
+      await ctx.db.patch("repositoryLocations", f.repositoryLocationId, {
+        lastKnownHead: canonicalSha,
+      });
+      return id;
+    });
+    const runtime = new CodexRuntime({
+      connect: (cwd) =>
+        new AppServerClient({
+          cwd,
+          launch: (executable, assignedCwd) => {
+            const child = spawn(executable, ["app-server", "--listen", "stdio://"], {
+              cwd: assignedCwd,
+              env: { ...process.env, CODEX_HOME: profile },
+              shell: false,
+              stdio: ["pipe", "pipe", "ignore"],
+            });
+            children.push(child);
+            return child;
+          },
+        }),
+    });
+    const n = await f.boot(runtime);
+    const driver = n.driver();
+    const { RepositoryDiscovery } = await import(
+      "../packages/node-core/src/capabilities/repository-discovery"
+    );
+    driver.setRepositoryDiscovery(new RepositoryDiscovery(n.workspaces));
+
+    // 1. A question is answered in chat: no tasks, no runs, the repository untouched.
+    const sessionId = await f.user.mutation(api.supervisor.submit, {
+      productId,
+      repositoryId: f.repositoryId,
+      text: "Question only, do not change anything: which npm scripts does package.json define? Answer in one sentence.",
+      idempotencyKey: "native-answer",
+    });
+    for (let tick = 0; tick < 5; tick++) {
+      await driver.tick();
+      const [message] = await f.user.query(api.supervisor.messages, { workSessionId: sessionId });
+      if (message?.decision) break;
+    }
+    const [answered] = await f.user.query(api.supervisor.messages, { workSessionId: sessionId });
+    expect(answered).toMatchObject({ decision: "answer", planTaskCount: 0 });
+    expect(String(answered?.reply)).toMatch(/test/);
+    expect(String(answered?.reply)).toMatch(/lint/);
+    expect(await f.user.query(api.tasks.listBySession, { workSessionId: sessionId })).toEqual([]);
+    expect(await f.user.query(api.runs.listBySession, { workSessionId: sessionId })).toEqual([]);
+    expect((await f.user.query(api.sessions.get, { workSessionId: sessionId })).status).toBe(
+      "waiting",
+    );
+
+    // 2. A follow-up that needs a long investigation is stopped while the Supervisor works.
+    await f.user.mutation(api.supervisor.submit, {
+      productId,
+      repositoryId: f.repositoryId,
+      text: "Question only: read every file in the repository one by one, run `git log` and `ls -la` several times, and then write a very long, detailed report about each file.",
+      idempotencyKey: "native-stop",
+      sessionId,
+    });
+    const ticking = driver.tick();
+    let stopTarget: string | undefined;
+    for (let attempt = 0; attempt < 240 && !stopTarget; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const messages = await f.user.query(api.supervisor.messages, { workSessionId: sessionId });
+      const pending = messages[1];
+      if (pending && !pending.decision && pending.progress) stopTarget = pending._id;
+      if (pending?.decision) break;
+    }
+    if (!stopTarget) {
+      await ticking;
+      throw new Error("The Supervisor finished before it could be stopped");
+    }
+    await f.user.mutation(api.supervisor.stop, { textCommandId: stopTarget as never });
+    for (let attempt = 0; attempt < 60; attempt++) {
+      await driver.control();
+      const messages = await f.user.query(api.supervisor.messages, { workSessionId: sessionId });
+      if (messages[1]?.stopped || messages[1]?.decision) break;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    await ticking.catch(() => undefined);
+    const messages = await f.user.query(api.supervisor.messages, { workSessionId: sessionId });
+    expect(messages[1]).toMatchObject({ stopped: true });
+    expect(messages[1]?.decision).toBeUndefined();
+    expect((await f.user.query(api.sessions.get, { workSessionId: sessionId })).status).toBe(
+      "waiting",
+    );
+    expect(git(f.path, ["rev-parse", "HEAD"])).toBe(canonicalSha);
+    expect(git(f.path, ["status", "--porcelain"])).toBe("");
+  },
+  900_000,
+);
