@@ -20,6 +20,22 @@ export const runtimeModel = v.object({
   efforts: v.optional(v.array(v.string())),
   defaultEffort: v.optional(v.string()),
 });
+// What a Mac reports about one repository's GitHub publishing token (mirrors GitHubAccess
+// in packages/application/src/execution/github-access.ts). Never the token itself.
+export const githubAccess = v.object({
+  status: v.union(
+    v.literal("ok"),
+    v.literal("expiring"),
+    v.literal("expired"),
+    v.literal("invalid"),
+    v.literal("no_push"),
+    v.literal("missing"),
+    v.literal("unreachable"),
+  ),
+  login: v.optional(v.string()),
+  expiresAt: v.optional(v.number()),
+  checkedAt: v.number(),
+});
 export const supervisorLogStatus = v.union(
   v.literal("started"),
   v.literal("passed"),
@@ -362,6 +378,8 @@ export default defineSchema({
     ),
     verifiedAt: v.optional(v.number()),
     removedAt: v.optional(v.number()),
+    // GitHub publishing access as this Mac last checked it (status only, no secret).
+    githubAccess: v.optional(githubAccess),
     updatedAt: v.number(),
   })
     .index("by_repository", ["repositoryId"])

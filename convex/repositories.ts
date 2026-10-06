@@ -1,7 +1,9 @@
+import { githubRepositoryFromRemote, githubSlug, githubTokenUrl } from "@zamolxis/application";
 import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { type MutationCtx, mutation, query } from "./_generated/server";
 import { bounded, fail, load, requireNode, requireUser } from "./lib/access";
+import { githubAccess } from "./schema";
 export const create = mutation({
   args: {
     name: v.string(),
@@ -103,6 +105,9 @@ export const listLocations = query({
       repositoryName: v.string(),
       canonicalPath: v.string(),
       status: v.string(),
+      // Present for GitHub repositories: where the owner creates its publishing token.
+      github: v.optional(v.object({ slug: v.string(), tokenUrl: v.string() })),
+      githubAccess: v.optional(githubAccess),
     }),
   ),
   handler: async (ctx, args) => {
@@ -119,11 +124,16 @@ export const listLocations = query({
         .filter((location) => location.status !== "removed")
         .map(async (location) => {
           const repository = await ctx.db.get("repositories", location.repositoryId);
+          const github = githubRepositoryFromRemote(repository?.remoteUrl);
           return {
             repositoryLocationId: location._id,
             repositoryName: repository?.name ?? "Repository",
             canonicalPath: location.canonicalPath,
             status: location.status,
+            ...(github
+              ? { github: { slug: githubSlug(github), tokenUrl: githubTokenUrl(github) } }
+              : {}),
+            ...(location.githubAccess ? { githubAccess: location.githubAccess } : {}),
           };
         }),
     );
