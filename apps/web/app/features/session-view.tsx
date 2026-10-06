@@ -46,6 +46,8 @@ interface Session {
   status: string;
   activeRunCount?: number;
   contextSummary?: string;
+  /** The computer the Session's work runs on (Sessions from before have none). */
+  workstationName?: string;
 }
 interface UserMessage extends ConversationMessage {
   _id: string;
@@ -142,6 +144,9 @@ export function SessionView({
           subtitle={
             <>
               {session && <SessionStatusBadge status={session.status} />}
+              {session?.workstationName && (
+                <span className="z-xsmall z-muted">Runs on {session.workstationName}</span>
+              )}
               {indicator}
             </>
           }

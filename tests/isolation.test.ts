@@ -244,6 +244,9 @@ it("keeps every user-facing function closed to a second approved account", async
   await denied("repositories.listLocations", () =>
     other.query(api.repositories.listLocations, { workstationId: o.workstationId }),
   );
+  await denied("repositories.computers", () =>
+    other.query(api.repositories.computers, { repositoryId: o.repositoryId }),
+  );
   await denied("admin.listUsers", () => other.query(api.admin.listUsers, {}));
 
   // Lists scoped to the caller show none of the owner's data.

@@ -139,6 +139,8 @@ export default defineSchema({
     repositoryId: v.id("repositories"),
     workSessionId: v.id("workSessions"),
     requestedSessionId: v.optional(v.id("workSessions")),
+    // The computer the owner chose for a new Session, when they chose one.
+    requestedWorkstationId: v.optional(v.id("workstations")),
     planningWorkspaceId: v.optional(v.id("workspaces")),
     planDigest: v.optional(v.string()),
     contextSha: v.optional(v.string()),
@@ -410,6 +412,9 @@ export default defineSchema({
     completedAt: v.optional(v.number()),
     // Set when a follow-up reopens a finished Session; earlier tasks no longer decide its outcome.
     reopenedAt: v.optional(v.number()),
+    // The computer this Session's work runs on: chosen by the owner or picked at creation.
+    // Follow-ups stay there (its worktrees hold the work). Absent on Sessions from before.
+    workstationId: v.optional(v.id("workstations")),
   })
     .index("by_owner_activity", ["ownerId", "lastActivityAt"])
     .index("by_owner_status_activity", ["ownerId", "status", "lastActivityAt"])

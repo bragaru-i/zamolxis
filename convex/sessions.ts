@@ -34,7 +34,14 @@ export const listMine = query({
 export const get = query({
   args: { workSessionId: v.id("workSessions") },
   returns: v.any(),
-  handler: (ctx, args) => ownSession(ctx, args.workSessionId),
+  handler: async (ctx, args) => {
+    const session = await ownSession(ctx, args.workSessionId);
+    // The computer the Session's work runs on, named for the owner.
+    const device = session.workstationId
+      ? await ctx.db.get("workstations", session.workstationId)
+      : null;
+    return { ...session, ...(device ? { workstationName: device.name } : {}) };
+  },
 });
 export const create = mutation({
   args: {

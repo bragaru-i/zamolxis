@@ -76,6 +76,11 @@ vi.mock("convex/react", () => ({
         },
       ];
     if (name === "supervisor:products") return [];
+    if (name === "repositories:computers")
+      return [
+        { workstationId: "w1", name: "MacBook", online: true, runtimes: ["codex", "claude"] },
+        { workstationId: "w2", name: "Linux box", online: false, runtimes: [] },
+      ];
     if (name === "orchestrator:conversations")
       return [
         { _id: "c1", title: "What is going on?", lastActivityAt: Date.now(), createdAt: 1 },
@@ -90,7 +95,12 @@ vi.mock("convex/react", () => ({
   },
 }));
 
-import { SessionList } from "./sessions";
+import { computerDescription, SessionList } from "./sessions";
+
+it("describes a computer by whether it is online and which agents it has", () => {
+  expect(computerDescription({ online: true, runtimes: ["codex"] })).toBe("Online · Codex");
+  expect(computerDescription({ online: false, runtimes: [] })).toBe("Offline · no agent");
+});
 
 it("renders the global answer and its linked session separately from the sessions list", () => {
   const html = renderToStaticMarkup(
@@ -127,6 +137,11 @@ it("renders the global answer and its linked session separately from the session
   expect(html).toContain("Fix checkout totals rounding.");
   expect(html).toContain("Review proposal");
   expect(html).toContain("Open Work Session and start planning");
+  // Two computers have the repository: the owner may choose where the work runs.
+  expect(html).toContain("Run on");
+  expect(html).toContain("Any online computer");
+  expect(html).toContain("Online · Codex, Claude");
+  expect(html).toContain("Offline · no agent");
   expect(html).toContain("Writing a reply…");
   expect(html).toContain("a fuller answer is on its way");
   expect(html).toContain("No Work Sessions yet");

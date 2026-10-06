@@ -513,6 +513,23 @@ interface OrchestratorMessage {
   links: OrchestratorLink[];
 }
 
+/** A computer that has the repository, as `repositories.computers` reports it. */
+interface Computer {
+  workstationId: Id<"workstations">;
+  name: string;
+  platform?: string;
+  online: boolean;
+  runtimes: string[];
+}
+const RUNTIME_NAMES: Record<string, string> = { codex: "Codex", claude: "Claude" };
+/** "Online · Codex, Claude" / "Offline"; the agents it has are what matters for the choice. */
+export function computerDescription(computer: Pick<Computer, "online" | "runtimes">): string {
+  const agents = computer.runtimes.map((runtime) => RUNTIME_NAMES[runtime] ?? runtime);
+  return [computer.online ? "Online" : "Offline", agents.length ? agents.join(", ") : "no agent"]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 // After this long the Node is not waited for; the summary shown is the answer.
 const THINKING_SHOWN_MS = 10 * 60_000;
 
@@ -543,6 +560,12 @@ function OpenProposal({
     api.repositories.listByProduct,
     productId ? { productId } : "skip",
   ) as Repository[] | undefined;
+  // "Run on": offered only when more than one computer has the repository.
+  const computers = useQuery(
+    api.repositories.computers,
+    repositoryId ? { repositoryId } : "skip",
+  ) as Computer[] | undefined;
+  const [workstationId, setWorkstationId] = useState<Id<"workstations"> | "">("");
   if (message.proposalSessionId) return null;
   if (!productId || !repositoryId)
     return (
@@ -576,6 +599,25 @@ function OpenProposal({
               {repositories?.find((repository) => repository._id === repositoryId)?.name ??
                 "Repository"}
             </p>
+            {computers && computers.length > 1 && (
+              <Picker
+                label="Run on"
+                value={workstationId}
+                options={[
+                  {
+                    value: "",
+                    label: "Any online computer",
+                    description: "Zamolxis picks the first computer that is online with the agent.",
+                  },
+                  ...computers.map((computer) => ({
+                    value: computer.workstationId,
+                    label: computer.name,
+                    description: computerDescription(computer),
+                  })),
+                ]}
+                onChange={(value) => setWorkstationId(value as Id<"workstations"> | "")}
+              />
+            )}
           </div>
           <div className="z-row">
             <Button variant="secondary" onClick={() => setReviewing(false)}>
@@ -587,7 +629,14 @@ function OpenProposal({
                 setBusy(true);
                 setError("");
                 try {
-                  onOpen(await open({ messageId: message._id, productId, repositoryId }));
+                  onOpen(
+                    await open({
+                      messageId: message._id,
+                      productId,
+                      repositoryId,
+                      ...(workstationId ? { workstationId } : {}),
+                    }),
+                  );
                 } catch (failure) {
                   setError(explainError(failure, "Could not open this work. Try again."));
                 } finally {

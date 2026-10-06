@@ -735,3 +735,82 @@ it("stores bounded Supervisor progress only from the planning Node while in flig
   stored = await f.t.run((ctx) => ctx.db.get("textCommands", textCommandId));
   expect(stored?.supervisorActivity).toBe("Running rg TODO");
 });
+
+it("runs a Session on the computer the owner chose and keeps follow-ups there", async () => {
+  const f = await fixture();
+  // A second computer with the same repository, online with Codex.
+  const secondId = await f.user.mutation(api.workstations.register, {
+    name: "Second",
+    nodeAuthSubject: "device-2",
+  });
+  const second = f.t.withIdentity({
+    subject: "device-2",
+    tokenIdentifier: "device-2",
+    ownerSubject: "alice",
+  });
+  await second.mutation(api.node.heartbeat, {
+    workstationId: secondId,
+    instanceId: "instance-2",
+    runtimeCapabilities: [{ runtime: "codex", capabilities: ["start", "stop"] }],
+  });
+  await second.mutation(api.node.registerLocation, {
+    workstationId: secondId,
+    repositoryId: f.repositoryId,
+    canonicalPath: "/second",
+    gitCommonDir: "/second/.git",
+    headSha: SHA,
+  });
+  expect(await f.user.query(api.repositories.computers, { repositoryId: f.repositoryId })).toEqual([
+    { workstationId: f.workstationId, name: "Node", online: true, runtimes: ["codex"] },
+    { workstationId: secondId, name: "Second", online: true, runtimes: ["codex"] },
+  ]);
+  const submit = (extra: Record<string, unknown>, key: string) =>
+    f.user.mutation(api.supervisor.submit, {
+      productId: f.productId,
+      repositoryId: f.repositoryId,
+      text: "Add a README",
+      idempotencyKey: key,
+      ...extra,
+    } as never);
+  const sessionId = await submit({ workstationId: secondId }, "run-on-1");
+  expect(await f.user.query(api.sessions.get, { workSessionId: sessionId })).toMatchObject({
+    workstationId: secondId,
+    workstationName: "Second",
+  });
+  // Each Node sees only its own queue: the plan lands on the chosen computer.
+  const pendingOn = async (client: typeof f.node, workstationId: Id<"workstations">) =>
+    (await client.query(api.node.listPending, { workstationId })).filter(
+      (command) => command.type === "repository.plan",
+    ).length;
+  expect(await pendingOn(second, secondId)).toBe(1);
+  expect(await pendingOn(f.node, f.workstationId)).toBe(0);
+  // Replaying the same message with another computer is a conflict, not a second Session.
+  await expect(submit({ workstationId: f.workstationId }, "run-on-1")).rejects.toThrow(
+    "COMMAND_CONFLICT",
+  );
+  // A follow-up stays on the Session's computer even when the first one is asked for.
+  await submit({ sessionId, workstationId: f.workstationId }, "run-on-2");
+  expect(await pendingOn(second, secondId)).toBe(2);
+  expect(await pendingOn(f.node, f.workstationId)).toBe(0);
+  // A computer that does not have the repository, or is offline, cannot be chosen.
+  const bare = await f.user.mutation(api.workstations.register, {
+    name: "Bare",
+    nodeAuthSubject: "device-3",
+  });
+  await expect(submit({ workstationId: bare }, "run-on-3")).rejects.toThrow("INVALID_ARGUMENT");
+  await f.t.run(async (ctx) => {
+    await ctx.db.patch("workstations", secondId, { status: "offline" });
+  });
+  await expect(submit({ workstationId: secondId }, "run-on-4")).rejects.toThrow(
+    "NODE_OR_RUNTIME_OFFLINE",
+  );
+  // Without a choice the first online computer is taken, as before.
+  const auto = await submit({}, "run-on-5");
+  expect(await f.user.query(api.sessions.get, { workSessionId: auto })).toMatchObject({
+    workstationId: f.workstationId,
+  });
+  // Another account cannot see the owner's computers for this repository.
+  await expect(
+    f.other.query(api.repositories.computers, { repositoryId: f.repositoryId }),
+  ).rejects.toThrow("FORBIDDEN");
+});
