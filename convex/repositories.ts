@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { type MutationCtx, mutation, query } from "./_generated/server";
 import { bounded, fail, load, requireNode, requireUser } from "./lib/access";
+import { deviceOnline } from "./lib/devices";
 import { canonicalRepository } from "./lib/repositories";
 import { githubAccess } from "./schema";
 export const create = mutation({
@@ -139,6 +140,54 @@ export const listLocations = query({
           };
         }),
     );
+  },
+});
+
+// The owner's computers that have this repository, for the "Run on" choice when a Session
+// starts: a computer is offered when its copy of the repository is usable, with whether its
+// Node is online now and which runtimes it has.
+export const computers = query({
+  args: { repositoryId: v.id("repositories") },
+  returns: v.array(
+    v.object({
+      workstationId: v.id("workstations"),
+      name: v.string(),
+      platform: v.optional(v.string()),
+      online: v.boolean(),
+      runtimes: v.array(v.string()),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    const owner = await requireUser(ctx);
+    const repository = await canonicalRepository(ctx, args.repositoryId);
+    if (repository.ownerId !== owner._id) fail("FORBIDDEN");
+    const locations = await ctx.db
+      .query("repositoryLocations")
+      .withIndex("by_repository", (q) => q.eq("repositoryId", repository._id))
+      .take(33);
+    if (locations.length > 32) fail("LIMIT_EXCEEDED");
+    const now = Date.now();
+    const result = [];
+    for (const location of locations) {
+      if (location.status !== "available") continue;
+      const device = await ctx.db.get("workstations", location.workstationId);
+      if (!device || device.ownerId !== owner._id || device.status === "revoked") continue;
+      const runtimes = await ctx.db
+        .query("runtimeInstallations")
+        .withIndex("by_workstation", (q) => q.eq("workstationId", device._id))
+        .take(33);
+      result.push({
+        workstationId: device._id,
+        name: device.name,
+        ...(device.platform ? { platform: device.platform } : {}),
+        online: deviceOnline(device, now),
+        runtimes: runtimes
+          .filter((runtime) => runtime.status === "available")
+          .map((runtime) => runtime.runtime)
+          .sort(),
+      });
+    }
+    return result.sort((a, b) => a.name.localeCompare(b.name));
   },
 });
 

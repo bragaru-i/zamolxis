@@ -59,6 +59,12 @@ beforeEach(() => {
 });
 
 describe("SessionView conversation", () => {
+  it("names the computer the Session runs on when it is known", () => {
+    expect(
+      render({ status: "planning", workstationName: "Ion's MacBook Pro" } as never, []),
+    ).toContain("Runs on Ion&#x27;s MacBook Pro");
+    expect(render({ status: "planning" }, [])).not.toContain("Runs on");
+  });
   it("shows a thinking status while the Supervisor works", () => {
     const html = render({ status: "planning" }, [{ planStatus: "claimed" }]);
     expect(html).toContain('role="status"');
