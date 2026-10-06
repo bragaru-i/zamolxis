@@ -22,6 +22,7 @@ import {
   formatCost,
   formatTokens,
   SessionUsage,
+  usageDetail,
   UsageSettings,
   type UsageTotals,
 } from "./usage";
@@ -30,8 +31,12 @@ function totals(overrides: Partial<UsageTotals> = {}): UsageTotals {
   return {
     inputTokens: 0,
     cachedInputTokens: 0,
+    freshInputTokens: 0,
+    cacheWriteInputTokens: 0,
     outputTokens: 0,
+    reasoningOutputTokens: 0,
     totalTokens: 0,
+    modelCalls: 0,
     items: 1,
     reported: 1,
     ...overrides,
@@ -54,6 +59,26 @@ describe("formatting", () => {
     expect(coverageNote(totals())).toBeUndefined();
     expect(coverageNote(totals({ items: 3, reported: 2 }))).toContain("2 of 3");
   });
+  it("says where processed tokens went, from reported counters only", () => {
+    expect(usageDetail(totals({ reported: 0 }))).toBeUndefined();
+    expect(
+      usageDetail(
+        totals({
+          inputTokens: 2_577_180,
+          cachedInputTokens: 2_491_520,
+          freshInputTokens: 85_660,
+          outputTokens: 13_815,
+          reasoningOutputTokens: 1_676,
+          totalTokens: 2_590_995,
+          modelCalls: 41,
+        }),
+      ),
+    ).toBe("41 calls · 85,660 fresh · 2,491,520 cached · 13,815 out, 1,676 reasoning");
+    // Runtimes that report no calls or reasoning leave them out instead of showing zero.
+    expect(usageDetail(totals({ inputTokens: 10, outputTokens: 2, totalTokens: 12 }))).toBe(
+      "10 fresh · 2 out",
+    );
+  });
 });
 
 describe("SessionUsage", () => {
@@ -70,7 +95,17 @@ describe("SessionUsage", () => {
         total: totals({ totalTokens: 1500, items: 3, reported: 2 }),
         byRole: [
           { role: "supervisor", ...totals({ totalTokens: 500 }) },
-          { role: "builder", ...totals({ totalTokens: 1000, items: 2 }) },
+          {
+            role: "builder",
+            ...totals({
+              totalTokens: 1000,
+              inputTokens: 900,
+              cachedInputTokens: 700,
+              outputTokens: 100,
+              modelCalls: 4,
+              items: 2,
+            }),
+          },
         ],
         byModel: [
           { model: "gpt-5", ...totals({ totalTokens: 1000 }) },
@@ -84,6 +119,7 @@ describe("SessionUsage", () => {
     expect(html).toContain("1,500 tokens");
     expect(html).toContain("Supervisor");
     expect(html).toContain("Builder");
+    expect(html).toContain("4 calls · 200 fresh · 700 cached · 100 out");
     expect(html).toContain("gpt-5");
     expect(html).toContain("Model not reported");
     expect(html).toContain("2 of 3 agent turns reported usage");
@@ -151,7 +187,9 @@ describe("UsageSettings", () => {
     expect(html).toContain("98,765");
     expect(html).toContain("Build dashboard");
     expect(html).toContain("90,000 tokens");
-    expect(html).not.toContain(">Cost<");
+    // Codex and Claude logins are subscriptions: no price, and never an estimate.
+    expect(html).toContain("Subscription");
+    expect(html).not.toContain("$");
     expect(html).toContain("never estimates it");
   });
 

@@ -186,7 +186,22 @@ describe("formatting", () => {
         cachedInputTokens: 0,
         outputTokens: 345,
       }),
-    ).toBe("12,345 tokens (12,000 in · 345 out)");
+    ).toBe("12,345 tokens (12,000 fresh · 345 out)");
+    expect(
+      tokensLabel({
+        totalTokens: 2_590_995,
+        inputTokens: 2_577_180,
+        cachedInputTokens: 2_491_520,
+        outputTokens: 13_815,
+        reasoningOutputTokens: 1_676,
+        modelCalls: 41,
+      }),
+    ).toBe(
+      "2,590,995 tokens (41 calls · 85,660 fresh · 2,491,520 cached · 13,815 out, 1,676 reasoning)",
+    );
+    expect(tokensLabel({ totalTokens: 10, inputTokens: 8, outputTokens: 2 })).toBe(
+      "10 tokens (8 in · 2 out)",
+    );
     expect(runtimeLabel({ runtime: "codex" })).toBe("Codex");
     expect(runtimeLabel({ runtime: "codex", modelRequested: "gpt-5" })).toBe("Codex · gpt-5");
     expect(runtimeLabel({ runtime: "x", modelRequested: "a", modelActual: "b" })).toBe(
@@ -316,6 +331,7 @@ describe("RunDetail", () => {
     expect(html).toContain("Codex · gpt-5-codex");
     expect(html).toContain("1 min 34 s");
     expect(html).toContain("48,211 tokens (45,000 in · 3,211 out)");
+    expect(html).toContain("Subscription");
     expect(html).toContain("<strong>pagination</strong>");
     expect(html).toContain("aaaaaaa → bbbbbbb");
     expect(html).toContain("zamolxis/task-paginate-events-with-a-very-long-branch-name");

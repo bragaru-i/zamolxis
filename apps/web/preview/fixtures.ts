@@ -293,7 +293,9 @@ function build(name: string) {
         inputTokens: 41_200,
         cachedInputTokens: 30_100,
         outputTokens: 7_010,
+        reasoningOutputTokens: 1_200,
         totalTokens: 48_210,
+        modelCalls: 9,
         startedAt: now - 7 * MINUTE - 12_000,
         initialHeadSha: "e4c3af024d101a84aab867b6cab3e30b0aab56df",
       }),
@@ -312,7 +314,9 @@ function build(name: string) {
         inputTokens: 102_000,
         cachedInputTokens: 80_000,
         outputTokens: 18_400,
+        reasoningOutputTokens: 2_300,
         totalTokens: 120_400,
+        modelCalls: 23,
         estimatedCostUsd: 0.84,
         startedAt: now - 15 * MINUTE,
         completedAt: now - 6 * MINUTE,
@@ -813,8 +817,12 @@ function build(name: string) {
     const total = {
       inputTokens: 0,
       cachedInputTokens: 0,
+      freshInputTokens: 0,
+      cacheWriteInputTokens: 0,
       outputTokens: 0,
+      reasoningOutputTokens: 0,
       totalTokens: 0,
+      modelCalls: 0,
       items: 0,
       reported: 0,
       costUsd: undefined as number | undefined,
@@ -823,9 +831,15 @@ function build(name: string) {
     const byModel = new Map<string, typeof total>();
     const add = (into: typeof total, row: Row) => {
       into.items += 1;
-      into.inputTokens += (row.inputTokens as number) ?? 0;
-      into.cachedInputTokens += (row.cachedInputTokens as number) ?? 0;
+      const input = (row.inputTokens as number) ?? 0;
+      const cached = (row.cachedInputTokens as number) ?? 0;
+      into.inputTokens += input;
+      into.cachedInputTokens += cached;
+      into.freshInputTokens += Math.max(input - cached, 0);
+      into.cacheWriteInputTokens += (row.cacheWriteInputTokens as number) ?? 0;
       into.outputTokens += (row.outputTokens as number) ?? 0;
+      into.reasoningOutputTokens += (row.reasoningOutputTokens as number) ?? 0;
+      into.modelCalls += (row.modelCalls as number) ?? 0;
       if (row.totalTokens !== undefined) {
         into.totalTokens += row.totalTokens as number;
         into.reported += 1;

@@ -21,6 +21,7 @@ import { likelyLongSummary } from "./conversation";
 import {
   ACTIVE_RUN,
   clockTime,
+  costLabel,
   failureText,
   groupEvents,
   missingModalities,
@@ -82,8 +83,11 @@ export interface RunDetailData {
     reasoningEffort?: string;
     inputTokens?: number;
     cachedInputTokens?: number;
+    cacheWriteInputTokens?: number;
     outputTokens?: number;
+    reasoningOutputTokens?: number;
     totalTokens?: number;
+    modelCalls?: number;
     estimatedCostUsd?: number;
     attempt: number;
     activityLabel?: string;
@@ -178,9 +182,10 @@ export function RunDetailBody({
               value: runDuration(run, now),
             },
             tokensLabel(run) !== undefined && { label: "Tokens", value: tokensLabel(run) },
-            run.estimatedCostUsd !== undefined && {
+            // Codex and Claude logins are subscriptions: no provider reports a price.
+            (tokensLabel(run) !== undefined || run.estimatedCostUsd !== undefined) && {
               label: "Cost",
-              value: `$${run.estimatedCostUsd.toFixed(2)}`,
+              value: costLabel(run),
             },
             { label: "Started", value: clockTime(run.startedAt ?? run._creationTime) },
           ]}

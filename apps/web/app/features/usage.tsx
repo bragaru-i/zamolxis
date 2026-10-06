@@ -1,16 +1,24 @@
 "use client";
-import { KeyValueList, SegmentedControl, Stat, StatGrid } from "@zamolxis/ui";
+import { compactCount, KeyValueList, SegmentedControl, Stat, StatGrid } from "@zamolxis/ui";
 import { useQuery } from "convex/react";
 import { useState } from "react";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
+import { usageParts } from "./run-detail-model";
 
 /** Mirrors `UsageTotals` in convex/usage.ts. */
 export interface UsageTotals {
+  /** Every input token processed, cached ones included. */
   inputTokens: number;
   cachedInputTokens: number;
+  /** Input minus cached: what the provider read anew. */
+  freshInputTokens: number;
+  cacheWriteInputTokens: number;
   outputTokens: number;
+  reasoningOutputTokens: number;
+  /** Input plus output: what subscription limits count ("processed"). */
   totalTokens: number;
+  modelCalls: number;
   items: number;
   reported: number;
   costUsd?: number;
@@ -59,9 +67,35 @@ function withCost(totals: UsageTotals): string {
   return totals.costUsd !== undefined ? `${tokens} · ${formatCost(totals.costUsd)}` : tokens;
 }
 
+/** Where the processed tokens went, for rows that reported usage. */
+export function usageDetail(totals: UsageTotals): string | undefined {
+  if (!totals.reported) return undefined;
+  const parts = usageParts({
+    inputTokens: totals.inputTokens,
+    cachedInputTokens: totals.cachedInputTokens,
+    outputTokens: totals.outputTokens,
+    ...(totals.reasoningOutputTokens
+      ? { reasoningOutputTokens: totals.reasoningOutputTokens }
+      : {}),
+    ...(totals.modelCalls ? { modelCalls: totals.modelCalls } : {}),
+  });
+  return parts.length ? parts.join(" · ") : undefined;
+}
+
 export function coverageNote(totals: UsageTotals): string | undefined {
   if (totals.reported === totals.items) return undefined;
   return `${totals.reported} of ${totals.items} agent turns reported usage; the rest are not counted.`;
+}
+
+/** Processed tokens (and cost) on one line, the breakdown of where they went below it. */
+function UsageValue({ totals }: { totals: UsageTotals }) {
+  const detail = usageDetail(totals);
+  return (
+    <>
+      <span>{withCost(totals)}</span>
+      {detail && <div className="z-xsmall z-muted">{detail}</div>}
+    </>
+  );
 }
 
 function Breakdown({ usage }: { usage: UsageBreakdown }) {
@@ -73,7 +107,7 @@ function Breakdown({ usage }: { usage: UsageBreakdown }) {
         items={usage.byRole.map((row) => ({
           key: row.role,
           label: ROLE_LABEL[row.role] ?? row.role,
-          value: withCost(row),
+          value: <UsageValue totals={row} />,
         }))}
       />
       {usage.byModel.length > 0 && (
@@ -82,7 +116,7 @@ function Breakdown({ usage }: { usage: UsageBreakdown }) {
           items={usage.byModel.map((row) => ({
             key: row.model ?? "",
             label: row.model ? <span className="z-mono">{row.model}</span> : "Model not reported",
-            value: withCost(row),
+            value: <UsageValue totals={row} />,
           }))}
         />
       )}
@@ -146,18 +180,41 @@ export function UsageSettings({
         <>
           <StatGrid>
             <Stat
-              label="Tokens"
-              value={usage.total.reported ? usage.total.totalTokens.toLocaleString("en-US") : "—"}
-              detail={usage.total.reported ? undefined : "Not reported"}
+              label="Processed tokens"
+              value={usage.total.reported ? compactCount(usage.total.totalTokens) : "—"}
+              detail={usage.total.reported ? "Counts against plan limits" : "Not reported"}
             />
-            <Stat label="Sessions" value={usage.sessionCount} />
-            {usage.total.costUsd !== undefined && (
+            {usage.total.modelCalls > 0 && (
+              <Stat label="Model calls" value={compactCount(usage.total.modelCalls)} />
+            )}
+            {usage.total.reported > 0 && (
               <Stat
-                label="Cost"
-                value={formatCost(usage.total.costUsd)}
-                detail="Reported by provider"
+                label="Fresh input"
+                value={compactCount(usage.total.freshInputTokens)}
+                detail={`${compactCount(usage.total.cachedInputTokens)} cached`}
               />
             )}
+            {usage.total.reported > 0 && (
+              <Stat
+                label="Output"
+                value={compactCount(usage.total.outputTokens)}
+                detail={
+                  usage.total.reasoningOutputTokens
+                    ? `${compactCount(usage.total.reasoningOutputTokens)} reasoning`
+                    : undefined
+                }
+              />
+            )}
+            <Stat label="Sessions" value={usage.sessionCount} />
+            <Stat
+              label="Cost"
+              value={
+                usage.total.costUsd !== undefined ? formatCost(usage.total.costUsd) : "Subscription"
+              }
+              detail={
+                usage.total.costUsd !== undefined ? "Reported by provider" : "No price reported"
+              }
+            />
           </StatGrid>
           <Breakdown usage={usage} />
           {usage.topSessions.length > 0 && (
@@ -184,8 +241,10 @@ export function UsageSettings({
         </>
       )}
       <p className="z-xsmall z-muted">
-        Tokens are shown as reported by each runtime. Cost appears only when a provider reports it;
-        Zamolxis never estimates it.
+        Processed tokens are every token the provider handled (fresh and cached input plus output),
+        which is what subscription limits count; each model call resends the whole conversation, so
+        cached input grows with long tasks. Everything is shown as reported by each runtime. Cost
+        appears only when a provider reports it; Zamolxis never estimates it.
       </p>
     </section>
   );
