@@ -154,8 +154,9 @@ planned capability as shipped.
 ## Operations on the owner's Mac
 
 - Canonical checkout: `/Users/Shared/projects/zamolxis`. The launchd Node runs
-  `apps/node/src/daemon.ts` from it, so `git pull` plus a restart updates the Node:
-  `launchctl kickstart -k gui/$(id -u)/app.zamolxis.node`. Logs:
+  `apps/node/src/daemon.ts` from it; update it with the procedure in
+  `docs/agent-runbook.md` (fetch + fast-forward, install, then
+  `launchctl kickstart -k gui/$(id -u)/app.zamolxis.node`). Logs:
   `~/Library/Application Support/Zamolxis/node.log` and `node-error.log`.
 - Node config: `~/Library/Application Support/Zamolxis/config.json`; managed worktrees
   live under `~/Library/Application Support/Zamolxis/worktrees` and belong to the Node.
@@ -166,8 +167,7 @@ planned capability as shipped.
 - Merges to main deploy Convex and the web app automatically through the "Deploy
   production" GitHub Actions workflow (after CI passes). Vercel itself is not
   connected to GitHub; the workflow deploys with a Vercel token. The Mac Node is not
-  updated by it: `git pull` in the canonical checkout, then
-  `launchctl kickstart -k gui/$(id -u)/app.zamolxis.node` (or
+  updated by it; see `docs/agent-runbook.md` "Updating the Node" (or
   `pnpm deploy:prod --pull --skip-convex --skip-web`). `pnpm deploy:prod` is the
   manual full release (needs `pnpm dlx vercel@62 login` once).
 - The private prod setup directory is at

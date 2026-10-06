@@ -50,6 +50,9 @@ Node on the owner's Mac; Node changes need `git pull` and a restart there.
 `pnpm deploy:prod` remains the manual path. Current Alpha status, known gaps, operational facts and the
 next steps live in `docs/alpha-status.md`; read it before planning work and update
 it when a gap closes or a new one is found.
+Procedures (shipping, updating the Mac Node, inspecting production without printing
+secrets, real-Codex acceptance commands, lane integration, known pitfalls) live in
+`docs/agent-runbook.md`.
 
 ## Control plane and trust
 
