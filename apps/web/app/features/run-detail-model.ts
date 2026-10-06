@@ -18,6 +18,8 @@ export interface ToolItem {
   result?: string;
   /** The summary is a command line (rendered monospace). */
   mono?: boolean;
+  /** Files the call read, as reported by the runtime. */
+  reads?: string[];
 }
 
 export type TimelineEntry =
@@ -33,6 +35,8 @@ export type TimelineEntry =
       open: number;
     }
   | { kind: "files"; key: string; at: number; paths: string[] }
+  // A progress note the agent wrote while working (`run.message`).
+  | { kind: "note"; key: string; at: number; text: string }
   | { kind: "waiting"; key: string; at: number; reason: string }
   | { kind: "completed"; key: string; at: number; summary?: string }
   | { kind: "failed"; key: string; at: number; message: string; code?: string }
@@ -156,7 +160,15 @@ export function groupEvents(events: readonly RunEvent[]): TimelineEntry[] {
         group.endAt = at;
         const tool = toolName(payload.tool);
         if (event.type === "tool.started") {
-          const item = toolItem(tool, payload.summary);
+          const reads = Array.isArray(payload.reads)
+            ? payload.reads.filter(
+                (path: unknown): path is string => typeof path === "string" && !!path,
+              )
+            : [];
+          const item: ToolItem = {
+            ...toolItem(tool, payload.summary),
+            ...(reads.length ? { reads } : {}),
+          };
           group.items.push(item);
           group.open++;
           openStarts.push({ tool, summary: text(payload.summary), item });
@@ -195,6 +207,11 @@ export function groupEvents(events: readonly RunEvent[]): TimelineEntry[] {
           break;
         }
         entries.push({ kind: "files", key, at, paths: [...new Set<string>(paths)] });
+        break;
+      }
+      case "run.message": {
+        const note = text(payload.text);
+        if (note) entries.push({ kind: "note", key, at, text: note });
         break;
       }
       case "run.waiting":
@@ -384,6 +401,10 @@ export interface TraceRow {
   detail?: string;
   /** The detail is command output (rendered monospace). */
   mono: boolean;
+  /** The title is a command line (rendered monospace). */
+  titleMono: boolean;
+  /** The step's kind as recorded, for grouping. */
+  stepKind: string;
 }
 
 const TRACE_KIND_LABEL: Record<string, string> = {
@@ -394,6 +415,11 @@ const TRACE_KIND_LABEL: Record<string, string> = {
   "verification-check": "Check",
   trust: "Trust",
   integration: "Integration",
+  // Supervisor log kinds.
+  phase: "Phase",
+  tool: "Tool",
+  message: "Note",
+  approval: "Approval",
 };
 const TRACE_STATUS: Record<string, { label: string; tone: TraceTone }> = {
   started: { label: "Running", tone: "info" },
@@ -438,6 +464,42 @@ export function traceRows(
         facts,
         ...(detail ? { detail } : {}),
         mono: step.kind === "verification-check",
+        titleMono: step.kind === "verification-check" || step.kind === "tool",
+        stepKind: step.kind,
       };
     });
+}
+
+export type LogEntry =
+  | { kind: "step"; key: string; row: TraceRow }
+  | { kind: "tools"; key: string; at: number; rows: TraceRow[]; failed: number; open: number };
+
+/**
+ * Supervisor log rows for display: consecutive tool steps become one group (like the Run
+ * activity timeline), everything else stays a single step.
+ */
+export function groupLogRows(rows: readonly TraceRow[]): LogEntry[] {
+  const entries: LogEntry[] = [];
+  for (const row of rows) {
+    const last = entries[entries.length - 1];
+    if (row.stepKind !== "tool") {
+      entries.push({ kind: "step", key: row.key, row });
+      continue;
+    }
+    const group =
+      last?.kind === "tools"
+        ? last
+        : { kind: "tools" as const, key: row.key, at: row.at, rows: [], failed: 0, open: 0 };
+    if (group !== last) entries.push(group);
+    group.rows.push(row);
+    if (row.tone === "danger") group.failed++;
+    if (row.status === "Running") group.open++;
+  }
+  return entries;
+}
+
+/** The session step's duration and facts: "Supervisor finished" with runtime and usage. */
+export function logSummary(rows: readonly TraceRow[]): { duration?: string; steps: number } {
+  const session = rows.find((row) => row.stepKind === "supervisor");
+  return { ...(session?.duration ? { duration: session.duration } : {}), steps: rows.length };
 }

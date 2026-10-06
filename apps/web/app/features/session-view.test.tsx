@@ -98,6 +98,19 @@ describe("SessionView conversation", () => {
     expect(stopped).not.toContain("Stop the Supervisor");
   });
 
+  it("offers the Supervisor's log once it settled, never while it works", () => {
+    const working = render({ status: "planning" }, [{ planStatus: "claimed" }]);
+    expect(working).not.toContain("Show what I did");
+    const answered = render({ status: "waiting" }, [
+      { planned: true, decision: "answer", reply: "It is a control plane." },
+      { planStatus: "failed", planError: "SUPERVISOR_STOPPED" },
+      { planStatus: "expired" },
+    ]);
+    // The answered and the stopped message have a log; the withdrawn one never ran.
+    expect(answered.match(/Show what I did/g)).toHaveLength(2);
+    expect(answered).toContain('aria-haspopup="dialog"');
+  });
+
   it("offers no Stop once the Supervisor decided", () => {
     const html = render({ status: "running" }, [
       { planStatus: "acknowledged", decision: "plan", reply: "Two parts." },
