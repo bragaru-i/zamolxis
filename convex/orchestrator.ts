@@ -6,7 +6,36 @@ import { explicitlyRequestsWork, requestsContinuation } from "./lib/orchestratio
 import { submitText } from "./supervisor";
 
 const MAX_MESSAGES = 100;
-const MAX_LINKS = 12;
+const MAX_LINKS = 24;
+const ACTIVE_RUN = new Set([
+  "queued",
+  "starting",
+  "running",
+  "waiting",
+  "needs_approval",
+  "stopping",
+]);
+const ATTENTION_PHASE = new Set(["needs_input", "trust_failed", "ready_for_integration", "failed"]);
+
+type LinkTarget = Doc<"orchestratorMessageLinks">["targetType"];
+interface LinkDraft {
+  targetType: LinkTarget;
+  targetId: string;
+  workSessionId: Id<"workSessions">;
+  label: string;
+  status?: string;
+  url?: string;
+}
+
+function sessionLink(session: Doc<"workSessions">): LinkDraft {
+  return {
+    targetType: "session",
+    targetId: session._id,
+    workSessionId: session._id,
+    label: session.title,
+    status: session.status,
+  };
+}
 
 export const messages = query({
   args: {},
@@ -95,7 +124,7 @@ export const submit = mutation({
     let route: "answer" | "create" | "continue" = "answer";
     let workSessionId: Id<"workSessions"> | undefined;
     let reply: string;
-    let summaryLinks: Doc<"workSessions">[] = [];
+    let links: LinkDraft[] = [];
 
     if (opensWork) {
       if (!product || !repository) fail("WORK_CONTEXT_REQUIRED");
@@ -122,7 +151,7 @@ export const submit = mutation({
     } else {
       const summary = await statusAnswer(ctx, owner._id, product?._id, text);
       reply = summary.reply;
-      summaryLinks = summary.sessions;
+      links = summary.links;
     }
 
     const messageId = await ctx.db.insert("orchestratorMessages", {
@@ -137,21 +166,14 @@ export const submit = mutation({
       ...(workSessionId ? { workSessionId } : {}),
       createdAt: now,
     });
-    const linkedSessions = workSessionId
-      ? [await load(ctx, "workSessions", workSessionId)]
-      : summaryLinks;
-    for (const session of linkedSessions.slice(0, MAX_LINKS)) {
+    if (workSessionId) links = [sessionLink(await load(ctx, "workSessions", workSessionId))];
+    for (const link of links.slice(0, MAX_LINKS))
       await ctx.db.insert("orchestratorMessageLinks", {
         ownerId: owner._id,
         messageId,
-        workSessionId: session._id,
-        targetType: "session",
-        targetId: session._id,
-        label: session.title,
-        status: session.status,
+        ...link,
         createdAt: now,
       });
-    }
     await ctx.db.patch("orchestratorConversations", conversation._id, {
       lastActivityAt: now,
       updatedAt: now,
@@ -229,7 +251,7 @@ async function statusAnswer(
     return {
       reply:
         "The Orchestrator owns this top-level conversation. It answers and summarizes here. Only an explicit request to do work opens or continues a Work Session, whose Supervisor may delegate to Builder, Verifier and Repair agents. You can choose each role’s runtime, model and instructions in Settings → Agents.",
-      sessions: [] as Doc<"workSessions">[],
+      links: [] as LinkDraft[],
     };
   }
   const sessions = productId
@@ -257,12 +279,12 @@ async function statusAnswer(
           })),
         )
       ).filter(({ session }) => session?.ownerId === ownerId && session.productId === productId)
-    : pendingApprovals;
+    : pendingApprovals.map((approval) => ({ approval }));
   if (!owned.length) {
     return {
       reply:
         "There are no Work Sessions in this scope yet. I answered here and did not open one. Tell me explicitly to start, fix, build or continue something when you want work delegated.",
-      sessions: owned,
+      links: [] as LinkDraft[],
     };
   }
   const active = owned.filter((session) =>
@@ -279,6 +301,80 @@ async function statusAnswer(
       ...lines,
       "I only summarized existing control-plane state; I did not open a new Work Session.",
     ].join("\n"),
-    sessions: owned,
+    links: await workLinks(ctx, owned, approvals),
   };
+}
+
+// Typed navigation for a status answer, most actionable first: Sessions, pending
+// approvals, pull requests, Tasks that need the owner, then active Runs.
+async function workLinks(
+  ctx: MutationCtx,
+  sessions: Doc<"workSessions">[],
+  approvals: { approval: Doc<"approvals"> }[],
+) {
+  const scope = new Set<string>(sessions.map((session) => session._id));
+  const links: LinkDraft[] = sessions.map(sessionLink);
+  for (const { approval } of approvals)
+    if (scope.has(approval.workSessionId))
+      links.push({
+        targetType: "approval",
+        targetId: approval._id,
+        workSessionId: approval.workSessionId,
+        label: `Approve: ${approval.action}`.slice(0, 120),
+        status: approval.risk,
+      });
+  const prs: LinkDraft[] = [];
+  const tasks: LinkDraft[] = [];
+  const runs: LinkDraft[] = [];
+  for (const session of sessions) {
+    const sessionTasks = await ctx.db
+      .query("tasks")
+      .withIndex("by_session", (q) => q.eq("workSessionId", session._id))
+      .take(100);
+    const titles = new Map(sessionTasks.map((task) => [task._id, task.title]));
+    for (const task of sessionTasks) {
+      if (task.prUrl && /^https:\/\//.test(task.prUrl))
+        prs.push({
+          targetType: "pull_request",
+          targetId: task._id,
+          workSessionId: session._id,
+          label: `PR: ${task.title}`.slice(0, 120),
+          ...(task.publishStatus ? { status: task.publishStatus } : {}),
+          url: task.prUrl,
+        });
+      if (!task.phase || !ATTENTION_PHASE.has(task.phase)) continue;
+      tasks.push({
+        targetType: "task",
+        targetId: task._id,
+        workSessionId: session._id,
+        label: task.title,
+        status: task.phase,
+      });
+      const trustId = task.trustDecisionId ?? task.lastTrustDecisionId;
+      const trust = trustId ? await ctx.db.get(trustId) : null;
+      if (trust)
+        tasks.push({
+          targetType: "trust",
+          targetId: trust._id,
+          workSessionId: session._id,
+          label: `Trust: ${task.title}`.slice(0, 120),
+          status: trust.eligible ? "trusted" : "not_trusted",
+        });
+    }
+    const recentRuns = await ctx.db
+      .query("agentRuns")
+      .withIndex("by_session_activity", (q) => q.eq("workSessionId", session._id))
+      .order("desc")
+      .take(20);
+    for (const run of recentRuns)
+      if (ACTIVE_RUN.has(run.status))
+        runs.push({
+          targetType: "run",
+          targetId: run._id,
+          workSessionId: session._id,
+          label: `${run.role ?? "builder"}: ${titles.get(run.taskId) ?? "Run"}`.slice(0, 120),
+          status: run.status,
+        });
+  }
+  return [...links, ...prs, ...tasks, ...runs].slice(0, MAX_LINKS);
 }

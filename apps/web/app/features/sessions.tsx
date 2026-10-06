@@ -9,6 +9,7 @@ import {
   Notice,
   ProductMark,
   StatusBadge,
+  safeHref,
 } from "@zamolxis/ui";
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { type ReactNode, useEffect, useState } from "react";
@@ -39,7 +40,7 @@ export function SessionList({
   ready: boolean;
   indicator: ReactNode;
   notices: ReactNode;
-  onOpen: (id: Id<"workSessions">) => void;
+  onOpen: (id: Id<"workSessions">, runId?: Id<"agentRuns">) => void;
   onSettings: () => void;
 }) {
   const now = useNow(30000);
@@ -124,9 +125,51 @@ interface Repository {
 interface OrchestratorLink {
   _id: Id<"orchestratorMessageLinks">;
   targetType: string;
+  targetId: string;
   label: string;
   status?: string;
+  url?: string;
   workSessionId?: Id<"workSessions">;
+}
+
+// Status is a snapshot from when Zamolxis answered; the linked view is canonical.
+function OrchestratorLinkButton({
+  link,
+  onOpen,
+}: {
+  link: OrchestratorLink;
+  onOpen: (id: Id<"workSessions">, runId?: Id<"agentRuns">) => void;
+}) {
+  const text = `${link.label}${link.status ? ` · ${link.status}` : ""}`;
+  if (link.targetType === "pull_request") {
+    const href = link.url ? safeHref(link.url) : undefined;
+    return href ? (
+      <a
+        className="z-button z-button--secondary z-button--small"
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        {text}
+      </a>
+    ) : null;
+  }
+  const sessionId = link.workSessionId;
+  if (!sessionId) return null;
+  return (
+    <Button
+      variant="secondary"
+      size="small"
+      onClick={() =>
+        onOpen(
+          sessionId,
+          link.targetType === "run" ? (link.targetId as Id<"agentRuns">) : undefined,
+        )
+      }
+    >
+      {text}
+    </Button>
+  );
 }
 
 interface OrchestratorMessage {
@@ -142,7 +185,7 @@ function OrchestratorConversation({
   onOpen,
 }: {
   ready: boolean;
-  onOpen: (id: Id<"workSessions">) => void;
+  onOpen: (id: Id<"workSessions">, runId?: Id<"agentRuns">) => void;
 }) {
   const messages = useQuery(api.orchestrator.messages, ready ? {} : "skip") as
     | OrchestratorMessage[]
@@ -180,20 +223,9 @@ function OrchestratorConversation({
                 <Markdown>{message.reply}</Markdown>
                 {message.links.length > 0 && (
                   <div className="z-row">
-                    {message.links.map((link) => {
-                      const sessionId = link.workSessionId;
-                      return link.targetType === "session" && sessionId ? (
-                        <Button
-                          key={link._id}
-                          variant="secondary"
-                          size="small"
-                          onClick={() => onOpen(sessionId)}
-                        >
-                          {link.label}
-                          {link.status ? ` · ${link.status}` : ""}
-                        </Button>
-                      ) : null;
-                    })}
+                    {message.links.map((link) => (
+                      <OrchestratorLinkButton key={link._id} link={link} onOpen={onOpen} />
+                    ))}
                   </div>
                 )}
               </Message>

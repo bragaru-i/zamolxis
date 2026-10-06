@@ -1,6 +1,6 @@
 # Alpha status and handoff
 
-Status as of 2026-10-06, main through #88. Alpha is **not finished**:
+Status as of 2026-10-06, main through #89. Alpha is **not finished**:
 issues #45, #47, #48 and #49 are open. This file is the handoff for any agent picking
 up the work; update it when a gap closes or a new one is found. Never describe a
 planned capability as shipped.
@@ -63,7 +63,9 @@ planned capability as shipped.
   Builders.
 - **Global Orchestrator conversation:** the home screen has a durable owner-level conversation
   outside Work Sessions. Questions and status requests answer from control-plane state without
-  creating hidden work. Answers persist their route and typed links to relevant Sessions. Explicit
+  creating hidden work. Answers persist their route and typed links: Sessions, pending approvals,
+  pull requests, Tasks needing the owner with their trust decision, and active Runs (a Run link
+  opens Run detail via `?run=`). Explicit
   execution language creates a Session; "continue", "do it" and equivalent follow a recent linked
   Session in the selected repository. Role runtimes, models, effort and instructions remain
   selectable in Settings → Agents.
@@ -106,11 +108,13 @@ planned capability as shipped.
 2. **Global Orchestrator conversation, shipped with limits.** `orchestratorConversations`,
    `orchestratorMessages` and `orchestratorMessageLinks` persist the owner-level chat, its routing
    decision (`answer`, `create`, `continue`) and typed navigation. The current backend answers
-   architecture questions and deterministic status summaries directly, with Session links, and
+   architecture questions and deterministic status summaries directly, with typed links, and
    creates no Session/Task/Run for those messages. Explicit work uses the existing SHA-bound
    Session Supervisor; explicit continuation can reuse a Session linked by an earlier summary.
-   Current limits: summaries link Sessions only (not external tickets, Tasks, Runs, evidence or
-   pull requests yet), and the top-level answer/router is deterministic rather than a separately
+   Links cover Sessions, approvals, pull requests, attention Tasks, trust decisions and active Runs
+   of the five most recent Sessions in scope; link status is a snapshot from answer time. Current
+   limits: no external-ticket links (no connector), and the top-level answer/router is
+   deterministic rather than a separately
    configured model-backed agent. **In-Session conversation is shipped:** Supervisor replies (Markdown, bounded to 8000),
    builder/verifier final replies (`agentRuns.resultSummary`) and intermediate agent
    notes (`run.message`, redacted, ≤2000 chars, shown in Run detail Activity) are
@@ -169,7 +173,7 @@ planned capability as shipped.
 
 ## Next steps, in order
 
-1. Extend Orchestrator summaries with typed ticket, Task, Run, evidence and pull-request links.
+1. External ticket links (GitHub/Linear) need a connector first.
 2. Decide whether free-form top-level answers need a separately configurable model-backed
    Orchestrator; status and routing remain backend-authorized.
 3. Real-device validation: iPhone and a second Google account.
