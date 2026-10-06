@@ -979,6 +979,17 @@ function build(name: string) {
               repositoryName: "zamolxis",
               canonicalPath: "/Users/Shared/projects/zamolxis",
               status: "available",
+              github: {
+                slug: "bragaru-i/zamolxis",
+                tokenUrl:
+                  "https://github.com/settings/personal-access-tokens/new?name=Zamolxis+zamolxis&target_name=bragaru-i&expires_in=90&contents=write&pull_requests=write",
+              },
+              githubAccess: {
+                status: "ok",
+                source: "gh_account",
+                login: "bragaru-i",
+                checkedAt: Date.now() - 4 * 60_000,
+              },
             },
           ];
         default:

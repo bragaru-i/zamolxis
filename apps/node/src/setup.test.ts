@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { type GitHubAccess, MemoryRepositoryTokenStore } from "@zamolxis/node-core";
 import { ConvexError } from "convex/values";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MemoryCredentialStore } from "./credential-store";
@@ -171,6 +172,7 @@ describe("credential helpers", () => {
     expect(choices.map(({ value }) => value)).toEqual([
       "repair",
       "repositories",
+      "github",
       "rename",
       "pair",
       "exit",
@@ -401,6 +403,79 @@ it("selects and verifies a publishing account per GitHub repository", async () =
     "✓ bragaru-i/personal pull requests will be published as bragaru-i",
   );
 });
+
+describe("GitHub access per repository in the repository flow", () => {
+  const TOKEN = `github_pat_${"Ch00s3T0k3".repeat(8)}`;
+  const GITHUB = { host: "github.com", owner: "bragaru-i", repo: "personal" };
+  function personal() {
+    const path = join(harness.root, "personal");
+    const current: NodeConfig["repositories"] = [
+      { path, name: "personal", remoteUrl: "https://github.com/bragaru-i/personal.git" },
+    ];
+    harness.answers.checkbox.push([path]);
+    const tokens = new MemoryRepositoryTokenStore();
+    harness.env.github = {
+      tokens,
+      client: {
+        checkAccess: async () => ({ status: "ok", login: "bragaru-i", checkedAt: Date.now() }),
+      },
+      openUrl: () => undefined,
+    };
+    const offered: string[][] = [];
+    const select = harness.env.io.select.bind(harness.env.io);
+    harness.env.io.select = async (message, choices, value) => {
+      offered.push(choices.map(({ name }) => name));
+      return select(message, choices, value);
+    };
+    return { current, tokens, offered };
+  }
+
+  it("offers a dedicated token besides signed-in gh accounts and then needs no account", async () => {
+    const p = personal();
+    harness.env.githubAccounts = () => ["ion-wellcopy", "bragaru-i"];
+    harness.env.verifyGithubAccount = () => {
+      throw new Error("no account was chosen");
+    };
+    harness.env.io.password = async () => TOKEN;
+    harness.answers.select.push("\0token" as MenuAction);
+    await expect(chooseRepositories(harness.env, p.current)).resolves.toEqual(p.current);
+    expect(p.offered[0]).toEqual([
+      "Signed-in gh account ion-wellcopy",
+      "Signed-in gh account bragaru-i",
+      "Add a dedicated token for this repository",
+      "Decide later (no pull requests until it is connected)",
+    ]);
+    expect(p.tokens.read(GITHUB)).toBe(TOKEN);
+    expect(harness.logs.join("\n")).not.toContain(TOKEN);
+    // With its own token stored, the repository is not asked about accounts again.
+    harness.answers.checkbox.push([p.current[0]?.path ?? ""]);
+    await expect(chooseRepositories(harness.env, p.current)).resolves.toEqual(p.current);
+    expect(p.offered).toHaveLength(1);
+    expect(harness.logs.at(-1)).toContain("publishes with its own GitHub token on this Mac");
+  });
+
+  it("without a signed-in account can be left for later, never falling back to another", async () => {
+    const p = personal();
+    harness.env.githubAccounts = () => [];
+    harness.answers.select.push("\0later" as MenuAction);
+    const withIdentity = p.current.map((repository) => ({
+      ...repository,
+      publishingIdentity: { provider: "github" as const, host: "github.com", login: "gone" },
+    }));
+    await expect(chooseRepositories(harness.env, withIdentity)).resolves.toEqual(p.current);
+    expect(harness.logs.at(-1)).toContain("is not connected to GitHub yet");
+  });
+
+  it("refuses a chosen account that cannot push the repository", async () => {
+    const p = personal();
+    harness.env.githubAccounts = () => ["ion-wellcopy"];
+    harness.env.verifyGithubAccount = async () => false;
+    harness.answers.select.push("ion-wellcopy" as MenuAction);
+    await expect(chooseRepositories(harness.env, p.current)).rejects.toThrow(
+      "GITHUB_PUSH_ACCESS_REQUIRED: ion-wellcopy cannot push bragaru-i/personal",
+    );
+  });
+});
 afterEach(() => rmSync(harness.root, { recursive: true, force: true }));
 
 describe("rerunning setup", () => {
@@ -432,6 +507,62 @@ describe("rerunning setup", () => {
     expect(orphan.credential).toBeUndefined();
     expect(saved).toHaveLength(2);
     expect(migratePlaintextCredential(orphan, store, (c) => saved.push(c))).toBe(false);
+  });
+
+  describe("GitHub access for publishing", () => {
+    const TOKEN = `github_pat_${"H4rn3ssT0k".repeat(8)}`;
+    function withGitHub() {
+      const config = baseConfig(harness.root);
+      const [first] = config.repositories;
+      if (!first) throw new Error("no repository");
+      config.repositories = [{ ...first, remoteUrl: "https://github.com/bragaru-i/one.git" }];
+      saveConfig(config, harness.env.configPath);
+      harness.store.write("ws1", OLD_SECRET);
+      const tokens = new MemoryRepositoryTokenStore();
+      const reported: Array<[string, string, GitHubAccess["status"]]> = [];
+      const opened: string[] = [];
+      harness.env.github = {
+        tokens,
+        client: {
+          checkAccess: async () => ({ status: "ok", login: "bragaru-i", checkedAt: Date.now() }),
+        },
+        openUrl: (url) => opened.push(url),
+      };
+      const connect = harness.env.connect;
+      harness.env.connect = (url) => ({
+        ...connect(url),
+        reportGithubAccess: async (workstationId, repositoryId, access) => {
+          reported.push([workstationId, repositoryId, access.status]);
+        },
+      });
+      return { tokens, reported, opened };
+    }
+
+    it("reports each repository's GitHub access during --repair without asking anything", async () => {
+      const g = withGitHub();
+      harness.env.io.password = async () => {
+        throw new Error("unexpected password prompt");
+      };
+      await runSetup({ repair: true }, harness.env);
+      expect(harness.logs).toContain(
+        "GitHub bragaru-i/one: not connected: no token and no GitHub account chosen for this repository yet",
+      );
+      expect(harness.logs.at(-1)).toContain("pnpm zamolxis github-token");
+      expect(g.reported).toEqual([["ws1", "r-one", "missing"]]);
+      expect(g.opened).toEqual([]);
+    });
+
+    it("adds a token from the setup menu with hidden input", async () => {
+      const g = withGitHub();
+      harness.answers.select.push("github");
+      harness.answers.confirm.push(true);
+      harness.env.io.password = async () => TOKEN;
+      await runSetup({}, harness.env);
+      expect(g.tokens.read({ host: "github.com", owner: "bragaru-i", repo: "one" })).toBe(TOKEN);
+      expect(g.opened).toHaveLength(1);
+      expect(g.reported.at(-1)).toEqual(["ws1", "r-one", "ok"]);
+      expect(harness.logs.join("\n")).not.toContain(TOKEN);
+    });
   });
 
   it("repairs without changes when everything is healthy", async () => {

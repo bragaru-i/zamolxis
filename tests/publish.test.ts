@@ -11,7 +11,9 @@ import type { Doc, Id } from "../convex/_generated/dataModel";
 import schema from "../convex/schema";
 import { git } from "../packages/git/src/repository-inspector";
 import { ControlPlaneDriver } from "../packages/node-core/src/control-plane/driver";
-import type { PullRequestInput } from "../packages/node-core/src/integration/publish";
+import type { PullRequestRequest } from "../packages/node-core/src/github/github-api";
+import { PublishingCredentials } from "../packages/node-core/src/github/publishing-credentials";
+import { MemoryRepositoryTokenStore } from "../packages/node-core/src/github/token-store";
 import { LocalStateStore } from "../packages/node-core/src/persistence/local-state";
 import { RepositoryRegistry } from "../packages/node-core/src/repository/repository-registry";
 import { RuntimeManager } from "../packages/node-core/src/runtime/runtime-manager";
@@ -404,7 +406,12 @@ it("publishes end to end: owner request → Node push to a local bare origin →
     kind: "integration",
   });
   const runtimes = new RuntimeRegistry();
-  const opened: PullRequestInput[] = [];
+  const opened: PullRequestRequest[] = [];
+  const githubTokens = new MemoryRepositoryTokenStore();
+  githubTokens.write(
+    { host: "example.invalid", owner: "team", repo: "repo" },
+    `github_pat_${"T0k3nV4lue".repeat(8)}`,
+  );
   const driver = new ControlPlaneDriver(
     store,
     workspaces,
@@ -414,8 +421,10 @@ it("publishes end to end: owner request → Node push to a local bare origin →
     f.workstationId,
     {
       githubHosts: ["example.invalid"],
-      pullRequests: {
-        open: async (input) => {
+      githubCredentials: new PublishingCredentials({ tokens: githubTokens }),
+      github: {
+        checkAccess: async () => ({ status: "ok", login: "publisher", checkedAt: Date.now() }),
+        openPullRequest: async (input) => {
           opened.push(input);
           return "https://example.invalid/team/repo/pull/1";
         },

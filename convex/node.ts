@@ -1,4 +1,4 @@
-import { applyRunEvent } from "@zamolxis/application";
+import { applyRunEvent, GITHUB_LOGIN } from "@zamolxis/application";
 import { assertRunTransition, type RunStatus } from "@zamolxis/domain";
 import { v } from "convex/values";
 import { boundRuntimeModels, RUNTIME_MODEL_LIMITS } from "@zamolxis/runtime-core";
@@ -14,7 +14,7 @@ import { settleStoppedText } from "./supervisor";
 import { settleRun } from "./lib/settlement";
 import { recordIntegrationStep } from "./traces";
 import { valueKey } from "./lib/value";
-import { runtimeModel } from "./schema";
+import { githubAccess, runtimeModel } from "./schema";
 
 const deviceArgs = { workstationId: v.id("workstations") };
 // Mirrors RUN_MESSAGE_LIMIT in packages/contracts/src/events/event.ts.
@@ -129,6 +129,48 @@ export const registerLocation = mutation({
       workstationId: args.workstationId,
       ...metadata,
     });
+  },
+});
+const DAY = 24 * 60 * 60 * 1000;
+// The Node reports a repository's GitHub publishing access on this Mac: status, credential
+// source (its token or its gh account), login and token expiry only. Bounded and
+// owner-isolated; no credential ever leaves the Mac.
+export const reportGithubAccess = mutation({
+  args: { ...deviceArgs, repositoryId: v.id("repositories"), access: githubAccess },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const device = await requireNode(ctx, args.workstationId);
+    const repository = await ctx.db.get("repositories", args.repositoryId);
+    if (!repository || repository.ownerId !== device.ownerId) fail("FORBIDDEN");
+    const location = await ctx.db
+      .query("repositoryLocations")
+      .withIndex("by_repository_workstation", (q) =>
+        q.eq("repositoryId", args.repositoryId).eq("workstationId", args.workstationId),
+      )
+      .unique();
+    if (!location) fail("NOT_FOUND");
+    const now = Date.now();
+    const { status, source, login, expiresAt, checkedAt } = args.access;
+    if (login !== undefined && !GITHUB_LOGIN.test(login)) fail("INVALID_ARGUMENT");
+    if (
+      expiresAt !== undefined &&
+      (!Number.isFinite(expiresAt) || expiresAt < 0 || expiresAt > now + 400 * DAY)
+    )
+      fail("INVALID_ARGUMENT");
+    if (!Number.isFinite(checkedAt)) fail("INVALID_ARGUMENT");
+    // An older check never replaces a newer one (setup and the daemon both report).
+    if (location.githubAccess && location.githubAccess.checkedAt > Math.min(checkedAt, now))
+      return null;
+    await ctx.db.patch("repositoryLocations", location._id, {
+      githubAccess: {
+        status,
+        ...(source ? { source } : {}),
+        ...(login ? { login } : {}),
+        ...(expiresAt !== undefined ? { expiresAt } : {}),
+        checkedAt: Math.min(checkedAt, now),
+      },
+    });
+    return null;
   },
 });
 export const verifyLocation = mutation({

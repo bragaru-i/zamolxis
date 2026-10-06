@@ -14,8 +14,23 @@ import {
 import { homedir, hostname } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkbox, confirm, input, select } from "@inquirer/prompts";
-import { inspectRepository, remoteIdentity } from "@zamolxis/git";
+import { checkbox, confirm, input, password, select } from "@inquirer/prompts";
+import { inspectRepository } from "@zamolxis/git";
+import {
+  checkPublishing,
+  type GhAccountTokens,
+  type GitHubAccess,
+  type GitHubClient,
+  ghCliAccountTokens,
+  githubRepositoryFromRemote,
+  githubSlug,
+  KeychainRepositoryTokenStore,
+  NO_REPOSITORY_TOKENS,
+  PublishingCredentials,
+  type RepositoryTokenStore,
+  RestGitHubClient,
+} from "@zamolxis/node-core";
+import { withoutGitHubTokens } from "@zamolxis/runtime-core";
 import { ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
 import QRCode from "qrcode";
@@ -27,6 +42,13 @@ import {
   loadDeviceCredential,
   pairingAccount,
 } from "./credential-store";
+import {
+  addToken,
+  GITHUB_TOKEN_COMMAND,
+  type GitHubTokenEnvironment,
+  manageGitHubTokens,
+  openInBrowser,
+} from "./github-token";
 export interface NodeConfig {
   version: 1;
   appUrl: string;
@@ -361,6 +383,12 @@ export interface ControlPlane {
   removeOwnLocation(workstationId: string, repositoryId: string): Promise<"removed" | "absent">;
   /** Called with the previous entry's token: revokes it in favour of `replacementId`. */
   retireReplaced(workstationId: string, replacementId: string): Promise<void>;
+  /** Reports a repository's GitHub publishing access on this Mac (never the token). */
+  reportGithubAccess?(
+    workstationId: string,
+    repositoryId: string,
+    access: GitHubAccess,
+  ): Promise<void>;
 }
 export interface NodeHealth {
   online: boolean;
@@ -414,6 +442,13 @@ export function convexControlPlane(convexUrl: string): ControlPlane {
         replacementId,
       });
     },
+    reportGithubAccess: async (workstationId, repositoryId, access) => {
+      await client.mutation(makeFunctionReference<"mutation">("node:reportGithubAccess"), {
+        workstationId,
+        repositoryId,
+        access,
+      });
+    },
   };
 }
 export interface Choice<T extends string> {
@@ -436,6 +471,8 @@ export interface SetupIo {
     options?: { default?: string; validate?: (value: string) => true | string },
   ): Promise<string>;
   confirm(message: string, defaultValue: boolean): Promise<boolean>;
+  /** Reads a secret without echoing it; absent where nothing secret can be asked. */
+  password?(message: string): Promise<string>;
 }
 export const terminalIo: SetupIo = {
   log: (message) => console.log(message),
@@ -450,6 +487,8 @@ export const terminalIo: SetupIo = {
     }),
   input: (message, options) => input({ message, ...options }),
   confirm: (message, defaultValue) => confirm({ message, default: defaultValue }),
+  // No mask: nothing is echoed while the token is pasted.
+  password: (message) => password({ message }),
 };
 export interface SetupEnvironment {
   io: SetupIo;
@@ -462,17 +501,34 @@ export interface SetupEnvironment {
   discover(): RepositoryChoice[];
   inspectRepository(path: string): RepositoryChoice;
   githubAccounts(host: string): string[];
-  verifyGithubAccount(host: string, login: string, owner: string, repo: string): boolean;
+  /** Whether the signed-in gh account `login` may push owner/repo (checked with GitHub). */
+  verifyGithubAccount(
+    host: string,
+    login: string,
+    owner: string,
+    repo: string,
+  ): boolean | Promise<boolean>;
   secret(): string;
+  /** Per-repository GitHub publishing tokens; absent where setup must not touch them. */
+  github?: GitHubSetup;
+}
+export interface GitHubSetup {
+  tokens: RepositoryTokenStore;
+  /** Reads a chosen gh account's credential, to report its status. */
+  ghTokens?: GhAccountTokens;
+  client: Pick<GitHubClient, "checkAccess">;
+  openUrl(url: string): void;
 }
 interface GhAuthStatus {
   hosts?: Record<string, Array<{ login?: string; state?: string }>>;
 }
+/** Accounts signed in to the GitHub CLI for `host` (its store, not a GH_TOKEN override). */
 export function authenticatedGithubAccounts(host: string): string[] {
   try {
     const status = JSON.parse(
       execFileSync("gh", ["auth", "status", "--hostname", host, "--json", "hosts"], {
         encoding: "utf8",
+        env: { ...withoutGitHubTokens(process.env), GH_PROMPT_DISABLED: "1", NO_COLOR: "1" },
         stdio: ["ignore", "pipe", "pipe"],
         timeout: 15_000,
       }),
@@ -488,36 +544,27 @@ export function authenticatedGithubAccounts(host: string): string[] {
     return [];
   }
 }
-export function verifyGithubAccount(
+/**
+ * Whether gh account `login` may publish owner/repo: its saved credential belongs to
+ * that login and GitHub reports push permission. The same check publishing makes.
+ */
+export async function verifyGithubAccount(
   host: string,
   login: string,
   owner: string,
   repo: string,
-): boolean {
-  try {
-    const token = execFileSync("gh", ["auth", "token", "--hostname", host, "--user", login], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 10_000,
-    }).trim();
-    const env = { ...process.env, GH_TOKEN: token, GH_PROMPT_DISABLED: "1", NO_COLOR: "1" };
-    const actual = execFileSync("gh", ["api", "--hostname", host, "user", "--jq", ".login"], {
-      encoding: "utf8",
-      env,
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 15_000,
-    }).trim();
-    if (actual !== login) return false;
-    return (
-      execFileSync(
-        "gh",
-        ["api", "--hostname", host, `repos/${owner}/${repo}`, "--jq", ".permissions.push"],
-        { encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"], timeout: 15_000 },
-      ).trim() === "true"
-    );
-  } catch {
-    return false;
-  }
+): Promise<boolean> {
+  const credentials = new PublishingCredentials({
+    tokens: NO_REPOSITORY_TOKENS,
+    account: () => login,
+    ghTokens: ghCliAccountTokens,
+  });
+  const access = await checkPublishing(
+    credentials,
+    { github: { host, owner, repo } },
+    new RestGitHubClient(),
+  );
+  return access.status === "ok" || access.status === "expiring";
 }
 export function repositoryCandidates() {
   const candidates = new Set([process.cwd()]);
@@ -552,6 +599,12 @@ export function defaultEnvironment(): SetupEnvironment {
     githubAccounts: authenticatedGithubAccounts,
     verifyGithubAccount,
     secret: () => randomBytes(32).toString("hex"),
+    github: {
+      tokens: new KeychainRepositoryTokenStore(),
+      ghTokens: ghCliAccountTokens,
+      client: new RestGitHubClient(),
+      openUrl: openInBrowser,
+    },
   };
 }
 
@@ -605,6 +658,8 @@ const PROBLEM_MESSAGE: Record<CredentialProblem, string> = {
 // Flows
 // ---------------------------------------------------------------------------
 const OTHER_PATH = "\0other";
+const ADD_TOKEN = "\0token";
+const LATER = "\0later";
 const EDIT_ADDRESS = "\0edit";
 async function promptAppUrl(io: SetupIo) {
   for (;;) {
@@ -694,33 +749,66 @@ export async function chooseRepositories(
       return { path, remoteUrl, name: basename(path) };
     });
   const repositories = [...kept, ...added];
+  // GitHub publishing per repository: its own token if one is stored on this Mac, else
+  // a signed-in GitHub CLI account chosen here and verified to push it.
   for (let index = 0; index < repositories.length; index++) {
     const repository = repositories[index];
     if (!repository) continue;
-    let identity: string;
+    const github = githubRepositoryFromRemote(repository.remoteUrl);
+    if (!github) continue;
+    const slug = githubSlug(github);
+    let stored: string | undefined;
     try {
-      identity = remoteIdentity(repository.remoteUrl);
+      stored = env.github?.tokens.read(github);
     } catch {
+      stored = undefined;
+    }
+    if (stored) {
+      env.io.log(
+        `✓ ${slug} publishes with its own GitHub token on this Mac (${GITHUB_TOKEN_COMMAND} to replace it)`,
+      );
       continue;
     }
-    const [host, owner, repo, ...rest] = identity.split("/");
-    if (host !== "github.com" || !owner || !repo || rest.length) continue;
-    const accounts = env.githubAccounts(host);
-    if (!accounts.length)
-      throw new Error(`GITHUB_AUTH_REQUIRED: run gh auth login for ${host}, then rerun setup`);
-    const preferred = repository.publishingIdentity?.login ?? owner;
-    const login = await env.io.select(
-      `GitHub account for publishing ${owner}/${repo}`,
-      accounts.map((account) => ({ name: account, value: account })),
-      accounts.includes(preferred) ? preferred : accounts[0],
+    const accounts = env.githubAccounts(github.host);
+    const tokens = githubTokenEnvironment(env, true);
+    const canAddToken = !!tokens?.interactive;
+    const current = repository.publishingIdentity?.login;
+    const preferred = [current, github.owner].find(
+      (login): login is string => !!login && accounts.includes(login),
     );
-    if (!env.verifyGithubAccount(host, login, owner, repo))
-      throw new Error(`GITHUB_PUSH_ACCESS_REQUIRED: ${login} cannot push ${owner}/${repo}`);
+    const choice = await env.io.select<string>(
+      `GitHub access for publishing ${slug}`,
+      [
+        ...accounts.map((account) => ({ name: `Signed-in gh account ${account}`, value: account })),
+        ...(canAddToken
+          ? [{ name: "Add a dedicated token for this repository", value: ADD_TOKEN }]
+          : []),
+        { name: "Decide later (no pull requests until it is connected)", value: LATER },
+      ],
+      preferred ?? (canAddToken ? ADD_TOKEN : (accounts[0] ?? LATER)),
+    );
+    if (choice === LATER) {
+      const { publishingIdentity: _, ...rest } = repository;
+      repositories[index] = rest;
+      env.io.log(
+        `${slug} is not connected to GitHub yet: run gh auth login and rerun setup, or ${GITHUB_TOKEN_COMMAND} ${slug}`,
+      );
+      continue;
+    }
+    if (choice === ADD_TOKEN) {
+      if (!tokens) continue;
+      const entry = { name: repository.name, path: repository.path, github };
+      if (!(await addToken(entry, tokens)))
+        env.io.log(`${slug} is not connected yet; run ${GITHUB_TOKEN_COMMAND} ${slug} later`);
+      continue;
+    }
+    if (!(await env.verifyGithubAccount(github.host, choice, github.owner, github.repo)))
+      throw new Error(`GITHUB_PUSH_ACCESS_REQUIRED: ${choice} cannot push ${slug}`);
     repositories[index] = {
       ...repository,
-      publishingIdentity: { provider: "github", host, login },
+      publishingIdentity: { provider: "github", host: github.host, login: choice },
     };
-    env.io.log(`✓ ${owner}/${repo} pull requests will be published as ${login}`);
+    env.io.log(`✓ ${slug} pull requests will be published as ${choice}`);
   }
   return repositories;
 }
@@ -1049,6 +1137,7 @@ export async function checkAndRepair(
       io.log(
         `✓ Node online${restarted ? " (heartbeat from the restarted service)" : ""}; Codex available; 3 builders + 1 verifier\nOpen ${config.appUrl} on iPhone`,
       );
+      await githubStep(config, env, options.interactive, client, workstationId);
       return;
     }
     await env.pause(1500);
@@ -1059,11 +1148,102 @@ export async function checkAndRepair(
     );
   throw new Error("Heartbeat/runtime check failed; inspect node-error.log and rerun setup");
 }
-export type MenuAction = "repair" | "repositories" | "rename" | "pair" | "exit";
+/** The environment for managing GitHub tokens, or undefined where setup has none. */
+export function githubTokenEnvironment(
+  env: SetupEnvironment,
+  interactive: boolean,
+  report?: { client: ControlPlane; workstationId: string },
+): GitHubTokenEnvironment | undefined {
+  const github = env.github;
+  const ask = env.io.password?.bind(env.io);
+  if (!github) return undefined;
+  return {
+    io: {
+      log: (message) => env.io.log(message),
+      confirm: (message, value) => env.io.confirm(message, value),
+      select: (message, choices, value) => env.io.select(message, choices, value),
+      password: async (message) => {
+        if (!ask) throw new Error("SECRET_INPUT_UNAVAILABLE");
+        return ask(message);
+      },
+    },
+    tokens: github.tokens,
+    ...(github.ghTokens ? { ghTokens: github.ghTokens } : {}),
+    github: github.client,
+    openUrl: github.openUrl,
+    interactive: interactive && !!ask,
+    ...(report?.client.reportGithubAccess
+      ? {
+          report: async (entry, access) => {
+            if (entry.repositoryId)
+              await report.client.reportGithubAccess?.(
+                report.workstationId,
+                entry.repositoryId,
+                access,
+              );
+          },
+        }
+      : {}),
+  };
+}
+/** Last setup step: GitHub publishing access per repository. Never fails setup. */
+async function githubStep(
+  config: NodeConfig,
+  env: SetupEnvironment,
+  interactive: boolean,
+  client: ControlPlane,
+  workstationId: string,
+) {
+  const tokens = githubTokenEnvironment(env, interactive, { client, workstationId });
+  if (!tokens) return;
+  try {
+    await manageGitHubTokens(config.repositories, tokens, { offer: "when-needed" });
+  } catch (error) {
+    if (error instanceof Error && error.name === "ExitPromptError") throw error;
+    env.io.log(
+      `GitHub access could not be checked; run ${GITHUB_TOKEN_COMMAND} later to connect publishing.`,
+    );
+  }
+}
+/**
+ * `pnpm zamolxis github-token [repository] [--remove]`: shows and manages this Mac's
+ * per-repository GitHub tokens. Reports the new status to Zamolxis when the Mac is paired.
+ */
+export async function githubToken(
+  options: { repository?: string; remove?: boolean; interactive: boolean },
+  env: SetupEnvironment,
+) {
+  if (!existsSync(env.configPath))
+    throw new Error("This Mac is not set up yet; run pnpm zamolxis setup first");
+  const config = readConfig(env.configPath);
+  let report: { client: ControlPlane; workstationId: string } | undefined;
+  if (config.workstationId)
+    try {
+      const client = env.connect(config.convexUrl);
+      if (!(await authenticate(config, env, client)))
+        report = { client, workstationId: config.workstationId };
+    } catch {
+      /* Not reachable: the Node reports the change itself within a minute or so. */
+    }
+  const tokens = githubTokenEnvironment(env, options.interactive, report);
+  if (!tokens) throw new Error("GitHub tokens are not available here");
+  try {
+    await manageGitHubTokens(config.repositories, tokens, {
+      ...(options.repository ? { repository: options.repository } : {}),
+      ...(options.remove ? { remove: true } : {}),
+      offer: "always",
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "ExitPromptError") throw new Error("Cancelled");
+    throw error;
+  }
+}
+export type MenuAction = "repair" | "repositories" | "github" | "rename" | "pair" | "exit";
 export function menuChoices(): Choice<MenuAction>[] {
   return [
     { name: "Check and repair", value: "repair" },
     { name: "Add or remove repositories", value: "repositories" },
+    { name: "GitHub access for publishing (status; add or replace tokens)", value: "github" },
     { name: "Rename this Mac", value: "rename" },
     { name: "Pair again (new QR code, replaces the device credential)", value: "pair" },
     { name: "Exit", value: "exit" },
@@ -1155,6 +1335,7 @@ export async function runSetup(options: { repair?: boolean }, env: SetupEnvironm
     const action = await env.io.select("What do you want to do?", menuChoices(), "repair");
     if (action === "exit") return;
     if (action === "rename") return await renameMac(config, env);
+    if (action === "github") return await githubToken({ interactive: true }, env);
     if (action === "repositories") {
       const change = await editRepositories(config, env);
       if (!change) return;
@@ -1190,4 +1371,10 @@ export async function runSetup(options: { repair?: boolean }, env: SetupEnvironm
 export async function setup(options: { repair?: boolean } = {}) {
   prerequisites();
   await runSetup(options, defaultEnvironment());
+}
+export async function githubTokenCli(options: { repository?: string; remove?: boolean }) {
+  await githubToken(
+    { ...options, interactive: !!process.stdin.isTTY && !!process.stdout.isTTY },
+    defaultEnvironment(),
+  );
 }

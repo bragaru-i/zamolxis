@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { withoutGitHubTokens } from "@zamolxis/runtime-core";
 export interface CheckEvidence {
   modality: string;
   result: "passed" | "failed";
@@ -32,7 +33,8 @@ export async function runVerificationChecks(
       execFile(
         executable,
         args,
-        { cwd, timeout: 120_000, maxBuffer: 256 * 1024 },
+        // Repository scripts get no GitHub tokens, like the agents that wrote them.
+        { cwd, env: withoutGitHubTokens(), timeout: 120_000, maxBuffer: 256 * 1024 },
         (error, stdout, stderr) => {
           const code = (error as { code?: unknown } | null)?.code;
           const output = [stdout, stderr].filter(Boolean).join("\n");

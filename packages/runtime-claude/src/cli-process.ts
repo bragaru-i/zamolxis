@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
+import { withoutGitHubTokens } from "@zamolxis/runtime-core";
 
 /** A launched `claude -p` process speaking stream-json (NDJSON) on stdin/stdout. */
 export interface ClaudeProcess {
@@ -36,9 +37,12 @@ export interface ClaudeCliProcessOptions extends ClaudeLaunch {
 // make the CLI bill an API account instead, so they never reach the child. A base URL is
 // dropped too, so the owner's login is never sent to a gateway or proxy.
 const STRIPPED_ENV = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"] as const;
-/** The child environment: the Node's own, without API credentials. */
+/**
+ * The child environment: the Node's own, without API credentials and without GitHub
+ * tokens (agents never publish; only the Node does, with each repository's own token).
+ */
 export function claudeEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const copy = { ...env };
+  const copy = withoutGitHubTokens(env);
   for (const name of STRIPPED_ENV) delete copy[name];
   return copy;
 }

@@ -26,12 +26,12 @@ import {
   type SupervisorDecisionKind,
   supervisorInstruction,
 } from "../capabilities/supervisor";
+import type { GitHubClient } from "../github/github-api";
+import { PublishingCredentials } from "../github/publishing-credentials";
+import { NO_REPOSITORY_TOKENS } from "../github/token-store";
 import {
-  type GithubCredentialProvider,
-  ghPullRequestOpener,
   type PublishRequest,
   type PublishResult,
-  type PullRequestOpener,
   publishIntegration,
 } from "../integration/publish";
 import type {
@@ -262,9 +262,11 @@ interface Planning {
 export interface ControlPlaneDriverOptions {
   readonly now?: () => number;
   readonly progressIntervalMs?: number;
-  // Opens pull requests for integration.publish; defaults to the signed-in GitHub CLI.
-  readonly pullRequests?: PullRequestOpener;
-  readonly githubCredentials?: GithubCredentialProvider;
+  // Per-repository GitHub publishing credentials for integration.publish (its own token,
+  // else its chosen gh account; none: GitHub publishing fails with
+  // PUBLISH_GITHUB_NOT_CONNECTED) and the GitHub API client (default: REST over fetch).
+  readonly githubCredentials?: PublishingCredentials;
+  readonly github?: GitHubClient;
   readonly githubHosts?: readonly string[];
 }
 export type Delivery =
@@ -682,10 +684,10 @@ export class ControlPlaneDriver {
       } else if (command.type === "integration.publish") {
         const workspace = this.workspaces.inspect(command.payload.workspaceId);
         const result = await publishIntegration(workspace, command.payload, {
-          pullRequests: this.options.pullRequests ?? ghPullRequestOpener,
-          ...(this.options.githubCredentials
-            ? { githubCredentials: this.options.githubCredentials }
-            : {}),
+          credentials:
+            this.options.githubCredentials ??
+            new PublishingCredentials({ tokens: NO_REPOSITORY_TOKENS }),
+          ...(this.options.github ? { github: this.options.github } : {}),
           ...(this.options.githubHosts ? { githubHosts: this.options.githubHosts } : {}),
         });
         deliveries.push({

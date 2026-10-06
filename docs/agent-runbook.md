@@ -73,6 +73,47 @@ are expected; lines that keep appearing are not. Runs in flight resume after a
 restart (Codex `thread/resume`), but avoid restarting during active work anyway.
 `pnpm zamolxis setup --repair` is the non-interactive health check and repair.
 
+## GitHub access for publishing (per repository, on the Mac)
+
+"Open pull request" resolves each GitHub repository's credential on the publishing Mac
+in this order: its own token in the login Keychain (service
+`app.zamolxis.github-token`, account `github.com/<owner>/<repo>`), else the GitHub CLI
+account chosen for it in setup (config stores only host + login; the credential is read
+with `gh auth token --user <login>` for that one publication), else it fails with
+`PUBLISH_GITHUB_NOT_CONNECTED`. The global `gh` account and Git credential helpers are
+deliberately never used: they belong to whichever account is signed in on the Mac,
+which differs per product. Either credential is used only to push the trusted
+`zamolxis/*` branch (inline helper reading the child env; never argv) and open the pull
+request through the REST API; it is never sent to Convex, logged or given to agents.
+
+Choose a gh account (the account must be signed in with `gh auth login` first): rerun
+`pnpm zamolxis setup` → "Add or remove repositories"; each GitHub repository without a
+token lists the signed-in accounts, "Add a dedicated token" and "Decide later". A chosen
+account is verified for push access; setup stops if it cannot push. The Node picks a
+config change up after setup restarts it.
+
+Add or rotate a dedicated token (run in Terminal on that Mac, signed in to GitHub as
+the account that should publish); a token always takes precedence over the account:
+
+```bash
+cd /Users/Shared/projects/zamolxis
+pnpm zamolxis github-token bragaru-i/zamolxis    # or without a name: all GitHub repositories
+```
+
+It opens GitHub's prefilled page (name, description, resource owner, 90 days,
+Contents + Pull requests: Read and write). Choose "Only select repositories" → the
+repository, generate, paste at the hidden prompt. The token is saved only after
+`GET /user` and `GET /repos/{owner}/{repo}` confirm push access. The running Node
+picks a new token up within about a minute (no restart) and Settings → Macs →
+Repositories shows "publishing as <login> (token, expires in N days)" or
+"publishing as <login> (gh account)". Remove with
+`pnpm zamolxis github-token <owner/repo> --remove` (then revoke it on GitHub); the
+repository falls back to its chosen gh account, if any.
+Without a terminal (`setup --repair`, scripts) the command only prints statuses.
+Agents must never run `github-token` with a real token, read the Keychain item or run
+`gh auth token`; tests use `MemoryRepositoryTokenStore`, an injected gh-account reader
+and mocked fetch.
+
 ## Inspecting production safely
 
 `node scripts/prod-inspect.mjs data <table> [limit] [fields]` prints recent rows
@@ -146,10 +187,11 @@ against a written contract. When lanes are integrated:
 - Setup's service reload must wait for launchd to finish unloading (#70).
 - GitHub CI sometimes leaves a job queued without a runner until it is cancelled
   after 15 minutes; re-run it before treating it as a failure.
-- Setup records a publishing account per GitHub repository. The Node resolves it
-  with `gh auth token --user` for each push and PR; it never changes the globally
-  active account. Rerun setup's repository flow to select an account for a new or
-  legacy repository.
+- "Open pull request" never uses the Mac's active `gh` account or global Git
+  credentials: each repository publishes with its own token or its chosen gh account
+  (see above). Before #96 the active `gh` account (`ion-wellcopy`) made pushes to
+  `bragaru-i` repositories fail with `PUBLISH_PUSH_FAILED`. Repositories configured
+  before #96 have neither and fail with `PUBLISH_GITHUB_NOT_CONNECTED` until connected.
 
 ## Waiting on the owner
 

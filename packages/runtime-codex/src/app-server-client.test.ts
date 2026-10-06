@@ -1,7 +1,25 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
-import { AppServerClient } from "./app-server-client";
+import { AppServerClient, codexEnv } from "./app-server-client";
+
+describe("Codex child environment", () => {
+  it("keeps the Node's environment and overrides but never GitHub tokens", () => {
+    expect(
+      codexEnv(
+        { CODEX_HOME: "/managed/codex-home" },
+        {
+          PATH: "/bin",
+          CODEX_HOME: "/Users/me/.codex",
+          GH_TOKEN: "ghp_x",
+          GITHUB_TOKEN: "ghp_y",
+          GH_ENTERPRISE_TOKEN: "e",
+          GITHUB_ENTERPRISE_TOKEN: "f",
+        },
+      ),
+    ).toEqual({ PATH: "/bin", CODEX_HOME: "/managed/codex-home" });
+  });
+});
 
 function harness(options: { timeoutMs?: number; maxFrameBytes?: number } = {}) {
   const child = Object.assign(new EventEmitter(), {

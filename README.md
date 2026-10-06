@@ -76,15 +76,58 @@ request"; after confirming the branch, base and title, `integration.publish`
 (owner-only, idempotent while pending or published) sends `integration.publish`
 to the Node holding the integration workspace, only while that workspace is clean
 at the exact trusted SHA. The Node re-checks clean state and HEAD, then pushes that
-exact commit to `origin` as `zamolxis/<short-task>-<sha7>` with the repository's
-own hooks (no `--no-verify`, never forced, never the default branch). Setup selects
-and verifies a GitHub publishing account for each GitHub repository; the Node uses
-that account's saved `gh` credential for the push without changing the globally
-active account. It then opens a pull request against the default branch (body: task description,
-verification evidence, trust decision, "Opened by Zamolxis; merge is a human
-decision"); otherwise the Task shows a compare link to open it yourself. Failures are reported as
+exact commit as `zamolxis/<short-task>-<sha7>` (repository hooks run; no
+`--no-verify`, never forced, never the default branch) and opens a pull request
+against the default branch (body: task description, verification evidence, trust
+decision, "Opened by Zamolxis; merge is a human decision"), or reuses the open one
+for that branch on a retry.
+
+**GitHub access is per repository.** At publish time the Node resolves each GitHub
+repository's credential in this order, with no other fallback:
+
+1. **Its own token**, if one is stored in the login Keychain of the Mac that publishes
+   (service `app.zamolxis.github-token`, account `github.com/<owner>/<repo>` from the
+   origin remote): a fine-grained personal access token limited to that repository with
+   Contents and Pull requests: Read and write. Add, replace or remove it on that Mac
+   with `pnpm zamolxis github-token [owner/repo] [--remove]`: it explains the steps,
+   opens GitHub's prefilled token page (repository selection can't be prefilled: choose
+   "Only select repositories" and the repository), reads the token with hidden input and
+   saves it only once GitHub confirms it can push.
+2. **Otherwise the GitHub CLI account chosen for it in setup** (only the host and login
+   are stored in Zamolxis config): its saved credential is read with
+   `gh auth token --hostname <host> --user <login>` for that one publication, without
+   switching the globally active `gh` account.
+3. **Otherwise publishing fails** with `PUBLISH_GITHUB_NOT_CONNECTED` and asks the owner
+   to connect the repository. The Mac's global Git credential helper and the active
+   `gh` account are never used for GitHub.
+
+Whichever source is used, the Node checks it with `GET /user` and
+`GET /repos/{owner}/{repo}` (login, `permissions.push`, token expiry; a gh account's
+credential must still belong to the chosen login), pushes over HTTPS with an inline
+credential helper that reads the credential from the git child's environment (never
+argv; system/global Git config and credential helpers are ignored, so a global
+`insteadOf` or the Mac's `osxkeychain` account is never used) and opens or reuses the
+pull request through the GitHub REST API with the same credential. Refusals:
+`PUBLISH_GITHUB_AUTH_REQUIRED` (the chosen gh account is not signed in, now belongs to
+another login, or GitHub rejects its credential), `PUBLISH_GITHUB_TOKEN_INVALID`,
+`PUBLISH_GITHUB_TOKEN_EXPIRED`, `PUBLISH_GITHUB_NO_PUSH`, `PUBLISH_GITHUB_UNREACHABLE`
+and `PUBLISH_GITHUB_TOKEN_UNREADABLE` (Keychain locked). No credential reaches Convex,
+the web app, logs or any agent (Codex, Claude and repository checks run with
+`GH_TOKEN`, `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN` and `GITHUB_ENTERPRISE_TOKEN`
+removed). The Node reports only the status (`ok`, `expiring` within 14 days,
+`expired`, `invalid`, `no_push`, `missing`, `account_unavailable`, `unreachable`), the
+source (`token` or `gh_account`), the GitHub login and the token expiry, at most every
+30 minutes per repository and within about a minute of a credential change; Settings →
+Macs → Repositories shows it ("GitHub: publishing as bragaru-i (token, expires in 80
+days)" or "… (gh account)") with a "Create a token on GitHub" link when it needs one.
+Limits: the `permissions.push` check reflects the account's role, so a token whose
+Contents permission is read-only passes the check and fails at push time
+(`PUBLISH_PUSH_FAILED`); repository hooks run during the push as the owner and can see
+the git process environment; non-GitHub remotes are still pushed with the
+repository's own Git credentials and get no pull request link. Failures are reported as
 codes (`PUBLISH_DIRTY`, `PUBLISH_SHA_MISMATCH`, `PUBLISH_PUSH_FAILED`,
-`PUBLISH_PR_FAILED`, `PUBLISH_BASE_UNKNOWN`, `PUBLISH_INTERRUPTED`, …) explained in
+`PUBLISH_PR_FAILED`, `PUBLISH_BASE_UNKNOWN`, `PUBLISH_GITHUB_*`, `PUBLISH_INTERRUPTED`,
+…) explained in
 plain language, never with remote output; a failed publication can be retried and
 does not change the Task or Session outcome. Merging stays a human decision.
 
@@ -210,10 +253,13 @@ pnpm zamolxis setup --repair   # non-interactive check and repair
 pnpm zamolxis doctor
 ```
 
-The wizard selects repositories and, for each GitHub repository, asks which
-authenticated GitHub account may publish it and verifies push access. Only the host
-and login are stored in Zamolxis config; tokens remain in the GitHub CLI credential
-store. It validates a managed root outside canonical
+The wizard selects repositories and, for each GitHub repository without its own token
+on this Mac, offers the accounts signed in to the GitHub CLI, "Add a dedicated token
+for this repository" or "Decide later"; a chosen account is verified to push the
+repository (setup stops otherwise). Only the host and login are stored in Zamolxis
+config; account credentials stay in the GitHub CLI store and tokens in the login
+Keychain. After pairing, setup reports each repository's GitHub access and offers a
+token for those that cannot publish. It validates a managed root outside canonical
 checkouts, pairs the Node, stores its device credential in the macOS login Keychain
 (service `app.zamolxis.node`) and installs its launchd service. Running setup again
 offers Check and repair (default: Keychain migration of an older plaintext

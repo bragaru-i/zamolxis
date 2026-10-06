@@ -118,6 +118,30 @@ planned capability as shipped.
   treated as interrupted (the transcript is not read); real Repair and an approved
   real permission request are covered by controlled tests only; cost is not recorded
   (the CLI's cost figure is an estimate, not the subscription's billing).
+- **Per-repository GitHub publishing (branch `feat/repo-github-tokens`, PR #98, not yet
+  on main or the Mac Node; combines #96's per-repository gh account):** "Open pull
+  request" resolves the credential per repository in this order: its own GitHub token
+  from the Mac's login Keychain (`app.zamolxis.github-token`, account
+  `github.com/<owner>/<repo>`), else the gh account chosen for it in setup
+  (`gh auth token --user <login>` for that one publication), else
+  `PUBLISH_GITHUB_NOT_CONNECTED`; the global Git/`gh` identity is never used. Either
+  credential is checked with the REST API (login, push permission, expiry; a gh
+  account's credential must still be that login, else `PUBLISH_GITHUB_AUTH_REQUIRED`),
+  pushed via an inline credential helper reading the git child's environment
+  (system/global Git config ignored) and used for the PR through the REST API (#96's
+  `gh pr create` path is gone). Setup offers, per GitHub repository without a token,
+  the signed-in gh accounts, a dedicated token (prefilled fine-grained token link,
+  hidden input) or "Decide later"; `pnpm zamolxis github-token [owner/repo] [--remove]`
+  manages tokens. The Node reports status/source/login/expiry (never a credential) to
+  `repositoryLocations.githubAccess`, shown in Settings → Macs → Repositories as
+  "publishing as <login> (token, expires in N days)" or "(gh account)". Codex, Claude
+  and verification checks run without `GH_TOKEN`/`GITHUB_TOKEN`/enterprise variants.
+  Tested with mocked GitHub API, an injected gh-account reader and a local bare remote
+  only; no real token, real `gh auth token` or GitHub call has been exercised. Limits:
+  `permissions.push` reflects the account's role, so a read-only Contents token fails
+  only at push time (`PUBLISH_PUSH_FAILED`); repository hooks see the git environment
+  during the push; non-GitHub remotes still push with their own Git credentials; the
+  gh-account status check runs `gh auth token` about once a minute per repository.
 - **Run detail (#68):** tapping a run opens result, grouped live activity, changes
   (files, base → head, branch) and verification (evidence, trust decision, repairs).
 - **Setup repair (#69):** rerunning setup offers Check and repair, repositories,
@@ -216,13 +240,15 @@ module aliases exist only when the variable is set.
    and the sessions screen shows a "Get started" checklist derived from real backend
    state (`onboarding.progress`) until the first session. Limits: a missing Codex login
    usually shows as "no heartbeat"; QR scanning before approval is not tracked.
-7. **Integration, shipped for single tasks.** Setup selects and verifies a publishing
-   account per GitHub repository; the Node supplies that account's saved credential
-   only to the matching push and PR command without changing global `gh` state. On
-   the owner's explicit "Open pull
-   request", the Node pushes the trusted integration commit as
-   `zamolxis/<task>-<sha7>` (no force, hooks respected, never the default branch) and
-   opens a PR with `gh` (or returns a compare link when no account was configured).
+7. **Integration, shipped for single tasks.** On main (#96), setup selects and
+   verifies a publishing gh account per GitHub repository and the Node supplies that
+   account's saved credential only to the matching push and PR command without
+   changing global `gh` state; PR #98 adds a per-repository token that takes
+   precedence (see above). On the owner's explicit "Open pull request", the Node pushes
+   the trusted integration commit as `zamolxis/<task>-<sha7>` (no force, hooks
+   respected, never the default branch) and opens a PR (on main with `gh`, or a compare
+   link when no account was configured; with #98 always through the REST API, failing
+   with `PUBLISH_GITHUB_NOT_CONNECTED` when the repository has neither credential).
    Nothing merges automatically. Missing: changing/reconnecting the account from web
    Settings and combining several task branches into one PR; base
    branch comes from the checkout's branch when the remote default is unknown.

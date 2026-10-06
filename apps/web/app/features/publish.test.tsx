@@ -80,6 +80,19 @@ describe("publishing trusted work", () => {
     const failed = status({ ...ready, status: "failed", error: "PUBLISH_PUSH_FAILED" });
     expect(failed).toContain("couldn&#x27;t push the branch");
     expect(failed).toContain("Try again");
+    expect(explainPublishFailure("PUBLISH_GITHUB_NOT_CONNECTED")).toContain(
+      "On your Mac, run pnpm zamolxis github-token",
+    );
+    expect(explainPublishFailure("PUBLISH_GITHUB_NOT_CONNECTED")).toContain("pnpm zamolxis setup");
+    expect(explainPublishFailure("PUBLISH_GITHUB_AUTH_REQUIRED")).toContain("gh auth login");
+    for (const code of [
+      "PUBLISH_GITHUB_TOKEN_INVALID",
+      "PUBLISH_GITHUB_TOKEN_EXPIRED",
+      "PUBLISH_GITHUB_NO_PUSH",
+      "PUBLISH_GITHUB_UNREACHABLE",
+      "PUBLISH_GITHUB_TOKEN_UNREADABLE",
+    ])
+      expect(explainPublishFailure(code)).not.toContain("Publishing failed:");
     expect(explainPublishFailure("WORKSPACE_MISSING")).toBe(
       "Publishing failed: workspace missing.",
     );
