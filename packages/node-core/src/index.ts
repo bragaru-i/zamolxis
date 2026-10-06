@@ -11,5 +11,7 @@ export * from "./control-plane/driver";
 export * from "./persistence/local-state";
 export * from "./repository/repository-registry";
 export * from "./runtime/runtime-manager";
+export * from "./trace/recorder";
+export * from "./trace/steps";
 export * from "./workspace/workspace-manager";
 export * from "./integration/publish";

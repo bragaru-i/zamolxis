@@ -6,18 +6,50 @@ export interface CheckEvidence {
   result: "passed" | "failed";
   summary: string;
 }
+/** One executed (or refused) check, reported to an observer such as the trace recorder. */
+export interface CheckObservation {
+  readonly command: string;
+  readonly script?: string;
+  readonly result: "passed" | "failed";
+  /** Process exit code; absent when the process did not exit normally or never ran. */
+  readonly exitCode?: number;
+  readonly startedAt: number;
+  readonly finishedAt: number;
+  /** Raw tail of stdout and stderr; observers redact and bound it. */
+  readonly output: string;
+}
+const OBSERVED_OUTPUT = 8000;
 // Node executes repository-owned scripts, never shell text from Supervisor output.
 export async function runVerificationChecks(
   cwd: string,
   scripts: readonly string[],
   required: readonly string[],
+  observe?: (check: CheckObservation) => void,
 ): Promise<CheckEvidence[]> {
-  const execute = (executable: string, args: string[]) =>
-    new Promise<boolean>((resolve) =>
-      execFile(executable, args, { cwd, timeout: 120_000, maxBuffer: 256 * 1024 }, (error) =>
-        resolve(!error),
+  const execute = (executable: string, args: string[], script?: string) => {
+    const startedAt = Date.now();
+    return new Promise<boolean>((resolve) =>
+      execFile(
+        executable,
+        args,
+        { cwd, timeout: 120_000, maxBuffer: 256 * 1024 },
+        (error, stdout, stderr) => {
+          const code = (error as { code?: unknown } | null)?.code;
+          const output = [stdout, stderr].filter(Boolean).join("\n");
+          observe?.({
+            command: [executable, ...args].join(" "),
+            ...(script ? { script } : {}),
+            result: error ? "failed" : "passed",
+            ...(!error ? { exitCode: 0 } : typeof code === "number" ? { exitCode: code } : {}),
+            startedAt,
+            finishedAt: Date.now(),
+            output: output.slice(-OBSERVED_OUTPUT),
+          });
+          resolve(!error);
+        },
       ),
     );
+  };
   const staticPass = await execute("git", ["diff", "--check", "HEAD^", "HEAD"]);
   const evidence: CheckEvidence[] = [
     {
@@ -43,10 +75,20 @@ export async function runVerificationChecks(
   let passed = scripts.length > 0;
   const summaries: string[] = [];
   for (const script of scripts) {
-    const ok =
-      /^[a-zA-Z0-9:_-]{1,64}$/.test(script) &&
-      typeof configured[script] === "string" &&
-      (await execute(manager, ["run", script]));
+    const runnable =
+      /^[a-zA-Z0-9:_-]{1,64}$/.test(script) && typeof configured[script] === "string";
+    if (!runnable) {
+      const at = Date.now();
+      observe?.({
+        command: `${manager} run ${script}`,
+        script,
+        result: "failed",
+        startedAt: at,
+        finishedAt: at,
+        output: "Not run: the script is not defined in package.json.",
+      });
+    }
+    const ok = runnable && (await execute(manager, ["run", script], script));
     passed = passed && ok;
     summaries.push(`${manager} run ${script}: ${ok ? "passed" : "failed"}`);
   }

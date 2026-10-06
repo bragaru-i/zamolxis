@@ -536,16 +536,42 @@ export default defineSchema({
     startedAt: v.number(),
     finishedAt: v.optional(v.number()),
   }).index("by_run", ["runId"]),
+  // TraceStepDto (packages/contracts) as stored: ordered by first arrival; a "started"
+  // step is settled at most once, otherwise steps are append-only.
   traceSteps: defineTable({
     traceId: v.id("traces"),
-    eventId: v.string(),
+    stepId: v.string(),
     sequence: v.number(),
-    type: v.string(),
-    summary: v.string(),
-    occurredAt: v.number(),
+    kind: v.union(
+      v.literal("discovery"),
+      v.literal("supervisor"),
+      v.literal("workspace"),
+      v.literal("runtime"),
+      v.literal("verification-check"),
+      v.literal("trust"),
+      v.literal("integration"),
+    ),
+    label: v.string(),
+    status: v.union(
+      v.literal("started"),
+      v.literal("passed"),
+      v.literal("failed"),
+      v.literal("skipped"),
+    ),
+    startedAt: v.number(),
+    finishedAt: v.optional(v.number()),
+    detail: v.optional(v.string()),
+    references: v.optional(
+      v.object({
+        runId: v.optional(v.string()),
+        sha: v.optional(v.string()),
+        script: v.optional(v.string()),
+        exitCode: v.optional(v.number()),
+      }),
+    ),
   })
     .index("by_trace_sequence", ["traceId", "sequence"])
-    .index("by_trace_event", ["traceId", "eventId"]),
+    .index("by_trace_step", ["traceId", "stepId"]),
   verificationRuns: defineTable({
     candidateRunId: v.id("agentRuns"),
     verifierRunId: v.id("agentRuns"),

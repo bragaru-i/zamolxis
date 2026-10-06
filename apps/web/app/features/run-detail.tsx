@@ -32,12 +32,15 @@ import {
   runtimeLabel,
   shortSha,
   type TimelineEntry,
+  type TraceStepRecord,
   tokensLabel,
   toolGroupMeta,
   toolGroupTitle,
+  traceRows,
 } from "./run-detail-model";
 
 const PAGE = 40;
+const TRACE_PAGE = 50;
 const FILES_SHOWN = 12;
 const TOOLS_SHOWN = 30;
 
@@ -225,6 +228,7 @@ export function RunDetailBody({
 
       <Changes detail={detail} paths={paths} truncated={settledFiles?.truncated ?? false} />
       <VerificationSection detail={detail} />
+      <TraceSection runId={runId} active={active} now={now} />
 
       <Disclosure summary="Diagnostics">
         <Facts
@@ -349,6 +353,69 @@ function ActivityEntry({ entry, active }: { entry: TimelineEntry; active: boolea
     default:
       return <TimelineItem tone="neutral" title={entry.type} meta={time} />;
   }
+}
+
+/** What the Node recorded for this run: discovery, workspace, runtime, checks, candidate. */
+function TraceSection({
+  runId,
+  active,
+  now,
+}: {
+  runId: Id<"agentRuns">;
+  active: boolean;
+  now: number;
+}) {
+  const trace = usePaginatedQuery(api.traces.listByRun, { runId }, { initialNumItems: TRACE_PAGE });
+  const rows = traceRows(trace.results as TraceStepRecord[], now, active);
+  return (
+    <section className="z-stack" aria-label="Trace">
+      <h3 className="z-section-title">Trace</h3>
+      {trace.status === "LoadingFirstPage" ? (
+        <p className="z-small z-muted" role="status">
+          Loading trace…
+        </p>
+      ) : rows.length === 0 ? (
+        <p className="z-small z-muted">No trace recorded for this run.</p>
+      ) : (
+        <Timeline label="Run trace">
+          {rows.map((row) => (
+            <TimelineItem
+              key={row.key}
+              tone={row.tone}
+              title={row.mono ? <code className="z-mono z-break">{row.title}</code> : row.title}
+              meta={clockTime(row.at)}
+            >
+              <span className="z-xsmall z-muted">
+                {[row.kind, row.status, row.duration, ...row.facts].filter(Boolean).join(" · ")}
+              </span>
+              {row.detail &&
+                (row.mono ? (
+                  <Disclosure summary="Output">
+                    <pre
+                      className="z-mono z-xsmall"
+                      style={{ margin: 0, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
+                    >
+                      {row.detail}
+                    </pre>
+                  </Disclosure>
+                ) : (
+                  <Disclosure summary="Details">
+                    <p className="z-xsmall z-break" style={{ whiteSpace: "pre-wrap" }}>
+                      {row.detail}
+                    </p>
+                  </Disclosure>
+                ))}
+            </TimelineItem>
+          ))}
+        </Timeline>
+      )}
+      {trace.status === "CanLoadMore" && (
+        <Button variant="ghost" size="small" onClick={() => trace.loadMore(TRACE_PAGE)}>
+          Load more steps
+        </Button>
+      )}
+    </section>
+  );
 }
 
 function Changes({

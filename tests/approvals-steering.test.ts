@@ -41,6 +41,7 @@ const modules = {
   "./runs.ts": () => import("../convex/runs"),
   "./events.ts": () => import("../convex/events"),
   "./node.ts": () => import("../convex/node"),
+  "./traces.ts": () => import("../convex/traces"),
 };
 // The single row a step expects; anything else fails the test.
 function only<T>(rows: T[]): T {

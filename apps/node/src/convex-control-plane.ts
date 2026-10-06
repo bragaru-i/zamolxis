@@ -333,6 +333,18 @@ export class ConvexControlPlaneTransport implements ControlPlaneTransport {
         result.some((id, index) => id !== events[index]?.eventId)
       )
         throw new Error("INVALID_EVENT_ACKNOWLEDGEMENT");
+    } else if (delivery.kind === "run.trace") {
+      await this.client.mutation(
+        makeFunctionReference<"mutation", Record<string, Value>, unknown>("traces:append"),
+        {
+          workstationId: this.workstationId,
+          runId: delivery.runId,
+          steps: delivery.steps.map(({ references, ...step }) => ({
+            ...step,
+            ...(references ? { references: { ...references } as Record<string, Value> } : {}),
+          })),
+        },
+      );
     } else if (delivery.kind === "run.complete") {
       const { kind: _, evidence, ...args } = delivery;
       await this.mutation("completeRun", {

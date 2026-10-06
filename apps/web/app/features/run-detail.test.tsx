@@ -15,16 +15,21 @@ import {
   runtimeLabel,
   shortSha,
   splitToolResult,
+  stepDuration,
+  type TraceStepRecord,
   tokensLabel,
   toolGroupMeta,
   toolGroupTitle,
   toolSummary,
+  traceRows,
 } from "./run-detail-model";
 
 const state = vi.hoisted(() => ({
   data: {} as Record<string, unknown>,
   events: [] as unknown[],
   status: "Exhausted" as string,
+  trace: [] as unknown[],
+  traceStatus: "Exhausted" as string,
   args: {} as Record<string, unknown>,
 }));
 vi.mock("convex/react", () => ({
@@ -33,7 +38,13 @@ vi.mock("convex/react", () => ({
     state.args[getFunctionName(reference)] = args;
     return args === "skip" ? undefined : state.data[getFunctionName(reference)];
   },
-  usePaginatedQuery: () => ({ results: state.events, status: state.status, loadMore: vi.fn() }),
+  usePaginatedQuery: (reference: Parameters<typeof getFunctionName>[0], args: unknown) => {
+    const name = getFunctionName(reference);
+    state.args[name] = args;
+    return name === "traces:listByRun"
+      ? { results: state.trace, status: state.traceStatus, loadMore: vi.fn() }
+      : { results: state.events, status: state.status, loadMore: vi.fn() };
+  },
 }));
 
 import { RunDetail } from "./run-detail";
@@ -49,6 +60,8 @@ beforeEach(() => {
   state.data = {};
   state.events = [];
   state.status = "Exhausted";
+  state.trace = [];
+  state.traceStatus = "Exhausted";
   state.args = {};
 });
 
@@ -372,6 +385,115 @@ describe("RunDetail", () => {
       { paths: [], truncated: false },
     );
     expect(html).toContain("Not independently verified yet.");
+  });
+
+  it("shows the recorded trace in order with status, duration and expandable output", () => {
+    state.trace = [
+      traceStep(3, {
+        kind: "verification-check",
+        label: "pnpm run test",
+        status: "failed",
+        startedAt: 5000,
+        finishedAt: 7500,
+        detail: "FAIL src/a.test.ts\nexpected 1 to be 2",
+        references: { script: "test", exitCode: 1, sha: sha("b") },
+      }),
+      traceStep(1, {
+        kind: "discovery",
+        label: "Repository discovered",
+        detail: "4 sources, 2 capabilities",
+        references: { sha: sha("a") },
+      }),
+      traceStep(2, {
+        kind: "runtime",
+        label: "Runtime codex running",
+        status: "started",
+        finishedAt: undefined,
+      }),
+    ];
+    const html = render(detail(), { paths: [], truncated: false });
+    expect(state.args["traces:listByRun"]).toEqual({ runId: "run1" });
+    expect(html).toContain("Trace</h3>");
+    expect(html).toContain('aria-label="Run trace"');
+    // Recorded order, not arrival order of the array.
+    expect(html.indexOf("Repository discovered")).toBeLessThan(html.indexOf("Runtime codex"));
+    expect(html.indexOf("Runtime codex")).toBeLessThan(html.indexOf("pnpm run test"));
+    expect(html).toContain("Discovery · Passed · 250 ms · at aaaaaaa");
+    expect(html).toContain("Check · Failed · 3 s · exit code 1 · at bbbbbbb");
+    // A step still running on a settled run has no duration.
+    expect(html).toContain("Runtime · Running</span>");
+    expect(html).toContain('<code class="z-mono z-break">pnpm run test</code>');
+    expect(html).toContain('<summary class="z-disclosure__summary">Output</summary>');
+    expect(html).toMatch(
+      /<pre class="z-mono z-xsmall"[^>]*>FAIL src\/a.test.ts\nexpected 1 to be 2<\/pre>/,
+    );
+    expect(html).toContain('<summary class="z-disclosure__summary">Details</summary>');
+    expect(html).toContain("4 sources, 2 capabilities");
+  });
+
+  it("says when no trace was recorded and offers more trace pages", () => {
+    expect(render(detail(), { paths: [], truncated: false })).toContain(
+      "No trace recorded for this run.",
+    );
+    state.trace = [traceStep(1, { kind: "workspace", label: "Workspace ready" })];
+    state.traceStatus = "CanLoadMore";
+    expect(render(detail(), { paths: [], truncated: false })).toContain("Load more steps");
+  });
+});
+
+function traceStep(
+  sequence: number,
+  // `finishedAt: undefined` removes the default finish time.
+  step: { [K in keyof TraceStepRecord]?: TraceStepRecord[K] | undefined },
+): TraceStepRecord {
+  return {
+    _id: `t${sequence}`,
+    sequence,
+    stepId: `step-${sequence}`,
+    kind: "workspace",
+    label: "Step",
+    status: "passed",
+    startedAt: 1000,
+    finishedAt: 1250,
+    ...step,
+  } as TraceStepRecord;
+}
+
+describe("traceRows", () => {
+  it("formats status, duration and facts, and times running steps only while active", () => {
+    const steps = [
+      traceStep(2, { kind: "runtime", status: "started", startedAt: 1000, finishedAt: undefined }),
+      traceStep(1, { kind: "trust", status: "skipped", label: " ", finishedAt: 62_000 }),
+    ];
+    const settled = traceRows(steps, 10_000, false);
+    expect(settled.map((row) => [row.title, row.kind, row.status, row.tone, row.duration])).toEqual(
+      [
+        ["Trust", "Trust", "Skipped", "neutral", "1 min 1 s"],
+        ["Step", "Runtime", "Running", "info", undefined],
+      ],
+    );
+    expect(traceRows(steps, 10_000, true)[1]?.duration).toBe("9 s");
+    expect(stepDuration(999)).toBe("999 ms");
+    expect(stepDuration(-5)).toBe("0 ms");
+    const [check] = traceRows(
+      [
+        traceStep(1, {
+          kind: "verification-check",
+          status: "weird",
+          detail: "  out  ",
+          references: { exitCode: 0 },
+        }),
+      ],
+      0,
+      false,
+    );
+    expect(check).toMatchObject({
+      status: "weird",
+      tone: "neutral",
+      mono: true,
+      detail: "out",
+      facts: ["exit code 0"],
+    });
   });
 });
 
