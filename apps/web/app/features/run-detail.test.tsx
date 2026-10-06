@@ -343,6 +343,36 @@ describe("RunDetail", () => {
     ).toContain("revision 3 · owner instructions abababababab");
   });
 
+  it("shows the agent's intermediate messages as notes in the activity timeline", () => {
+    // Newest first, as the paginated query returns them.
+    state.events = [
+      event("run.completed", { summary: "Done." }, 9_000),
+      event("run.message", { text: "Tests pass.\nCommitting next." }, 8_000),
+      event(
+        "tool.started",
+        {
+          tool: "command",
+          summary: "cat src/a.ts",
+          reads: ["src/a.ts", 7],
+        },
+        7_000,
+      ),
+      event("run.message", { text: "Reading the module first." }, 6_000),
+      event("run.message", { text: "   " }, 5_500),
+      event("run.started", {}, 5_000),
+    ];
+    const html = render(detail());
+    expect(html).toContain("Note");
+    expect(html).toContain("Reading the module first.");
+    expect(html).toContain("Tests pass.\nCommitting next.");
+    expect(html).toContain("read src/a.ts");
+    expect(html.indexOf("Reading the module first.")).toBeLessThan(html.indexOf("Tests pass."));
+    const notes = groupEvents([...(state.events as RunEvent[])].reverse()).filter(
+      (entry) => entry.kind === "note",
+    );
+    expect(notes).toHaveLength(2);
+  });
+
   it("streams an active run from loaded events and offers older pages", () => {
     state.status = "CanLoadMore";
     state.events = [

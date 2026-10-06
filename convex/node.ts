@@ -14,6 +14,8 @@ import { recordIntegrationStep } from "./traces";
 import { valueKey } from "./lib/value";
 
 const deviceArgs = { workstationId: v.id("workstations") };
+// Mirrors RUN_MESSAGE_LIMIT in packages/contracts/src/events/event.ts.
+export const RUN_MESSAGE_LIMIT = 2000;
 export const heartbeat = mutation({
   args: {
     ...deviceArgs,
@@ -365,6 +367,7 @@ const runEventType = v.union(
   v.literal("run.started"),
   v.literal("run.usage"),
   v.literal("run.activity"),
+  v.literal("run.message"),
   v.literal("run.waiting"),
   v.literal("run.completed"),
   v.literal("run.failed"),
@@ -407,6 +410,14 @@ export const ingestBatch = mutation({
         !Number.isSafeInteger(event.sequence) ||
         event.sequence < 1 ||
         JSON.stringify(event.payload).length > 16 * 1024
+      )
+        fail("INVALID_ARGUMENT");
+      // An intermediate agent message: redacted on the Node, bounded to RUN_MESSAGE_LIMIT.
+      if (
+        event.type === "run.message" &&
+        (typeof event.payload?.text !== "string" ||
+          !event.payload.text.trim() ||
+          event.payload.text.length > RUN_MESSAGE_LIMIT)
       )
         fail("INVALID_ARGUMENT");
       const duplicate = await ctx.db

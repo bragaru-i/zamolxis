@@ -16,6 +16,16 @@ import { approvalIdFor, approvalSummary } from "../approvals";
 
 export type FakeStep =
   | { readonly type: "activity"; readonly label: string }
+  // An intermediate agent message (`run.message`).
+  | { readonly type: "message"; readonly text: string }
+  // A tool call: `tool.started` then `tool.completed`.
+  | {
+      readonly type: "tool";
+      readonly tool: string;
+      readonly summary: string;
+      readonly success?: boolean;
+      readonly reads?: readonly string[];
+    }
   | { readonly type: "waiting"; readonly reason: string }
   | { readonly type: "success"; readonly summary: string }
   | { readonly type: "failure"; readonly message: string }
@@ -270,7 +280,19 @@ export class FakeRuntime implements AgentRuntime {
       }
       if (step.type === "activity")
         this.#emit(session, { type: "run.activity", payload: { label: step.label } });
-      else if (step.type === "waiting") {
+      else if (step.type === "message")
+        this.#emit(session, { type: "run.message", payload: { text: step.text } });
+      else if (step.type === "tool") {
+        const { tool, summary } = step;
+        this.#emit(session, {
+          type: "tool.started",
+          payload: { tool, summary, ...(step.reads ? { reads: [...step.reads] } : {}) },
+        });
+        this.#emit(session, {
+          type: "tool.completed",
+          payload: { tool, summary, success: step.success !== false },
+        });
+      } else if (step.type === "waiting") {
         this.#emit(session, { type: "run.waiting", payload: { reason: step.reason } });
         session.snapshot = { ...session.snapshot, state: "waiting" };
         return;

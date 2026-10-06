@@ -32,6 +32,7 @@ import {
   runtimeLabel,
   shortSha,
   type TimelineEntry,
+  type TraceRow,
   type TraceStepRecord,
   tokensLabel,
   toolGroupMeta,
@@ -269,6 +270,7 @@ const ENTRY_TONE: Record<TimelineEntry["kind"], Tone> = {
   activity: "neutral",
   tools: "neutral",
   files: "info",
+  note: "neutral",
   waiting: "warning",
   completed: "success",
   failed: "danger",
@@ -318,6 +320,9 @@ function ActivityEntry({ entry, active }: { entry: TimelineEntry; active: boolea
                     item.summary
                   )}
                   {item.result && <span className="z-muted"> · {item.result}</span>}
+                  {item.reads && (
+                    <span className="z-muted z-break"> · read {item.reads.join(", ")}</span>
+                  )}
                 </li>
               ))}
             </ul>
@@ -338,6 +343,15 @@ function ActivityEntry({ entry, active }: { entry: TimelineEntry; active: boolea
             ))}
             {entry.paths.length > 5 && <li>+{entry.paths.length - 5} more</li>}
           </ul>
+        </TimelineItem>
+      );
+    case "note":
+      // The agent's own words while it worked: a readable note, not a chat bubble.
+      return (
+        <TimelineItem tone={ENTRY_TONE.note} title="Note" meta={time}>
+          <div className="z-small z-break" style={{ whiteSpace: "pre-wrap" }}>
+            <Collapsible likelyLong={likelyLongSummary(entry.text)}>{entry.text}</Collapsible>
+          </div>
         </TimelineItem>
       );
     case "waiting":
@@ -365,6 +379,42 @@ function ActivityEntry({ entry, active }: { entry: TimelineEntry; active: boolea
   }
 }
 
+/** One recorded step (Run trace or Supervisor log). `inline` shows the detail unfolded. */
+export function TraceStepItem({ row, inline = false }: { row: TraceRow; inline?: boolean }) {
+  return (
+    <TimelineItem
+      tone={row.tone}
+      title={row.titleMono ? <code className="z-mono z-break">{row.title}</code> : row.title}
+      meta={clockTime(row.at)}
+    >
+      <span className="z-xsmall z-muted">
+        {[row.kind, row.status, row.duration, ...row.facts].filter(Boolean).join(" · ")}
+      </span>
+      {row.detail &&
+        (row.mono ? (
+          <Disclosure summary="Output">
+            <pre
+              className="z-mono z-xsmall"
+              style={{ margin: 0, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
+            >
+              {row.detail}
+            </pre>
+          </Disclosure>
+        ) : inline ? (
+          <p className="z-small z-break" style={{ whiteSpace: "pre-wrap", margin: 0 }}>
+            {row.detail}
+          </p>
+        ) : (
+          <Disclosure summary="Details">
+            <p className="z-xsmall z-break" style={{ whiteSpace: "pre-wrap" }}>
+              {row.detail}
+            </p>
+          </Disclosure>
+        ))}
+    </TimelineItem>
+  );
+}
+
 /** What the Node recorded for this run: discovery, workspace, runtime, checks, candidate. */
 function TraceSection({
   runId,
@@ -389,33 +439,7 @@ function TraceSection({
       ) : (
         <Timeline label="Run trace">
           {rows.map((row) => (
-            <TimelineItem
-              key={row.key}
-              tone={row.tone}
-              title={row.mono ? <code className="z-mono z-break">{row.title}</code> : row.title}
-              meta={clockTime(row.at)}
-            >
-              <span className="z-xsmall z-muted">
-                {[row.kind, row.status, row.duration, ...row.facts].filter(Boolean).join(" · ")}
-              </span>
-              {row.detail &&
-                (row.mono ? (
-                  <Disclosure summary="Output">
-                    <pre
-                      className="z-mono z-xsmall"
-                      style={{ margin: 0, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
-                    >
-                      {row.detail}
-                    </pre>
-                  </Disclosure>
-                ) : (
-                  <Disclosure summary="Details">
-                    <p className="z-xsmall z-break" style={{ whiteSpace: "pre-wrap" }}>
-                      {row.detail}
-                    </p>
-                  </Disclosure>
-                ))}
-            </TimelineItem>
+            <TraceStepItem key={row.key} row={row} />
           ))}
         </Timeline>
       )}

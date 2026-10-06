@@ -349,10 +349,13 @@ export class ConvexControlPlaneTransport implements ControlPlaneTransport {
         sequence: event.sequence,
         type: event.type,
         occurredAt: event.occurredAt,
-        payload:
-          event.type === "files.changed"
-            ? { paths: [...event.payload.paths] }
-            : { ...event.payload },
+        // Plain JSON for Convex: readonly lists (files.changed paths, tool reads) are copied.
+        payload: Object.fromEntries(
+          Object.entries(event.payload).map(([key, value]) => [
+            key,
+            Array.isArray(value) ? [...value] : value,
+          ]),
+        ) as Record<string, Value>,
       }));
       const result = await this.mutation("ingestBatch", { runId: delivery.runId, events });
       if (
@@ -367,6 +370,18 @@ export class ConvexControlPlaneTransport implements ControlPlaneTransport {
         {
           workstationId: this.workstationId,
           runId: delivery.runId,
+          steps: delivery.steps.map(({ references, ...step }) => ({
+            ...step,
+            ...(references ? { references: { ...references } as Record<string, Value> } : {}),
+          })),
+        },
+      );
+    } else if (delivery.kind === "supervisor.log") {
+      await this.client.mutation(
+        makeFunctionReference<"mutation", Record<string, Value>, unknown>("supervisor:appendLog"),
+        {
+          workstationId: this.workstationId,
+          textCommandId: delivery.textCommandId,
           steps: delivery.steps.map(({ references, ...step }) => ({
             ...step,
             ...(references ? { references: { ...references } as Record<string, Value> } : {}),

@@ -809,6 +809,15 @@ it("runs text intent through discovery, native Builder, independent Verifier, de
   await expect(
     other.query(api.supervisor.messages, { workSessionId: sessionId }),
   ).rejects.toThrow();
+  // The Supervisor's log for the message, readable by its owner only.
+  const planLog = (await f.user.query(api.supervisor.log, {
+    textCommandId: messages[0]?._id as never,
+  })) as { kind: string; label: string }[];
+  expect(planLog[0]?.kind).toBe("discovery");
+  expect(planLog.at(-1)).toMatchObject({ kind: "supervisor", label: "Planned 1 task" });
+  await expect(
+    other.query(api.supervisor.log, { textCommandId: messages[0]?._id as never }),
+  ).rejects.toThrow();
   const runs = await f.user.query(api.runs.listBySession, { workSessionId: sessionId });
   const repaired = !authenticated || nativeRepair;
   const candidate = runs.find((run) => run.role === (repaired ? "repair" : "builder"));
@@ -816,6 +825,20 @@ it("runs text intent through discovery, native Builder, independent Verifier, de
   // The agent's final message is stored as the run's result summary.
   if (authenticated) expect(candidate.resultSummary).toEqual(expect.any(String));
   else expect(candidate.resultSummary).toBe(`${candidate.role} finished: wrote outcome.txt`);
+  // Intermediate agent messages (if the model wrote any) are bounded notes, never the reply.
+  const notes = (
+    await f.user.query(api.events.listByRun, {
+      runId: candidate._id,
+      paginationOpts: { numItems: 100, cursor: null },
+    })
+  ).page.filter((event: { type: string }) => event.type === "run.message") as {
+    payload: { text: string };
+  }[];
+  for (const note of notes) {
+    expect(note.payload.text.trim()).not.toBe("");
+    expect(note.payload.text.length).toBeLessThanOrEqual(2000);
+  }
+  console.log(`Candidate run notes (run.message): ${notes.length}`);
   if (repaired) {
     const initial = runs.find((run) => run.role === "builder");
     if (!initial) throw new Error("Missing initial Builder run");
@@ -1345,6 +1368,23 @@ it.skipIf(process.env.ZAMOLXIS_CODEX_ACCEPTANCE !== "1")(
     expect((await f.user.query(api.sessions.get, { workSessionId: sessionId })).status).toBe(
       "waiting",
     );
+    // "Show what I did": the Supervisor's log reached the backend through the outbox.
+    const answeredLog = (await f.user.query(api.supervisor.log, {
+      textCommandId: answered?._id as never,
+    })) as { kind: string; label: string; status: string; detail?: string }[];
+    expect(answeredLog[0]).toMatchObject({ kind: "discovery", status: "passed" });
+    expect(answeredLog[1]).toMatchObject({ label: "Supervisor finished", status: "passed" });
+    expect(answeredLog[1]?.detail).toMatch(/tokens/);
+    expect(answeredLog.at(-1)).toMatchObject({ kind: "supervisor", label: "Answered" });
+    console.log(
+      `Supervisor log (answer): ${answeredLog.length} steps; ${answeredLog
+        .map(
+          (step) =>
+            `${step.kind}:${step.label}${step.detail?.startsWith("Read ") ? ` [${step.detail}]` : ""}`,
+        )
+        .join(" | ")
+        .slice(0, 2000)}`,
+    );
 
     // 2. A follow-up that needs a long investigation is stopped while the Supervisor works.
     await f.user.mutation(api.supervisor.submit, {
@@ -1378,6 +1418,21 @@ it.skipIf(process.env.ZAMOLXIS_CODEX_ACCEPTANCE !== "1")(
     const messages = await f.user.query(api.supervisor.messages, { workSessionId: sessionId });
     expect(messages[1]).toMatchObject({ stopped: true });
     expect(messages[1]?.decision).toBeUndefined();
+    const stoppedLog = (await f.user.query(api.supervisor.log, {
+      textCommandId: stopTarget as never,
+    })) as { kind: string; label: string; status: string }[];
+    // How much it did before the stop depends on timing; the session and outcome are logged.
+    console.log(
+      `Supervisor log (stopped): ${stoppedLog.map((step) => `${step.kind}:${step.label}`).join(" | ")}`,
+    );
+    expect(stoppedLog[0]).toMatchObject({ kind: "discovery" });
+    expect(stoppedLog.find((step) => step.kind === "supervisor")).toMatchObject({
+      status: "failed",
+    });
+    expect(stoppedLog.at(-1)).toMatchObject({
+      label: "Stopped before answering",
+      status: "failed",
+    });
     expect((await f.user.query(api.sessions.get, { workSessionId: sessionId })).status).toBe(
       "waiting",
     );

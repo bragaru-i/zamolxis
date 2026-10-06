@@ -37,6 +37,7 @@ import {
   runtimeStep,
   workspaceStep,
 } from "../trace/steps";
+import { SupervisorLog, type SupervisorLogBatch } from "../trace/supervisor-log";
 import { type CheckEvidence, runVerificationChecks } from "../verification/checks";
 import type { WorkspaceManager } from "../workspace/workspace-manager";
 
@@ -287,6 +288,7 @@ export type Delivery =
       readonly summary?: string;
     }
   | TraceBatch
+  | SupervisorLogBatch
   | { readonly kind: "command.failed"; readonly commandId: string; readonly code: string }
   | { readonly kind: "command.complete"; readonly commandId: string };
 /** The control plane's view of a run, returned by reconcile when it is known. */
@@ -543,6 +545,7 @@ export class ControlPlaneDriver {
         });
       } else if (command.type === "repository.plan") {
         if (!this.#discovery) throw new Error("REPOSITORY_DISCOVERY_REQUIRED");
+        const discoveredAt = Date.now();
         const context = this.#discovery.discover(command.payload.workspaceId);
         this.#discovery.assertCurrent(context);
         const workspace = this.workspaces.inspect(command.payload.workspaceId);
@@ -557,20 +560,38 @@ export class ControlPlaneDriver {
           };
         } else {
           const checks = repositoryChecks(workspace.path);
-          const outcome = await this.#supervise(
-            command.payload,
-            supervisorInstruction({
-              text: command.payload.text,
-              conversation: command.payload.conversation ?? [],
-              context,
-              checks,
-              ...(command.payload.supervisor?.instructions
-                ? { instructions: command.payload.supervisor.instructions }
-                : {}),
-            }),
+          // The owner can see what the Supervisor did for this message ("Show what I did").
+          const log = new SupervisorLog(
+            this.store,
+            command.payload.textCommandId,
+            command.commandId,
+            this.options.now ?? Date.now,
           );
-          usage = outcome.usage;
-          result = parseSupervisorDecision(outcome.summary, checks);
+          log.discovery(discoveryStep(command.commandId, discoveredAt, context));
+          try {
+            const outcome = await this.#supervise(
+              command.payload,
+              supervisorInstruction({
+                text: command.payload.text,
+                conversation: command.payload.conversation ?? [],
+                context,
+                checks,
+                ...(command.payload.supervisor?.instructions
+                  ? { instructions: command.payload.supervisor.instructions }
+                  : {}),
+              }),
+              log,
+            );
+            usage = outcome.usage;
+            result = parseSupervisorDecision(outcome.summary, checks);
+            log.decided(result);
+          } catch (error) {
+            log.failed(error);
+            throw error;
+          } finally {
+            // Written before the plan outcome, so the log is there when the reply appears.
+            log.persist();
+          }
         }
         // The Supervisor is read-only: the planned context must still be the current one.
         this.#discovery.assertCurrent(context);
@@ -975,10 +996,12 @@ export class ControlPlaneDriver {
     return first;
   }
   // Runs the Supervisor as a Node-local, read-only run on the planning workspace. Its
-  // events are not delivered; only its final reply and reported usage are returned.
+  // events are not delivered as run events: they are summarized into its log, and its
+  // final reply and reported usage are returned.
   async #supervise(
     payload: { textCommandId: string; workspaceId: string; supervisor?: SupervisorSelection },
     instruction: string,
+    log: SupervisorLog,
   ): Promise<{ summary?: string; usage: SupervisorUsage }> {
     const runId = supervisorRunId(payload.textCommandId) as AgentRunId;
     const workspaceId = payload.workspaceId as WorkspaceId;
@@ -993,6 +1016,7 @@ export class ControlPlaneDriver {
       this.options.now ?? Date.now,
       this.options.progressIntervalMs ?? PROGRESS_INTERVAL_MS,
     );
+    log.started(runtimeId, payload.supervisor?.model, payload.supervisor?.reasoningEffort);
     try {
       const session = await this.manager.start({
         runId,
@@ -1021,6 +1045,7 @@ export class ControlPlaneDriver {
       // Marks the start, so the owner sees how long the Supervisor has been working.
       report();
       for await (const event of this.#follow(runtime, nativeSessionId, runId, workspaceId)) {
+        log.observe(event);
         // The Supervisor is read-only and Node-local: nobody can approve its requests.
         if (event.type === "approval.requested")
           await runtime.resolveApproval?.({
@@ -1049,6 +1074,7 @@ export class ControlPlaneDriver {
       }
       const final = await this.manager.observe(runId);
       settled = TERMINAL.includes(final.state);
+      log.ended(final.state, usage);
       // A Supervisor that finished before the stop reached it keeps its answer.
       if (final.state === "completed") return { ...(summary ? { summary } : {}), usage };
       throw new Error(

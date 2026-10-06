@@ -2,6 +2,27 @@ import { authTables } from "@convex-dev/auth/server";
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
+// Supervisor log steps (mirrors packages/contracts/src/trace/supervisor-log.ts).
+export const supervisorLogKind = v.union(
+  v.literal("discovery"),
+  v.literal("supervisor"),
+  v.literal("phase"),
+  v.literal("tool"),
+  v.literal("message"),
+  v.literal("approval"),
+);
+export const supervisorLogStatus = v.union(
+  v.literal("started"),
+  v.literal("passed"),
+  v.literal("failed"),
+  v.literal("skipped"),
+);
+export const supervisorLogReferences = v.object({
+  runId: v.optional(v.string()),
+  sha: v.optional(v.string()),
+  script: v.optional(v.string()),
+  exitCode: v.optional(v.number()),
+});
 export const workstationStatus = v.union(
   v.literal("online"),
   v.literal("offline"),
@@ -112,6 +133,24 @@ export default defineSchema({
   })
     .index("by_owner_key", ["ownerId", "idempotencyKey"])
     .index("by_session", ["workSessionId"]),
+  // What the Supervisor did for one message (#49): bounded, redacted steps delivered by the
+  // planning Node. Keyed by text command, not by a trace: the Supervisor is a Node-local
+  // run without an agentRuns row.
+  supervisorLogSteps: defineTable({
+    textCommandId: v.id("textCommands"),
+    ownerId: v.id("users"),
+    sequence: v.number(),
+    stepId: v.string(),
+    kind: supervisorLogKind,
+    label: v.string(),
+    status: supervisorLogStatus,
+    startedAt: v.number(),
+    finishedAt: v.optional(v.number()),
+    detail: v.optional(v.string()),
+    references: v.optional(supervisorLogReferences),
+  })
+    .index("by_text_sequence", ["textCommandId", "sequence"])
+    .index("by_text_step", ["textCommandId", "stepId"]),
   pairingRequests: defineTable({
     approvalHash: v.string(),
     pollHash: v.string(),

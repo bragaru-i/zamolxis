@@ -29,6 +29,7 @@ import { explainError, explainFailure } from "./errors";
 import { PublishTask } from "./publish";
 import { RunDetail } from "./run-detail";
 import { STEERABLE, SteerRun } from "./steer";
+import { SupervisorLog } from "./supervisor-log";
 import { SessionUsage } from "./usage";
 
 interface Session {
@@ -352,7 +353,10 @@ function AssistantMessage({
   const meta = usageLine(message);
   const stop = useMutation(api.supervisor.stop);
   const [requested, setRequested] = useState(false);
+  const [showLog, setShowLog] = useState(false);
   const now = useNow(state.kind === "thinking" && state.startedAt !== undefined);
+  // The Supervisor's log arrives once it settled; a withdrawn message never ran one.
+  const logged = state.kind !== "thinking" && message.planStatus !== "expired";
   return (
     <Message author="assistant" label="Zamolxis" meta={meta}>
       {state.kind === "error" ? (
@@ -407,6 +411,22 @@ function AssistantMessage({
           {state.kind === "ask" && <StatusBadge status="needs_input" label="Needs your answer" />}
           <Markdown>{state.reply}</Markdown>
         </>
+      )}
+      {logged && (
+        <Button
+          variant="ghost"
+          size="small"
+          aria-haspopup="dialog"
+          onClick={() => setShowLog(true)}
+        >
+          Show what I did
+        </Button>
+      )}
+      {showLog && (
+        <SupervisorLog
+          textCommandId={message._id as Id<"textCommands">}
+          onClose={() => setShowLog(false)}
+        />
       )}
     </Message>
   );
