@@ -31,6 +31,13 @@ planned capability as shipped.
   refused; unanswered requests are rejected after 30 minutes, on stop and before any
   terminal event. Real Codex acceptance (2026-10-06, codex-cli 0.160.0): a held
   `curl` approval was rejected and the turn completed with HEAD unchanged.
+- **Activity summaries:** the Codex adapter reports the real command line (wrapper
+  removed, exit code or failure reason on completion), MCP `server/tool`, web
+  searches and sub-agent labels; agent text, tool output and reasoning are never
+  uploaded. Every summary passes `redactSecrets` (runtime-core: secret-named values,
+  auth headers, URL credentials, private keys, known token shapes, high-entropy
+  strings) and is bounded to 500 chars. Verified with real codex-cli 0.160.0 for
+  command execution; other item types by controlled tests.
 - **Steering:** "Message agent" on an active run steers a streaming Codex turn
   (`turn/steer`) or continues a waiting run to completion with the normal
   completion handling.
@@ -97,7 +104,7 @@ planned capability as shipped.
 ## Next steps, in order
 
 1. Make the Supervisor a stoppable, visible run; real-Codex validation of answers.
-2. Codex tool summaries (show the actual command) and trace recording on the Node.
+2. Trace recording on the Node (traces/traceSteps are still empty).
 3. Real-device validation: iPhone, launchd across reboot, stop against Codex.
 
 ## Operations on the owner's Mac
