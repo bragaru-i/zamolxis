@@ -334,7 +334,7 @@ describe("Codex native lifecycle", () => {
     const item = {
       id: "cmd",
       type: "commandExecution",
-      command: "SECRET",
+      command: '/bin/zsh -lc "GITHUB_TOKEN=SECRET pnpm test"',
       aggregatedOutput: "SECRET",
       status: "completed",
       exitCode: 0,
@@ -364,7 +364,82 @@ describe("Codex native lifecycle", () => {
       "run.completed",
     ]);
     expect(JSON.stringify(all)).not.toContain("SECRET");
+    expect(all[1]?.payload).toEqual({ tool: "command", summary: "GITHUB_TOKEN=*** pnpm test" });
     expect(all[3]?.payload).toEqual({ paths: ["src/index.ts"] });
+  });
+  it("emits real, redacted tool summaries and short activity labels", async () => {
+    const h = harness();
+    await h.runtime.start(input());
+    const items = [
+      { id: "r", type: "reasoning", summary: ["PRIVATE"], content: ["PRIVATE"] },
+      {
+        id: "c",
+        type: "commandExecution",
+        command: '/bin/zsh -lc "curl -u me:PASSWORD https://example.com"',
+        aggregatedOutput: "PRIVATE",
+        status: "failed",
+        exitCode: 7,
+      },
+      {
+        id: "m",
+        type: "mcpToolCall",
+        server: "docs",
+        tool: "search",
+        arguments: { q: "PRIVATE" },
+        status: "completed",
+      },
+      { id: "w", type: "webSearch", query: "codex app-server", action: null },
+      { id: "a", type: "agentMessage", text: "PRIVATE" },
+    ];
+    for (const item of items) {
+      h.connection.emit("item/started", { item: { ...item, status: "inProgress" } });
+      h.connection.emit("item/completed", { item });
+    }
+    h.connection.emit("turn/completed", { turn: { id: "turn", status: "completed" } });
+    const all = await events(h.runtime);
+    expect(all.map((e) => [e.type, e.payload])).toEqual([
+      ["run.started", { nativeSessionId: "native" }],
+      ["run.activity", { label: "Thinking" }],
+      ["tool.started", { tool: "command", summary: "curl -u *** https://example.com" }],
+      [
+        "tool.completed",
+        {
+          tool: "command",
+          summary: "curl -u *** https://example.com · exit code 7",
+          success: false,
+        },
+      ],
+      ["tool.started", { tool: "mcp", summary: "docs/search" }],
+      ["tool.completed", { tool: "mcp", summary: "docs/search", success: true }],
+      ["tool.started", { tool: "web", summary: 'Search "codex app-server"' }],
+      ["tool.completed", { tool: "web", summary: 'Search "codex app-server"', success: true }],
+      ["run.activity", { label: "Writing reply" }],
+      ["run.completed", { summary: "PRIVATE" }],
+    ]);
+    expect(JSON.stringify(all.slice(0, -1))).not.toMatch(/PRIVATE|PASSWORD/);
+  });
+  it("redacts secrets from approval summaries and the final reply", async () => {
+    const h = harness();
+    await h.runtime.start(input());
+    expect(
+      h.connection.ask(3, "item/commandExecution/requestApproval", {
+        command: "GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz012345 gh pr list",
+        reason: "list with token=abc",
+      }),
+    ).toBe(true);
+    h.connection.emit("item/completed", {
+      item: { id: "m", type: "agentMessage", text: "Use password: hunter2 next time" },
+    });
+    h.connection.emit("turn/completed", { turn: { id: "turn", status: "completed" } });
+    const all = await events(h.runtime);
+    const requested = all.find((e) => e.type === "approval.requested")?.payload;
+    expect(requested).toMatchObject({
+      summary: "Run: GITHUB_TOKEN=*** gh pr list\nReason: list with token=***",
+      risk: "critical",
+    });
+    expect(all.find((e) => e.type === "run.completed")?.payload).toEqual({
+      summary: "Use password: *** next time",
+    });
   });
   it("steers only the active native turn and confirms stop before settlement", async () => {
     const h = harness();
@@ -473,7 +548,7 @@ it("runs the Supervisor read-only and reports the last agent message as the fina
   h.connection.emit("turn/completed", { turn: { id: "turn", status: "completed" } });
   const all = await events(h.runtime);
   expect(all.find((event) => event.type === "run.completed")?.payload).toEqual({
-    summary: "x".repeat(8000),
+    summary: `${"x".repeat(7999)}…`,
   });
 });
 

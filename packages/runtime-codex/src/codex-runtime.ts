@@ -16,8 +16,10 @@ import {
   maxRisk,
   type ResumeRunInput,
   type RuntimeSessionSnapshot,
+  redactSecrets,
   type StartRunInput,
 } from "@zamolxis/runtime-core";
+import { describeItem, fitPayload, redactedText } from "./activity";
 import {
   AppServerClient,
   type AppServerNotification,
@@ -73,6 +75,10 @@ const FILE_APPROVAL = "item/fileChange/requestApproval";
 const ELICITATION = "mcpServer/elicitation/request";
 function optionalText(value: unknown, limit = 4096): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim().slice(0, limit) : undefined;
+}
+// Approval text is redacted too; the risk is classified from the original command.
+function redactedSummary(parts: readonly (string | undefined)[]): string {
+  return approvalSummary(parts.map((part) => (part ? redactSecrets(part) : part)));
 }
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))
@@ -349,22 +355,7 @@ export class CodexRuntime implements AgentRuntime {
           }),
         );
       }
-      if (item.type === "commandExecution" || item.type === "mcpToolCall") {
-        const tool = item.type === "commandExecution" ? "command" : "mcp";
-        this.#emit(
-          session,
-          done ? "tool.completed" : "tool.started",
-          done
-            ? {
-                tool,
-                summary: "Tool finished",
-                success:
-                  item.status === "completed" &&
-                  (item.type !== "commandExecution" || item.exitCode === 0),
-              }
-            : { tool, summary: "Tool started" },
-        );
-      } else if (item.type === "fileChange" && done && item.status === "completed") {
+      if (item.type === "fileChange" && done && item.status === "completed") {
         if (!Array.isArray(item.changes)) throw new Error("CODEX_INVALID_RESPONSE");
         const paths = item.changes.slice(0, 100).map((value) => {
           const path = text(record(value).path);
@@ -379,12 +370,19 @@ export class CodexRuntime implements AgentRuntime {
         this.#emit(session, "files.changed", { paths });
       } else if (item.type === "agentMessage" && done) {
         if (typeof item.text === "string" && item.text.trim())
-          session.reply = item.text.trim().slice(0, REPLY_LIMIT);
-      } else if (["agentMessage", "reasoning", "plan"].includes(String(item.type)) && !done) {
-        this.#emit(session, "run.activity", {
-          label: item.type === "agentMessage" ? "Agent responding" : "Agent planning",
-        });
+          session.reply = redactedText(item.text, REPLY_LIMIT);
       }
+      const activity = describeItem(item, done);
+      if (activity?.kind === "activity")
+        this.#emit(session, "run.activity", { label: activity.label });
+      else if (activity?.kind === "tool")
+        this.#emit(
+          session,
+          done ? "tool.completed" : "tool.started",
+          done
+            ? { tool: activity.tool, summary: activity.summary, success: activity.success === true }
+            : { tool: activity.tool, summary: activity.summary },
+        );
     } catch {
       this.#abort(session);
       session.client.close();
@@ -420,7 +418,8 @@ export class CodexRuntime implements AgentRuntime {
     const sequence = session.events.length + 1;
     session.events.push({
       type,
-      payload,
+      // Every payload stays under the backend event limit.
+      payload: fitPayload(payload),
       eventId: `${session.id}:${sequence}`,
       sequence,
       runId: session.input.runId,
@@ -498,7 +497,7 @@ export class CodexRuntime implements AgentRuntime {
         params.proposedNetworkPolicyAmendments.length > 0;
       return {
         kind: "command",
-        summary: approvalSummary([
+        summary: redactedSummary([
           params.kind === "writeStdin"
             ? `Send input to a running command: ${command ?? "(not shown)"}`
             : `Run: ${command ?? "(command not shown)"}`,
@@ -532,7 +531,7 @@ export class CodexRuntime implements AgentRuntime {
         .join(", ");
       return {
         kind: "fileChange",
-        summary: approvalSummary([
+        summary: redactedSummary([
           listed ? `Change files: ${listed}` : "Change files in the workspace",
           grantRoot ? `Write access outside the workspace: ${grantRoot}` : undefined,
           reason ? `Reason: ${reason}` : undefined,
@@ -560,7 +559,7 @@ export class CodexRuntime implements AgentRuntime {
       if (!schema || Object.keys(properties).length) return undefined;
       return {
         kind: "tool",
-        summary: approvalSummary([
+        summary: redactedSummary([
           `Tool ${optionalText(params.serverName, 200) ?? "(unknown)"}: ${optionalText(params.message, 1500) ?? "requests confirmation"}`,
         ]),
         risk: "high",

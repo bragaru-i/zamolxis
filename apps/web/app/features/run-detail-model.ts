@@ -14,6 +14,10 @@ export interface ToolItem {
   summary: string;
   /** undefined while the tool is still running (or its result was never reported). */
   success?: boolean;
+  /** Short failure reason reported with the result, such as "exit code 1". */
+  result?: string;
+  /** The summary is a command line (rendered monospace). */
+  mono?: boolean;
 }
 
 export type TimelineEntry =
@@ -82,6 +86,26 @@ export function toolSummary(tool: string, started?: string, completed?: string):
   return tool === "command" ? "Command" : tool === "mcp" ? "MCP tool" : tool;
 }
 
+// Runtimes append a short failure reason to a completed tool summary: "<summary> · exit code 1".
+const RESULT_SUFFIX = /^([\s\S]*\S) · (exit code -?\d+|declined|failed(?:: [\s\S]*)?)$/;
+
+/** Splits a completed summary into the tool summary and its failure reason. */
+export function splitToolResult(summary: string): { summary: string; result?: string } {
+  const match = RESULT_SUFFIX.exec(summary.trim());
+  return match?.[1] && match[2] ? { summary: match[1], result: match[2] } : { summary };
+}
+
+function toolItem(tool: string, started?: string, completed?: string): ToolItem {
+  const split = splitToolResult(text(completed));
+  const summary = toolSummary(tool, started, split.summary);
+  return {
+    tool,
+    summary,
+    ...(split.result ? { result: split.result } : {}),
+    ...(tool === "command" && summary !== "Command" ? { mono: true } : {}),
+  };
+}
+
 /**
  * Turns chronological normalized events into a compact timeline: consecutive tool events
  * become one group (starts paired with completions), consecutive identical activity labels
@@ -132,26 +156,28 @@ export function groupEvents(events: readonly RunEvent[]): TimelineEntry[] {
         group.endAt = at;
         const tool = toolName(payload.tool);
         if (event.type === "tool.started") {
-          const item: ToolItem = { tool, summary: toolSummary(tool, payload.summary) };
+          const item = toolItem(tool, payload.summary);
           group.items.push(item);
           group.open++;
           openStarts.push({ tool, summary: text(payload.summary), item });
         } else {
           const success = payload.success !== false;
-          const index = openStarts.findIndex((start) => start.tool === tool);
+          // Pair with the start of the same tool call (same summary), else the oldest open one.
+          const completed = splitToolResult(text(payload.summary)).summary;
+          let index = openStarts.findIndex(
+            (start) => start.tool === tool && !!completed && start.summary === completed,
+          );
+          if (index < 0) index = openStarts.findIndex((start) => start.tool === tool);
           if (index >= 0) {
             const [start] = openStarts.splice(index, 1);
             if (start) {
-              start.item.summary = toolSummary(tool, start.summary, payload.summary);
-              start.item.success = success;
+              Object.assign(start.item, toolItem(tool, start.summary, payload.summary), {
+                success,
+              });
             }
             group.open--;
           } else {
-            group.items.push({
-              tool,
-              summary: toolSummary(tool, undefined, payload.summary),
-              success,
-            });
+            group.items.push({ ...toolItem(tool, undefined, payload.summary), success });
           }
           if (!success) group.failed++;
         }

@@ -298,7 +298,12 @@ function ActivityEntry({ entry, active }: { entry: TimelineEntry; active: boolea
                 // biome-ignore lint/suspicious/noArrayIndexKey: steps have no identity of their own.
                 <li key={index}>
                   {item.success === false ? "✕ " : item.success ? "✓ " : "… "}
-                  {item.summary}
+                  {item.mono ? (
+                    <code className="z-mono z-break">{item.summary}</code>
+                  ) : (
+                    item.summary
+                  )}
+                  {item.result && <span className="z-muted"> · {item.result}</span>}
                 </li>
               ))}
             </ul>

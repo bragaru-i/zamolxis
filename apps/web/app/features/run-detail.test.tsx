@@ -14,6 +14,7 @@ import {
   runDuration,
   runtimeLabel,
   shortSha,
+  splitToolResult,
   tokensLabel,
   toolGroupMeta,
   toolGroupTitle,
@@ -78,7 +79,7 @@ describe("groupEvents", () => {
     if (tools?.kind !== "tools") throw new Error("expected tools");
     expect(tools.items).toEqual([
       { tool: "command", summary: "Command", success: true },
-      { tool: "command", summary: "pnpm test --filter web", success: false },
+      { tool: "command", summary: "pnpm test --filter web", success: false, mono: true },
       { tool: "command", summary: "Command" },
     ]);
     expect(tools.failed).toBe(1);
@@ -107,6 +108,44 @@ describe("groupEvents", () => {
     ]);
     expect(entries[0]).toMatchObject({ items: [{ summary: "search docs", success: true }] });
     expect(toolGroupTitle([{ tool: "mcp", summary: "x" }])).toBe("Used 1 tool");
+  });
+
+  it("shows real tool summaries with their failure reason and pairs concurrent calls", () => {
+    const entries = groupEvents([
+      event("tool.started", { tool: "command", summary: "pnpm test" }),
+      event("tool.started", { tool: "command", summary: "git status" }),
+      event("tool.completed", { tool: "command", summary: "git status", success: true }),
+      event("tool.completed", {
+        tool: "command",
+        summary: "pnpm test · exit code 1",
+        success: false,
+      }),
+      event("tool.started", { tool: "mcp", summary: "github/search_issues" }),
+      event("tool.completed", {
+        tool: "mcp",
+        summary: "github/search_issues · failed: rate limited",
+        success: false,
+      }),
+      event("tool.completed", { tool: "web", summary: 'Search "vitest"', success: true }),
+    ]);
+    const tools = entries[0];
+    if (tools?.kind !== "tools") throw new Error("expected tools");
+    expect(tools.items).toEqual([
+      { tool: "command", summary: "pnpm test", result: "exit code 1", mono: true, success: false },
+      { tool: "command", summary: "git status", mono: true, success: true },
+      {
+        tool: "mcp",
+        summary: "github/search_issues",
+        result: "failed: rate limited",
+        success: false,
+      },
+      { tool: "web", summary: 'Search "vitest"', success: true },
+    ]);
+    expect(tools.open).toBe(0);
+    expect(tools.failed).toBe(2);
+    expect(toolGroupTitle(tools.items)).toBe("Used 4 tools");
+    expect(splitToolResult("echo a · b")).toEqual({ summary: "echo a · b" });
+    expect(splitToolResult("make · declined")).toEqual({ summary: "make", result: "declined" });
   });
 
   it("tolerates malformed payloads", () => {
@@ -298,6 +337,21 @@ describe("RunDetail", () => {
     expect(html).toContain("live.ts");
     expect(html).not.toContain("never-read.ts");
     expect(html).not.toContain("Verification</h3>");
+  });
+
+  it("renders commands as monospace text with their failure reason", () => {
+    state.events = [
+      event("tool.completed", {
+        tool: "command",
+        summary: "pnpm test · exit code 1",
+        success: false,
+      }),
+      event("tool.started", { tool: "command", summary: "pnpm test" }),
+    ];
+    const html = render(detail(), { paths: [], truncated: false });
+    expect(html).toContain("Ran 1 command");
+    expect(html).toContain('<code class="z-mono z-break">pnpm test</code>');
+    expect(html).toContain("exit code 1");
   });
 
   it("explains a verifier run in terms of its candidate", () => {
