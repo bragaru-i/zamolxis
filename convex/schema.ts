@@ -399,6 +399,9 @@ export default defineSchema({
     reasoningEffort: v.optional(v.string()),
     enabled: v.boolean(),
     maxConcurrency: v.optional(v.number()),
+    // Owner instructions (#48): redacted prompt text, at most 4000 characters.
+    instructions: v.optional(v.string()),
+    instructionsDigest: v.optional(v.string()),
     revision: v.number(),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -416,6 +419,8 @@ export default defineSchema({
     runtime: v.string(),
     agentProfileId: v.optional(v.id("agentProfiles")),
     agentProfileRevision: v.optional(v.number()),
+    // SHA-256 of the owner instructions included in this run's prompt, if any.
+    instructionsDigest: v.optional(v.string()),
     modelRequested: v.optional(v.string()),
     modelActual: v.optional(v.string()),
     reasoningEffort: v.optional(v.string()),

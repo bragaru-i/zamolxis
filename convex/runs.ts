@@ -3,7 +3,7 @@ import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { internalMutation, type MutationCtx, mutation, query } from "./_generated/server";
 import { bounded, fail, load, ownRun, ownSession } from "./lib/access";
-import { resolveAgentProfile } from "./lib/agentProfiles";
+import { ownerInstructionsSection, resolveAgentProfile } from "./lib/agentProfiles";
 import { enqueue, stopRun } from "./lib/commands";
 export async function queueRun(
   ctx: MutationCtx,
@@ -110,6 +110,7 @@ export async function queueRun(
       ? {
           agentProfileId: profile._id,
           agentProfileRevision: profile.revision,
+          ...(profile.instructionsDigest ? { instructionsDigest: profile.instructionsDigest } : {}),
           ...(profile.model ? { modelRequested: profile.model } : {}),
           ...(profile.reasoningEffort ? { reasoningEffort: profile.reasoningEffort } : {}),
         }
@@ -151,10 +152,12 @@ export async function queueRun(
       ...(profile?.model ? { model: profile.model } : {}),
       ...(profile?.reasoningEffort ? { reasoningEffort: profile.reasoningEffort } : {}),
       instruction:
-        role === "verifier"
+        (role === "verifier"
           ? `Independently review exact SHA ${workspace.baseSha}. Do not modify files or Git state. Acceptance: ${task.description}. Provide a concise review; deterministic Node checks establish trust.`
           : `${task.description}
-Leave all intended implementation edits in your assigned worktree. Zamolxis captures the candidate commit. Do not publish, merge, or modify other checkouts.`,
+Leave all intended implementation edits in your assigned worktree. Zamolxis captures the candidate commit. Do not publish, merge, or modify other checkouts.`) +
+        // Owner text is appended last and labelled; it cannot change trust or approval.
+        ownerInstructionsSection(profile?.instructions),
       ...(role === "verifier"
         ? {
             verificationScripts: task.verificationScripts ?? [],

@@ -26,6 +26,9 @@ importers:
       '@zamolxis/domain':
         specifier: workspace:*
         version: link:packages/domain
+      '@zamolxis/runtime-core':
+        specifier: workspace:*
+        version: link:packages/runtime-core
       convex:
         specifier: ^1.28.0
         version: 1.46.0(react@19.3.0)
