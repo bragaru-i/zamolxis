@@ -440,3 +440,219 @@ it("bounds the run summary reported on completion", async () => {
   });
   expect(runs.find((run) => run._id === runId)?.resultSummary).toBe("Implemented one.");
 });
+
+const commandsOf = (f: Awaited<ReturnType<typeof fixture>>, type: string) =>
+  f.t.run(async (ctx) =>
+    (await ctx.db.query("commands").collect()).filter((command) => command.type === type),
+  );
+const answerWith = (
+  f: Awaited<ReturnType<typeof fixture>>,
+  textCommandId: Id<"textCommands">,
+  reply: string,
+) =>
+  f.node.mutation(api.supervisor.acceptPlan, {
+    workstationId: f.workstationId,
+    textCommandId,
+    contextSha: SHA,
+    contextDigest: DIGEST,
+    tasks: [],
+    decision: "answer",
+    reply,
+  });
+const claim = (f: Awaited<ReturnType<typeof fixture>>, commandId: Id<"commands">) =>
+  f.node.mutation(api.node.claim, {
+    workstationId: f.workstationId,
+    commandId,
+    instanceId: "instance",
+  });
+
+it("stops a planning Supervisor through its Node and settles the message as stopped", async () => {
+  const f = await fixture();
+  const sessionId = await f.submit("Explain everything");
+  const plan = await f.planCommand();
+  const textCommandId = plan.targetId as Id<"textCommands">;
+  await claim(f, plan._id);
+  await expect(f.other.mutation(api.supervisor.stop, { textCommandId })).rejects.toThrow(
+    "FORBIDDEN",
+  );
+  await expect(f.node.mutation(api.supervisor.stop, { textCommandId })).rejects.toThrow();
+  expect(await f.user.mutation(api.supervisor.stop, { textCommandId })).toBe("stopping");
+  expect(await f.user.mutation(api.supervisor.stop, { textCommandId })).toBe("stopping");
+  const stops = await commandsOf(f, "supervisor.stop");
+  expect(stops).toHaveLength(1);
+  expect(stops[0]).toMatchObject({
+    workstationId: f.workstationId,
+    targetType: "textCommand",
+    targetId: textCommandId,
+    payload: { textCommandId },
+    status: "pending",
+  });
+  let [message] = await f.user.query(api.supervisor.messages, { workSessionId: sessionId });
+  expect(message).toMatchObject({ stopping: true, planStatus: "claimed" });
+  // The Node delivers the stop, then the plan fails as stopped.
+  await claim(f, stops[0]!._id);
+  await f.node.mutation(api.node.recoverCompletedCommand, {
+    workstationId: f.workstationId,
+    commandId: stops[0]!._id,
+    instanceId: "instance",
+  });
+  await f.node.mutation(api.node.failCommand, {
+    workstationId: f.workstationId,
+    commandId: plan._id,
+    instanceId: "instance",
+    code: "SUPERVISOR_STOPPED",
+  });
+  expect((await commandsOf(f, "supervisor.stop"))[0]?.status).toBe("completed");
+  [message] = await f.user.query(api.supervisor.messages, { workSessionId: sessionId });
+  expect(message).toMatchObject({
+    stopped: true,
+    planStatus: "failed",
+    planError: "SUPERVISOR_STOPPED",
+  });
+  expect(message).not.toHaveProperty("stopping");
+  const session = await f.user.query(api.sessions.get, { workSessionId: sessionId });
+  expect(session.status).toBe("waiting");
+  expect(session.needsInputCount).toBe(0);
+  expect(await f.user.mutation(api.supervisor.stop, { textCommandId })).toBe("stopped");
+  expect(await commandsOf(f, "supervisor.stop")).toHaveLength(1);
+});
+
+it("withdraws a plan the Node has not claimed yet", async () => {
+  const f = await fixture();
+  const sessionId = await f.submit("Question");
+  const plan = await f.planCommand();
+  const textCommandId = plan.targetId as Id<"textCommands">;
+  expect(await f.user.mutation(api.supervisor.stop, { textCommandId })).toBe("stopped");
+  expect(await commandsOf(f, "supervisor.stop")).toEqual([]);
+  expect((await commandsOf(f, "repository.plan"))[0]?.status).toBe("expired");
+  await expect(claim(f, plan._id)).rejects.toThrow("COMMAND_CONFLICT");
+  const [message] = await f.user.query(api.supervisor.messages, { workSessionId: sessionId });
+  expect(message).toMatchObject({ stopped: true, planStatus: "expired" });
+  expect((await f.user.query(api.sessions.get, { workSessionId: sessionId })).status).toBe(
+    "waiting",
+  );
+});
+
+it("keeps other work running when a follow-up Supervisor is stopped", async () => {
+  const f = await fixture();
+  const sessionId = await f.submit("Build");
+  const first = await f.accept({}, [task("one")]);
+  await f.settlePlan(first.command._id);
+  await f.submit("Also explain it", sessionId);
+  const plan = await f.planCommand();
+  await claim(f, plan._id);
+  await f.user.mutation(api.supervisor.stop, {
+    textCommandId: plan.targetId as Id<"textCommands">,
+  });
+  await f.node.mutation(api.node.failCommand, {
+    workstationId: f.workstationId,
+    commandId: plan._id,
+    instanceId: "instance",
+    code: "SUPERVISOR_STOPPED",
+  });
+  const session = await f.user.query(api.sessions.get, { workSessionId: sessionId });
+  expect(session.status).toBe("running");
+  expect(session.needsInputCount).toBe(0);
+});
+
+it("lets an answer that finished first win over a late stop", async () => {
+  const f = await fixture();
+  const sessionId = await f.submit("Question");
+  const plan = await f.planCommand();
+  const textCommandId = plan.targetId as Id<"textCommands">;
+  await claim(f, plan._id);
+  expect(await f.user.mutation(api.supervisor.stop, { textCommandId })).toBe("stopping");
+  // The Supervisor had already answered: the Node delivers the answer, the stop is a no-op.
+  await answerWith(f, textCommandId, "Here it is.");
+  await f.node.mutation(api.node.completeCommand, {
+    workstationId: f.workstationId,
+    commandId: plan._id,
+    instanceId: "instance",
+  });
+  const [message] = await f.user.query(api.supervisor.messages, { workSessionId: sessionId });
+  expect(message).toMatchObject({ decision: "answer", reply: "Here it is.", planned: true });
+  expect(message).not.toHaveProperty("stopping");
+  expect(message).not.toHaveProperty("stopped");
+  expect(await f.user.mutation(api.supervisor.stop, { textCommandId })).toBe("finished");
+  expect((await f.user.query(api.sessions.get, { workSessionId: sessionId })).status).toBe(
+    "waiting",
+  );
+});
+
+it("stores bounded Supervisor progress only from the planning Node while in flight", async () => {
+  const f = await fixture();
+  const sessionId = await f.submit("Question");
+  const plan = await f.planCommand();
+  const textCommandId = plan.targetId as Id<"textCommands">;
+  const report = (args: Record<string, unknown> = {}) =>
+    f.node.mutation(api.supervisor.reportProgress, {
+      workstationId: f.workstationId,
+      textCommandId,
+      ...args,
+    });
+  // Not claimed yet: ignored.
+  await report({ activity: "Too early" });
+  let stored = await f.t.run((ctx) => ctx.db.get("textCommands", textCommandId));
+  expect(stored?.supervisorActivity).toBeUndefined();
+  await claim(f, plan._id);
+  await report({
+    activity: "Reading convex/schema.ts",
+    usage: { modelActual: "gpt-5", totalTokens: 50 },
+  });
+  let [message] = await f.user.query(api.supervisor.messages, { workSessionId: sessionId });
+  expect(message?.progress).toEqual({
+    startedAt: expect.any(Number),
+    activity: "Reading convex/schema.ts",
+  });
+  expect(message?.supervisor).toEqual({ modelActual: "gpt-5", totalTokens: 50 });
+  const startedAt = message?.progress.startedAt as number;
+  // Reports closer than half a second apart are dropped.
+  await report({ activity: "Running rg TODO" });
+  stored = await f.t.run((ctx) => ctx.db.get("textCommands", textCommandId));
+  expect(stored?.supervisorActivity).toBe("Reading convex/schema.ts");
+  await f.t.run((ctx) =>
+    ctx.db.patch("textCommands", textCommandId, { supervisorProgressAt: Date.now() - 5000 }),
+  );
+  await report({ activity: "Running rg TODO" });
+  [message] = await f.user.query(api.supervisor.messages, { workSessionId: sessionId });
+  expect(message?.progress).toEqual({ startedAt, activity: "Running rg TODO" });
+  // Bounded and Node-authenticated.
+  for (const args of [
+    { activity: "x".repeat(201) },
+    { activity: "   " },
+    { usage: { totalTokens: -1 } },
+    { usage: { modelActual: "m".repeat(257) } },
+  ])
+    await expect(report(args)).rejects.toThrow("INVALID_ARGUMENT");
+  await expect(
+    f.user.mutation(api.supervisor.reportProgress, {
+      workstationId: f.workstationId,
+      textCommandId,
+      activity: "Forged",
+    }),
+  ).rejects.toThrow("FORBIDDEN");
+  const otherWorkstation = await f.other.mutation(api.workstations.register, {
+    name: "Other",
+    nodeAuthSubject: "device-b",
+  });
+  const otherNode = f.t.withIdentity({
+    subject: "device-b",
+    tokenIdentifier: "device-b",
+    ownerSubject: "bob",
+  });
+  await expect(
+    otherNode.mutation(api.supervisor.reportProgress, {
+      workstationId: otherWorkstation,
+      textCommandId,
+      activity: "Forged",
+    }),
+  ).rejects.toThrow("FORBIDDEN");
+  // After the outcome, late progress is ignored.
+  await f.t.run((ctx) =>
+    ctx.db.patch("textCommands", textCommandId, { supervisorProgressAt: Date.now() - 5000 }),
+  );
+  await answerWith(f, textCommandId, "Answered.");
+  await report({ activity: "Late" });
+  stored = await f.t.run((ctx) => ctx.db.get("textCommands", textCommandId));
+  expect(stored?.supervisorActivity).toBe("Running rg TODO");
+});

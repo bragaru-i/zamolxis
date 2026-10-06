@@ -6,6 +6,7 @@ import { applyApprovalEvent, expireRunApprovals } from "./approvals";
 import { bounded, fail, load, nodeRun, requireNode } from "./lib/access";
 import { decideVerification, refreshSession } from "./lib/lifecycle";
 import { refreshDependents } from "./lib/settlement";
+import { settleStoppedText } from "./supervisor";
 import { settleRun } from "./lib/settlement";
 import { valueKey } from "./lib/value";
 
@@ -270,6 +271,11 @@ export const failCommand = mutation({
       }
     } else if (command.type === "repository.plan") {
       const id = ctx.db.normalizeId("textCommands", command.targetId);
+      // A stopped Supervisor is the owner's choice, not a failure that needs input.
+      if (id && args.code === "SUPERVISOR_STOPPED") {
+        await settleStoppedText(ctx, id);
+        return null;
+      }
       if (id) sessionId = (await load(ctx, "textCommands", id)).workSessionId;
     } else if (command.type === "integration.prepare")
       taskId = ctx.db.normalizeId("tasks", command.targetId) ?? undefined;
@@ -647,6 +653,9 @@ export const recoverCompletedCommand = mutation({
       const id = ctx.db.normalizeId("tasks", command.targetId);
       if (!id || (await load(ctx, "tasks", id)).phase !== "completed")
         fail("RECONCILIATION_REQUIRED");
+    } else if (command.type === "supervisor.stop") {
+      // Delivered (or a no-op); the plan reports what followed through its own command.
+      if (!ctx.db.normalizeId("textCommands", command.targetId)) fail("INVALID_ARGUMENT");
     } else fail("RECONCILIATION_REQUIRED");
     // Recovery acknowledges an already observed outcome. It does not re-claim or execute work.
     await ctx.db.patch("commands", command._id, { status: "completed", completedAt: Date.now() });
