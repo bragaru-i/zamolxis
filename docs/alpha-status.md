@@ -38,6 +38,12 @@ planned capability as shipped.
   auth headers, URL credentials, private keys, known token shapes, high-entropy
   strings) and is bounded to 500 chars. Verified with real codex-cli 0.160.0 for
   command execution; other item types by controlled tests.
+- **Execution trace (#27):** every Builder, Repair and Verifier run records ordered
+  trace steps on the Node (repository discovery, workspace, runtime, candidate
+  commit, each verification check with exit code, duration and a redacted output
+  tail), delivered through the durable outbox to `traces:append` (Node-authenticated,
+  bounded, idempotent; at most 500 steps per trace) and shown as "Trace" in Run
+  detail. Not recorded: Supervisor, trust and integration steps (backend-side).
 - **Steering:** "Message agent" on an active run steers a streaming Codex turn
   (`turn/steer`) or continues a waiting run to completion with the normal
   completion handling.
@@ -115,8 +121,7 @@ planned capability as shipped.
 
 ## Next steps, in order
 
-1. Trace recording on the Node (traces/traceSteps are still empty).
-2. Real-device validation: iPhone, launchd across reboot, stop against Codex.
+1. Real-device validation: iPhone, launchd across reboot, stop against Codex.
 
 ## Operations on the owner's Mac
 
