@@ -6,6 +6,7 @@ import { applyApprovalEvent, expireRunApprovals } from "./approvals";
 import { failPublish, publishRecorded } from "./integration";
 import { bounded, fail, load, nodeRun, requireNode } from "./lib/access";
 import { decideVerification, refreshSession } from "./lib/lifecycle";
+import { recordCleanupFailure, recordCleanupRemoved } from "./lib/retention";
 import { refreshDependents } from "./lib/settlement";
 import { settleStoppedText } from "./supervisor";
 import { settleRun } from "./lib/settlement";
@@ -262,6 +263,11 @@ export const failCommand = mutation({
     // A failed publication is reported on the task; the trusted work itself is unaffected.
     if (command.type === "integration.publish") {
       await failPublish(ctx, command, args.code);
+      return null;
+    }
+    // A refused or failed cleanup is recorded on the worktree; nothing else needs input.
+    if (command.type === "workspace.cleanup") {
+      await recordCleanupFailure(ctx, command, args.code);
       return null;
     }
     let taskId: import("./_generated/dataModel").Id<"tasks"> | undefined;
@@ -654,7 +660,7 @@ export const recoverCompletedCommand = mutation({
       const workspace = await load(ctx, "workspaces", id);
       if (workspace.workstationId !== device._id || workspace.ownerRunId)
         fail("RECONCILIATION_REQUIRED");
-      await ctx.db.patch("workspaces", workspace._id, { status: "removed", updatedAt: Date.now() });
+      await recordCleanupRemoved(ctx, workspace);
     } else if (command.type === "repository.plan") {
       const id = ctx.db.normalizeId("textCommands", command.targetId);
       if (!id || !(await load(ctx, "textCommands", id)).planDigest) fail("RECONCILIATION_REQUIRED");

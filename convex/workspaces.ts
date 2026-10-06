@@ -1,8 +1,29 @@
 import { v } from "convex/values";
-import { internalMutation, mutation, query, type MutationCtx } from "./_generated/server";
+import {
+  internalMutation,
+  mutation,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
-import { bounded, fail, load, ownSession } from "./lib/access";
+import { bounded, fail, load, ownSession, requireUser } from "./lib/access";
 import { enqueue } from "./lib/commands";
+import {
+  assertRetentionDays,
+  CLEANUP_SCAN,
+  DAY,
+  DEFAULT_RETENTION_DAYS,
+  evaluateWorkspace,
+  MAX_RETENTION_DAYS,
+  MIN_RETENTION_DAYS,
+  ONLINE_WITHIN,
+  requestWorkspaceCleanup,
+  type RetentionCache,
+  retentionDays,
+  scheduleCleanupBatch,
+  CLEANUP_BATCH,
+} from "./lib/retention";
 export async function allocateWorkspace(
   ctx: MutationCtx,
   input: {
@@ -119,32 +140,168 @@ export const listBySession = query({
       .take(bounded(args.limit ?? 100));
   },
 });
+/** Requests cleanup of one worktree only if the retention rules allow it now. */
 export const requestCleanup = internalMutation({
-  args: {
-    workspaceId: v.id("workspaces"),
-    artifactsCaptured: v.boolean(),
-    integrationPending: v.boolean(),
-    retentionAllows: v.boolean(),
-  },
+  args: { workspaceId: v.id("workspaces") },
   returns: v.id("commands"),
   handler: async (ctx, args) => {
     const workspace = await load(ctx, "workspaces", args.workspaceId);
-    if (
-      workspace.ownerRunId ||
-      workspace.dirty ||
-      !args.artifactsCaptured ||
-      args.integrationPending ||
-      !args.retentionAllows
-    )
-      fail("INVALID_STATE");
-    return enqueue(
+    const device = await load(ctx, "workstations", workspace.workstationId);
+    const now = Date.now();
+    const eligibility = await evaluateWorkspace(
       ctx,
-      workspace.workstationId,
-      "workspace.cleanup",
-      "workspace",
-      workspace._id,
-      { workspaceId: workspace._id },
-      `cleanup:${workspace._id}`,
+      workspace,
+      now,
+      (await retentionDays(ctx, device.ownerId)) * DAY,
     );
+    if (!eligibility.eligible) fail("INVALID_STATE", eligibility.reason);
+    return requestWorkspaceCleanup(ctx, workspace, eligibility, now);
+  },
+});
+
+/** Hourly retention sweep (convex/crons.ts): a bounded batch per online Mac. */
+export const sweepCleanup = internalMutation({
+  args: {},
+  returns: v.number(),
+  handler: async (ctx) => {
+    const now = Date.now();
+    const online = await ctx.db
+      .query("workstations")
+      .withIndex("by_status_heartbeat", (q) =>
+        q.eq("status", "online").gte("lastHeartbeatAt", now - ONLINE_WITHIN),
+      )
+      .take(100);
+    let requested = 0;
+    for (const workstation of online)
+      requested += await scheduleCleanupBatch(ctx, workstation, now);
+    return requested;
+  },
+});
+
+async function ownWorkstation(ctx: QueryCtx, workstationId: Id<"workstations">) {
+  const user = await requireUser(ctx);
+  const device = await load(ctx, "workstations", workstationId);
+  if (device.ownerId !== user._id) fail("FORBIDDEN");
+  return device;
+}
+
+const MANAGED = [
+  "requested",
+  "provisioning",
+  "ready",
+  "in_use",
+  "dirty",
+  "integrating",
+  "completed",
+  "cleanup_pending",
+  "error",
+] as const;
+
+/** Settings -> Storage: managed worktrees per Mac, what may be removed now, last cleanup. */
+export const storage = query({
+  args: {},
+  returns: v.any(),
+  handler: async (ctx) => {
+    const user = await requireUser(ctx);
+    const days = await retentionDays(ctx, user._id);
+    const now = Date.now();
+    const devices = await ctx.db
+      .query("workstations")
+      .withIndex("by_owner", (q) => q.eq("ownerId", user._id))
+      .take(20);
+    const cache: RetentionCache = new Map();
+    const macs = [];
+    for (const device of devices) {
+      if (device.status === "revoked") continue;
+      let managed = 0;
+      let pending = 0;
+      let failed = 0;
+      let eligible = 0;
+      let truncated = false;
+      for (const status of MANAGED) {
+        const rows = await ctx.db
+          .query("workspaces")
+          .withIndex("by_workstation_status", (q) =>
+            q.eq("workstationId", device._id).eq("status", status),
+          )
+          .take(CLEANUP_SCAN + 1);
+        if (rows.length > CLEANUP_SCAN) truncated = true;
+        managed += Math.min(rows.length, CLEANUP_SCAN);
+        for (const row of rows.slice(0, CLEANUP_SCAN)) {
+          if (row.cleanupStatus === "requested") pending += 1;
+          else if (row.cleanupStatus === "failed") failed += 1;
+          if (
+            (status === "ready" || status === "completed") &&
+            (await evaluateWorkspace(ctx, row, now, days * DAY, cache)).eligible
+          )
+            eligible += 1;
+        }
+      }
+      const removed = await ctx.db
+        .query("workspaces")
+        .withIndex("by_workstation_status", (q) =>
+          q.eq("workstationId", device._id).eq("status", "removed"),
+        )
+        .order("desc")
+        .take(50);
+      const lastCleanupAt = Math.max(0, ...removed.map((row) => row.removedAt ?? 0));
+      macs.push({
+        workstationId: device._id,
+        name: device.name,
+        online: device.status === "online" && (device.lastHeartbeatAt ?? 0) >= now - ONLINE_WITHIN,
+        managed,
+        eligible,
+        pending,
+        failed,
+        truncated,
+        ...(lastCleanupAt ? { lastCleanupAt } : {}),
+      });
+    }
+    return {
+      retentionDays: days,
+      defaultRetentionDays: DEFAULT_RETENTION_DAYS,
+      minRetentionDays: MIN_RETENTION_DAYS,
+      maxRetentionDays: MAX_RETENTION_DAYS,
+      batch: CLEANUP_BATCH,
+      macs,
+    };
+  },
+});
+
+/** "Clean up now": the same bounded, rule-checked batch the hourly sweep requests. */
+export const cleanupNow = mutation({
+  args: { workstationId: v.id("workstations") },
+  returns: v.object({ requested: v.number() }),
+  handler: async (ctx, args) => {
+    const device = await ownWorkstation(ctx, args.workstationId);
+    const now = Date.now();
+    if (device.status !== "online" || (device.lastHeartbeatAt ?? 0) < now - ONLINE_WITHIN)
+      fail("WORKSTATION_OFFLINE");
+    return { requested: await scheduleCleanupBatch(ctx, device, now) };
+  },
+});
+
+export const setRetentionDays = mutation({
+  args: { days: v.number() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const user = await requireUser(ctx);
+    assertRetentionDays(args.days);
+    const existing = await ctx.db
+      .query("storageSettings")
+      .withIndex("by_owner", (q) => q.eq("ownerId", user._id))
+      .unique();
+    if (existing)
+      await ctx.db.patch("storageSettings", existing._id, {
+        retentionDays: args.days,
+        updatedAt: Date.now(),
+      });
+    else
+      await ctx.db.insert("storageSettings", {
+        ownerId: user._id,
+        retentionDays: args.days,
+        updatedAt: Date.now(),
+      });
+    return null;
   },
 });
