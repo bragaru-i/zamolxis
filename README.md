@@ -60,11 +60,27 @@ Trust PASS provisions a dedicated integration workspace/branch at the trusted
 SHA. Exact SHA, clean Git state, trust decision and branch identity are checked
 again before recording a Git artifact and completing the Task. Session completion
 requires every required Task to cross this boundary and no active Runs. Alpha
-**prepares local integration branches**; it does not automatically push them,
-open candidate PRs, combine independent output branches into one release, or
-merge protected main. Use a final Task depending on independent branches when a
-combined verified result is needed. Publishing and protected-main merge remain
-human actions. Branch protections and CODEOWNERS are never bypassed.
+**prepares local integration branches**; it does not push them on its own,
+combine independent output branches into one release, or merge protected main.
+Use a final Task depending on independent branches when a combined verified
+result is needed. Branch protections and CODEOWNERS are never bypassed.
+
+**Publishing is the owner's explicit action.** A completed Task shows "Open pull
+request"; after confirming the branch, base and title, `integration.publish`
+(owner-only, idempotent while pending or published) sends `integration.publish`
+to the Node holding the integration workspace, only while that workspace is clean
+at the exact trusted SHA. The Node re-checks clean state and HEAD, then pushes that
+exact commit to `origin` as `zamolxis/<short-task>-<sha7>` with the repository's
+own Git credentials and hooks (no `--no-verify`, never forced, never the default
+branch). If the GitHub CLI is installed and signed in for the remote's host, it
+opens a pull request against the default branch (body: task description,
+verification evidence, trust decision, "Opened by Zamolxis; merge is a human
+decision"); otherwise the Task shows a compare link to open it yourself. Note that
+`gh` acts as whichever account is signed in on that Mac. Failures are reported as
+codes (`PUBLISH_DIRTY`, `PUBLISH_SHA_MISMATCH`, `PUBLISH_PUSH_FAILED`,
+`PUBLISH_PR_FAILED`, `PUBLISH_BASE_UNKNOWN`, `PUBLISH_INTERRUPTED`, …) explained in
+plain language, never with remote output; a failed publication can be retried and
+does not change the Task or Session outcome. Merging stays a human decision.
 
 ## Agent Profiles and runtimes
 

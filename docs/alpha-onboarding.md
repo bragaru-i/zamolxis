@@ -113,7 +113,8 @@ Builder/Repair edits become candidate commits, followed by independent read-only
 Codex verification, executable repository checks and deterministic trust. Failure
 allows two repairs; exhaustion requires input. Trust PASS prepares a separate
 local integration branch and records its exact SHA before completing the Task.
-Publishing and protected-main merge remain human actions. See README for the
+Publishing it as a pull request happens only when you choose "Open pull request"
+on the Task; protected-main merge remains a human action. See README for the
 structured plan format and limitations.
 
 The complete local acceptance is reproducible with:
