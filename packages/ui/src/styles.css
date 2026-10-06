@@ -1744,3 +1744,198 @@ code,
 .z-home-nav__links {
   margin-top: calc(var(--z-space-2) * -1);
 }
+
+/* Session work map: the steps every piece of work goes through, in plain words. */
+.z-flow-card {
+  border: 1px solid var(--z-border);
+  border-radius: var(--z-radius-lg, 12px);
+  background: var(--z-surface);
+  min-width: 0;
+}
+.z-flow-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--z-space-3);
+  min-height: var(--z-touch);
+  padding: var(--z-space-2) var(--z-space-3);
+  cursor: pointer;
+  list-style: none;
+}
+.z-flow-summary::-webkit-details-marker {
+  display: none;
+}
+.z-flow-summary::after {
+  content: "›";
+  margin-left: auto;
+  color: var(--z-muted);
+  font-size: var(--z-text-lg);
+  transition: transform var(--z-motion-fast) var(--z-ease);
+}
+.z-flow-details[open] > .z-flow-summary::after {
+  transform: rotate(90deg);
+}
+.z-flow-summary__text {
+  min-width: 0;
+  font-size: var(--z-text-sm);
+}
+.z-flow-dots {
+  display: inline-flex;
+  gap: 4px;
+  flex: none;
+}
+.z-flow-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--z-border);
+  background: transparent;
+}
+.z-flow-dot--done {
+  background: var(--z-success, #1d6b3a);
+  border-color: var(--z-success, #1d6b3a);
+}
+.z-flow-dot--active {
+  background: var(--z-primary);
+  border-color: var(--z-primary);
+  animation: z-flow-pulse 1.6s ease-in-out infinite;
+}
+.z-flow-dot--attention {
+  background: var(--z-ring);
+  border-color: var(--z-ring);
+}
+.z-flow-dot--skipped {
+  border-style: dashed;
+}
+@keyframes z-flow-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .z-flow-dot--active,
+  .z-flow-step--active .z-flow-step__marker {
+    animation: none;
+  }
+}
+.z-flow {
+  list-style: none;
+  margin: 0;
+  padding: 0 var(--z-space-2) var(--z-space-2);
+  display: flex;
+  flex-direction: column;
+}
+.z-flow-step {
+  position: relative;
+  min-width: 0;
+}
+/* The line joining one step to the next. */
+.z-flow-step:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  left: calc(var(--z-space-2) + 13px);
+  top: 38px;
+  bottom: -6px;
+  width: 2px;
+  background: var(--z-border);
+}
+.z-flow-step--done:not(:last-child)::before {
+  background: var(--z-success, #1d6b3a);
+}
+.z-flow-step__button {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--z-space-3);
+  width: 100%;
+  border: 0;
+  border-radius: var(--z-radius-md);
+  background: transparent;
+  color: inherit;
+  padding: var(--z-space-2);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+.z-flow-step__button:hover {
+  background: var(--z-surface-muted);
+}
+.z-flow-step__marker {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid var(--z-border);
+  background: var(--z-surface);
+  color: #fff;
+  font-size: var(--z-text-sm);
+  font-weight: 700;
+  position: relative;
+  z-index: 1;
+}
+.z-flow-step--done .z-flow-step__marker {
+  background: var(--z-success, #1d6b3a);
+  border-color: var(--z-success, #1d6b3a);
+}
+.z-flow-step--active .z-flow-step__marker {
+  border-color: var(--z-primary);
+  box-shadow: inset 0 0 0 5px var(--z-surface);
+  background: var(--z-primary);
+  animation: z-flow-pulse 1.6s ease-in-out infinite;
+}
+.z-flow-step--attention .z-flow-step__marker {
+  background: var(--z-ring);
+  border-color: var(--z-ring);
+}
+.z-flow-step--skipped .z-flow-step__marker {
+  border-style: dashed;
+}
+.z-flow-step--skipped .z-flow-step__text,
+.z-flow-step--waiting .z-flow-step__text {
+  opacity: 0.75;
+}
+.z-flow-step__text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.z-flow-step__title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--z-space-2);
+  font-weight: 700;
+}
+.z-flow-step__role {
+  font-size: var(--z-text-xs);
+  font-weight: 500;
+  color: var(--z-muted);
+}
+.z-flow-step__detail {
+  font-size: var(--z-text-sm);
+}
+.z-flow-step__agent {
+  font-size: var(--z-text-xs);
+  color: var(--z-muted);
+  overflow-wrap: anywhere;
+}
+@media (min-width: 900px) {
+  .z-flow {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: var(--z-space-1);
+  }
+  .z-flow-step:not(:last-child)::before {
+    left: calc(var(--z-space-2) + 30px);
+    right: calc(-1 * var(--z-space-1) - var(--z-space-2) + 2px);
+    top: calc(var(--z-space-2) + 13px);
+    bottom: auto;
+    width: auto;
+    height: 2px;
+  }
+  .z-flow-step__button {
+    flex-direction: column;
+    gap: var(--z-space-2);
+  }
+}
