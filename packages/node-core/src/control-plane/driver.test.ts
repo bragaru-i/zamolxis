@@ -169,6 +169,15 @@ const answer = (text: string): FakeStep[] => [{ type: "success", summary: text }
 const json = (value: unknown): FakeStep[] => answer(JSON.stringify(value));
 
 describe("repository.plan through a Supervisor run", { timeout: 30_000 }, () => {
+  it("puts the Supervisor profile's owner instructions into the Supervisor prompt", async () => {
+    const f = fixture(() => json({ decision: "answer", reply: "Done.", tasks: [] }));
+    await f.plan("What changed?", {
+      supervisor: { runtime: "fake", instructions: "Prefer answers under five sentences." },
+    });
+    const [started] = f.runtime.started;
+    expect(started?.instruction).toContain("Owner instructions for this role");
+    expect(started?.instruction).toContain("Prefer answers under five sentences.");
+  });
   it("answers a question without tasks, with usage, and releases the planning workspace", async () => {
     const f = fixture(() => json({ decision: "answer", reply: "It uses **turbo**.", tasks: [] }));
     const { id, textCommandId } = await f.plan("How is the build organised?", {

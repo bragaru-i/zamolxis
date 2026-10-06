@@ -105,9 +105,13 @@ planned capability as shipped.
    the same session. A reopened session is judged only by work planned since it
    reopened (`workSessions.reopenedAt`), so an earlier failed task no longer pulls it
    back to failed.
-4. **Profiles and usage (#48), mostly shipped.** Profile name, max concurrency and
-   per-product overrides (create/remove) are editable in Settings → Agents. Missing:
-   instruction/policy references on profiles, any cost data source.
+4. **Profiles and usage (#48), shipped.** Profile name, max concurrency, per-product
+   overrides and owner **instructions** (≤4000 chars, secrets redacted on save) are
+   editable in Settings → Agents. Instructions are appended to Builder, Verifier and
+   Repair prompts and to the Supervisor prompt in a labelled block, recorded on each
+   run (digest + revision, shown in Run detail diagnostics), and never change trust,
+   approval, sandbox or capacity behaviour. Missing: any cost data source (Codex
+   reports tokens only).
 5. **Identity (#47), mostly shipped.** Signed-in devices show a self-reported label
    ("Safari on iPhone"); a minimal service worker makes the app installable with an
    offline page (no caching of app data or API responses); a second-account isolation

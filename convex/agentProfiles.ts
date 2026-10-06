@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { fail, requireUser } from "./lib/access";
+import { instructionsDigest, normalizeInstructions } from "./lib/agentProfiles";
 
 const role = v.union(
   v.literal("supervisor"),
@@ -35,6 +36,8 @@ export const upsert = mutation({
     reasoningEffort: v.optional(v.string()),
     enabled: v.boolean(),
     maxConcurrency: v.optional(v.number()),
+    // Omitted keeps the stored instructions; an empty string clears them.
+    instructions: v.optional(v.string()),
   },
   returns: v.id("agentProfiles"),
   handler: async (ctx, args) => {
@@ -48,6 +51,9 @@ export const upsert = mutation({
         args.maxConcurrency > 32)
     )
       fail("INVALID_ARGUMENT");
+    const instructions =
+      args.instructions === undefined ? undefined : normalizeInstructions(args.instructions);
+    const digest = instructions ? await instructionsDigest(instructions) : undefined;
     if (args.productId) {
       const product = await ctx.db.get(args.productId);
       if (!product || product.ownerId !== owner._id || product.archivedAt) fail("PRODUCT_MISMATCH");
@@ -77,6 +83,7 @@ export const upsert = mutation({
         reasoningEffort: args.reasoningEffort?.trim() || undefined,
         enabled: args.enabled,
         maxConcurrency: args.maxConcurrency,
+        ...(args.instructions !== undefined ? { instructions, instructionsDigest: digest } : {}),
         revision: existing.revision + 1,
         updatedAt: now,
       });
@@ -92,6 +99,7 @@ export const upsert = mutation({
       ...(args.reasoningEffort?.trim() ? { reasoningEffort: args.reasoningEffort.trim() } : {}),
       enabled: args.enabled,
       ...(args.maxConcurrency !== undefined ? { maxConcurrency: args.maxConcurrency } : {}),
+      ...(instructions && digest ? { instructions, instructionsDigest: digest } : {}),
       revision: 1,
       createdAt: now,
       updatedAt: now,

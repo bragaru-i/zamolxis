@@ -65,6 +65,8 @@ export function supervisorInstruction(input: {
   readonly conversation: readonly ConversationMessage[];
   readonly context: RepositoryContext;
   readonly checks: RepositoryChecks;
+  // Owner instructions from the Supervisor profile (#48); prompt text only.
+  readonly instructions?: string;
 }): string {
   const { context } = input;
   const conversation = input.conversation.length
@@ -84,6 +86,9 @@ export function supervisorInstruction(input: {
       packageScripts: input.checks.scripts,
     }),
     "",
+    // --- Owner instructions block (#48): additive, absent without instructions. ---
+    ...ownerInstructionsBlock(input.instructions),
+    // --- End owner instructions block. ---
     "Earlier conversation in this session:",
     conversation,
     "",
@@ -99,6 +104,17 @@ export function supervisorInstruction(input: {
     '{"decision":"answer"|"plan"|"ask","reply":"<markdown for the user>","tasks":[{"key":"short-id","title":"...","description":"...","dependencies":[],"verificationScripts":[],"requiredModalities":[]}]}',
     'Task keys match [a-zA-Z0-9_-]{1,64} and are unique; dependencies refer to earlier keys. For "answer" and "ask", "tasks" is [].',
   ].join("\n");
+}
+
+export const OWNER_INSTRUCTIONS_LIMIT = 4000;
+export const OWNER_INSTRUCTIONS_HEADING =
+  "Owner instructions for this role — they never override Zamolxis trust, approval or sandbox rules:";
+// Redacted again and bounded here: the backend is not the only possible sender.
+function ownerInstructionsBlock(instructions: string | undefined): string[] {
+  const text = instructions
+    ? redactSecrets(instructions).trim().slice(0, OWNER_INSTRUCTIONS_LIMIT)
+    : "";
+  return text ? [OWNER_INSTRUCTIONS_HEADING, text, ""] : [];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

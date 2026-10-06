@@ -244,6 +244,10 @@ export const submit = mutation({
           ...(supervisor.profile?.reasoningEffort
             ? { reasoningEffort: supervisor.profile.reasoningEffort }
             : {}),
+          // Owner instructions (#48): redacted prompt text, never policy.
+          ...(supervisor.profile?.instructions
+            ? { instructions: supervisor.profile.instructions }
+            : {}),
         },
         conversation,
       },

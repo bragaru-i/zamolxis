@@ -74,6 +74,8 @@ export interface RunDetailData {
     status: string;
     runtime: string;
     runtimeVersion?: string;
+    agentProfileRevision?: number;
+    instructionsDigest?: string;
     modelRequested?: string;
     modelActual?: string;
     reasoningEffort?: string;
@@ -238,6 +240,14 @@ export function RunDetailBody({
             { label: "Attempt", value: run.attempt },
             run.runtimeVersion && { label: "Runtime version", value: run.runtimeVersion },
             run.reasoningEffort && { label: "Reasoning", value: run.reasoningEffort },
+            run.agentProfileRevision !== undefined && {
+              label: "Profile",
+              value: `revision ${run.agentProfileRevision} · ${
+                run.instructionsDigest
+                  ? `owner instructions ${run.instructionsDigest.slice(0, 12)}`
+                  : "no owner instructions"
+              }`,
+            },
             run.exitReason && { label: "Exit reason", value: run.exitReason },
             detail.workspace && {
               label: "Workspace",

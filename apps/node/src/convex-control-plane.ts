@@ -20,13 +20,19 @@ function field(value: Record<string, unknown>, name: string, max = 128): string 
     throw new Error("INVALID_COMMAND");
   return result;
 }
-function parseSupervisorSelection(value: unknown): SupervisorSelection {
+function parseSupervisorSelection(
+  value: unknown,
+): SupervisorSelection & { readonly instructions?: string } {
   const selection = object(value);
   return {
     runtime: field(selection, "runtime"),
     ...(selection.model !== undefined ? { model: field(selection, "model", 256) } : {}),
     ...(selection.reasoningEffort !== undefined
       ? { reasoningEffort: field(selection, "reasoningEffort", 64) }
+      : {}),
+    // Owner instructions (#48) are bounded prompt text from the Supervisor profile.
+    ...(selection.instructions !== undefined
+      ? { instructions: field(selection, "instructions", 4000) }
       : {}),
   };
 }

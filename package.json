@@ -27,6 +27,7 @@
     "@types/node": "^22.20.5",
     "@zamolxis/application": "workspace:*",
     "@zamolxis/domain": "workspace:*",
+    "@zamolxis/runtime-core": "workspace:*",
     "convex": "^1.28.0",
     "convex-test": "^0.0.60",
     "dotenv": "16.6.1",
