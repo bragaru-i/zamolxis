@@ -69,10 +69,14 @@ planned capability as shipped.
    run id `supervisor:<textCommandId>`, runtime/model from the Supervisor profile with a
    fallback to a registered runtime). It answers questions in chat, plans
    self-contained parallel tasks, or asks a clarifying question; unparseable output is
-   treated as an answer and never starts builders. Still missing: the Supervisor is not
-   an agent run in the backend, so it cannot be stopped from the UI and its events are
-   not shown; `packages/supervisor` is still unused; a real Codex Supervisor run (prompt
-   quality, JSON compliance) is only covered by the authenticated acceptance.
+   treated as an answer and never starts builders. While it works the message shows
+   its live activity, elapsed time and tokens (reported at most every 2 s), and it can
+   be stopped until it decides ("Stopped before answering"). Still missing: it is not
+   a backend agent run and its full event stream is not shown; `packages/supervisor`
+   is unused; stopping a real Codex Supervisor is untested. Incident 2026-10-06:
+   #73's reply redaction turned plan task keys into `***`, so every real plan was
+   rejected for about 40 minutes until #74 (the Supervisor reply is now redacted per
+   field after parsing).
 2. **Conversation, partially shipped.** Supervisor replies (Markdown, bounded to 8000)
    and builder/verifier final replies (`agentRuns.resultSummary`) are shown. Not yet:
    intermediate agent messages, verifier review text beyond its final message.
@@ -103,7 +107,7 @@ planned capability as shipped.
 
 ## Next steps, in order
 
-1. Make the Supervisor a stoppable, visible run; real-Codex validation of answers.
+1. Real-Codex validation of Supervisor answers and of stopping a Supervisor.
 2. Trace recording on the Node (traces/traceSteps are still empty).
 3. Real-device validation: iPhone, launchd across reboot, stop against Codex.
 
