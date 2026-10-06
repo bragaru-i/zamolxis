@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { internalMutation, type MutationCtx, mutation, query } from "./_generated/server";
 import { bounded, fail, load, ownSession, requireUser } from "./lib/access";
+import { autoApproves } from "./lib/approvalPolicy";
 import { enqueue } from "./lib/commands";
 
 export const request = internalMutation({
@@ -160,7 +161,12 @@ export async function applyApprovalEvent(
       (risk === "low" || risk === "medium");
     if (await runtimeApproval(ctx, run, approvalId)) fail("COMMAND_CONFLICT");
     const session = await load(ctx, "workSessions", run.workSessionId);
-    await ctx.db.insert("approvals", {
+    // The run's profile may grant low (or low and medium) risk commands: the request is
+    // recorded as approved by policy and answered at once, for the rest of the run when
+    // the runtime offers that. Everything else waits for the owner.
+    const granted = autoApproves(run.approvalPolicy, kind, risk);
+    const now = Date.now();
+    const inserted = await ctx.db.insert("approvals", {
       ownerId: session.ownerId,
       workSessionId: run.workSessionId,
       runId: run._id,
@@ -169,9 +175,26 @@ export async function applyApprovalEvent(
       risk,
       request: { approvalId, kind, summary, ...(allowForSession ? { allowForSession: true } : {}) },
       runtimeApprovalId: approvalId,
-      status: "pending",
-      requestedAt: Date.now(),
+      status: granted ? "approved" : "pending",
+      requestedAt: now,
+      ...(granted && run.approvalPolicy
+        ? { resolvedAt: now, resolvedByPolicy: run.approvalPolicy }
+        : {}),
     });
+    if (granted)
+      await enqueue(
+        ctx,
+        run.workstationId,
+        "runtime.approval",
+        "run",
+        run._id,
+        {
+          runId: run._id,
+          approvalId,
+          decision: allowForSession ? "approve_session" : "approve",
+        },
+        `approval:${inserted}`,
+      );
     if (run.status === "needs_approval" || run.status === "stopping") return run.status;
     assertRunTransition(run.status, "needs_approval");
     return "needs_approval";

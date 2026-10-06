@@ -1,6 +1,7 @@
 import { authTables } from "@convex-dev/auth/server";
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { approvalPolicy } from "./lib/approvalPolicy";
 
 // Supervisor log steps (mirrors packages/contracts/src/trace/supervisor-log.ts).
 export const supervisorLogKind = v.union(
@@ -569,6 +570,8 @@ export default defineSchema({
     // Owner instructions (#48): redacted prompt text, at most 4000 characters.
     instructions: v.optional(v.string()),
     instructionsDigest: v.optional(v.string()),
+    // Which command approvals the backend grants for this role (lib/approvalPolicy).
+    approvalPolicy: v.optional(approvalPolicy),
     revision: v.number(),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -591,6 +594,8 @@ export default defineSchema({
     modelRequested: v.optional(v.string()),
     modelActual: v.optional(v.string()),
     reasoningEffort: v.optional(v.string()),
+    // Snapshot of the profile's approval policy when the run was queued.
+    approvalPolicy: v.optional(approvalPolicy),
     runtimeVersion: v.optional(v.string()),
     inputTokens: v.optional(v.number()),
     cachedInputTokens: v.optional(v.number()),
@@ -677,6 +682,8 @@ export default defineSchema({
     requestedAt: v.number(),
     resolvedAt: v.optional(v.number()),
     resolvedBy: v.optional(v.id("users")),
+    // Set instead of resolvedBy when the run's approval policy granted the request.
+    resolvedByPolicy: v.optional(approvalPolicy),
     // Runtime approvals: the stable id reported by the Node (run + native request id),
     // and how the runtime settled it (user decision, timeout, stop or withdrawal).
     runtimeApprovalId: v.optional(v.string()),

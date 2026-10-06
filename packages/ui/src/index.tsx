@@ -1,5 +1,6 @@
 import {
   type ButtonHTMLAttributes,
+  Children,
   type DragEvent,
   type FormEvent,
   type KeyboardEvent,
@@ -119,6 +120,77 @@ export function Notice({ tone = "info", children }: { tone?: Tone; children: Rea
     <p className={`z-notice z-tone-${tone}`} role={tone === "danger" ? "alert" : "status"}>
       {children}
     </p>
+  );
+}
+
+/**
+ * A fixed stack of notices that need attention wherever the owner is (an approval that
+ * arrives while they are in Settings or another chat). It is a manual popover, so it sits
+ * in the top layer above any sheet that was already open; nothing in it closes by itself.
+ */
+export function ToastStack({
+  label = "Notifications",
+  children,
+}: {
+  label?: string;
+  children: ReactNode;
+}) {
+  const items = Children.toArray(children).filter(Boolean);
+  if (!items.length) return null;
+  return <ToastRegion label={label}>{items}</ToastRegion>;
+}
+function ToastRegion({ label, children }: { label: string; children: ReactNode }) {
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const element = root.current as (HTMLDivElement & { showPopover?: () => void }) | null;
+    try {
+      element?.showPopover?.();
+    } catch {
+      /* Already shown or no popover support: the fixed layout still applies. */
+    }
+  }, []);
+  return (
+    <div className="z-toasts" ref={root} popover="manual" role="region" aria-label={label}>
+      {children}
+    </div>
+  );
+}
+/** One notice in a ToastStack: a title line, the message and optional actions. */
+export function Toast({
+  title,
+  tone = "info",
+  meta,
+  actions,
+  onDismiss,
+  children,
+}: {
+  title: string;
+  tone?: Tone;
+  /** Shown after the title, e.g. a risk badge. */
+  meta?: ReactNode;
+  actions?: ReactNode;
+  onDismiss?: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <section
+      className={`z-toast z-toast--${tone}`}
+      role={tone === "danger" ? "alert" : "status"}
+      aria-label={title}
+    >
+      <div className="z-toast__head">
+        <strong className="z-toast__title">{title}</strong>
+        {meta}
+        <span className="z-spacer" />
+        {onDismiss && (
+          <button type="button" className="z-toast__close" aria-label="Dismiss" onClick={onDismiss}>
+            <Icon name="close" />
+          </button>
+        )}
+      </div>
+      <div className="z-toast__body">{children}</div>
+      {actions && <div className="z-row z-toast__actions">{actions}</div>}
+    </section>
   );
 }
 

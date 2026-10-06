@@ -1,5 +1,6 @@
 import { type Infer, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import { approvalPolicy } from "./lib/approvalPolicy";
 import { fail, requireUser } from "./lib/access";
 import {
   AGENT_ROLES,
@@ -162,6 +163,8 @@ export const upsert = mutation({
     maxConcurrency: v.optional(v.number()),
     // Omitted keeps the stored instructions; an empty string clears them.
     instructions: v.optional(v.string()),
+    // Omitted or "ask" means every command approval waits for the owner.
+    approvalPolicy: v.optional(approvalPolicy),
   },
   returns: v.id("agentProfiles"),
   handler: async (ctx, args) => {
@@ -177,6 +180,10 @@ export const upsert = mutation({
       fail("INVALID_ARGUMENT");
     const instructions =
       args.instructions === undefined ? undefined : normalizeInstructions(args.instructions);
+    // Only roles that run commands can be granted approvals; "ask" is stored as nothing.
+    const policy =
+      args.approvalPolicy && args.approvalPolicy !== "ask" ? args.approvalPolicy : undefined;
+    if (policy && !["builder", "repair"].includes(args.role)) fail("INVALID_ARGUMENT");
     const digest = instructions ? await instructionsDigest(instructions) : undefined;
     if (args.productId) {
       const product = await ctx.db.get(args.productId);
@@ -208,6 +215,7 @@ export const upsert = mutation({
         enabled: args.enabled,
         maxConcurrency: args.maxConcurrency,
         ...(args.instructions !== undefined ? { instructions, instructionsDigest: digest } : {}),
+        approvalPolicy: policy,
         revision: existing.revision + 1,
         updatedAt: now,
       });
@@ -224,6 +232,7 @@ export const upsert = mutation({
       enabled: args.enabled,
       ...(args.maxConcurrency !== undefined ? { maxConcurrency: args.maxConcurrency } : {}),
       ...(instructions && digest ? { instructions, instructionsDigest: digest } : {}),
+      ...(policy ? { approvalPolicy: policy } : {}),
       revision: 1,
       createdAt: now,
       updatedAt: now,

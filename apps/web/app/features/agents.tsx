@@ -26,7 +26,38 @@ export interface Profile {
   maxConcurrency?: number;
   instructions?: string;
   instructionsDigest?: string;
+  /** Which command approvals the backend grants for this role; absent means ask. */
+  approvalPolicy?: ApprovalPolicy;
   updatedAt: number;
+}
+export type ApprovalPolicy = "ask" | "auto_low" | "auto_low_medium";
+export const APPROVAL_POLICY_OPTIONS: Array<{
+  value: ApprovalPolicy;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "ask",
+    label: "Ask every time",
+    description: "Every command the agent cannot run in its sandbox waits for you.",
+  },
+  {
+    value: "auto_low",
+    label: "Allow low risk",
+    description: "Commands inside the workspace without network run at once.",
+  },
+  {
+    value: "auto_low_medium",
+    label: "Allow low and medium risk",
+    description:
+      "Also commands Codex only flags for their shape (quotes, braces, expansions). High and critical still ask.",
+  },
+];
+export function approvalPolicyLabel(policy: ApprovalPolicy | undefined): string {
+  return (
+    APPROVAL_POLICY_OPTIONS.find((option) => option.value === (policy ?? "ask"))?.label ??
+    "Ask every time"
+  );
 }
 interface Product {
   _id: Id<"products">;
@@ -97,6 +128,8 @@ const EFFORT_HELP: Record<string, string> = {
 };
 // Only roles that start runs can be limited in how many run at once.
 const RUN_ROLES: readonly Role[] = ["builder", "verifier", "repair"];
+// Only roles that run commands ask for approvals (the Verifier's requests are always refused).
+const APPROVAL_ROLES: readonly Role[] = ["builder", "repair"];
 const RUNTIME_LABELS: Record<string, string> = { codex: "Codex", claude: "Claude" };
 export function runtimeLabel(runtime: string | undefined): string {
   if (!runtime) return "Agent";
@@ -227,6 +260,8 @@ export function upsertArgs(input: {
   enabled: boolean;
   maxConcurrency: string;
   instructions?: string;
+  /** Sent for roles that run commands; "ask" clears a stored policy. */
+  approvalPolicy?: ApprovalPolicy;
 }) {
   const { existing } = input;
   const concurrency = input.maxConcurrency.trim();
@@ -241,6 +276,9 @@ export function upsertArgs(input: {
     enabled: input.enabled,
     ...(concurrency ? { maxConcurrency: Number(concurrency) } : {}),
     ...(input.instructions !== undefined ? { instructions: input.instructions.trim() } : {}),
+    ...(input.approvalPolicy !== undefined && APPROVAL_ROLES.includes(input.role)
+      ? { approvalPolicy: input.approvalPolicy }
+      : {}),
   };
 }
 
@@ -292,6 +330,10 @@ export function AgentsSettings({
   const summary = (shown: Profile | undefined) =>
     `${shown ? describeProfile(shown) : `${runtimeLabel(fallback)} · default model`}${
       shown?.maxConcurrency ? ` · up to ${shown.maxConcurrency} at once` : ""
+    }${
+      shown?.approvalPolicy && shown.approvalPolicy !== "ask"
+        ? ` · ${approvalPolicyLabel(shown.approvalPolicy).toLowerCase()}`
+        : ""
     }`;
   const loading = global === undefined || scopeRows === undefined;
   const open = editing ? ROLES.find((item) => item.role === editing) : undefined;
@@ -521,6 +563,9 @@ export function ProfileEditor({
   const [model, setModel] = useState(prefill?.model ?? "");
   const [effort, setEffort] = useState(prefill?.reasoningEffort ?? "");
   const [instructions, setInstructions] = useState(prefill?.instructions ?? "");
+  const [approvalPolicy, setApprovalPolicy] = useState<ApprovalPolicy>(
+    prefill?.approvalPolicy ?? "ask",
+  );
   const [enabled, setEnabled] = useState(existing?.enabled ?? true);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState("");
@@ -579,6 +624,7 @@ export function ProfileEditor({
           enabled: nextEnabled,
           maxConcurrency: concurrency,
           instructions,
+          approvalPolicy,
         }),
       ),
     );
@@ -661,6 +707,14 @@ export function ProfileEditor({
             onChange={(event) => setConcurrency(event.target.value)}
           />
         </label>
+      )}
+      {APPROVAL_ROLES.includes(role) && (
+        <Picker
+          label="Approvals"
+          value={approvalPolicy}
+          options={APPROVAL_POLICY_OPTIONS}
+          onChange={(value) => setApprovalPolicy(value as ApprovalPolicy)}
+        />
       )}
       <label className="z-field" htmlFor={instructionsId}>
         Instructions

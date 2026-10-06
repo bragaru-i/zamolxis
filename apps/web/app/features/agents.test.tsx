@@ -165,6 +165,22 @@ describe("profile resolution", () => {
       reasoningEffort: "high",
       enabled: true,
     });
+    // The approval policy travels only for roles that run commands.
+    const base = {
+      name: "Mine",
+      productId: undefined,
+      existing: undefined,
+      runtime: "codex",
+      model: "",
+      effort: "",
+      enabled: true,
+      maxConcurrency: "",
+      approvalPolicy: "auto_low_medium" as const,
+    };
+    expect(upsertArgs({ ...base, role: "builder" })).toMatchObject({
+      approvalPolicy: "auto_low_medium",
+    });
+    expect(upsertArgs({ ...base, role: "verifier" })).not.toHaveProperty("approvalPolicy");
   });
 
   it("sends trimmed instructions, clears them when empty and keeps them when omitted", () => {
