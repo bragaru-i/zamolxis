@@ -62,6 +62,9 @@ importers:
       '@zamolxis/node-core':
         specifier: workspace:*
         version: link:../../packages/node-core
+      '@zamolxis/runtime-claude':
+        specifier: workspace:*
+        version: link:../../packages/runtime-claude
       '@zamolxis/runtime-codex':
         specifier: workspace:*
         version: link:../../packages/runtime-codex
@@ -238,6 +241,9 @@ importers:
 
   packages/runtime-claude:
     dependencies:
+      '@zamolxis/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@zamolxis/runtime-core':
         specifier: workspace:*
         version: link:../runtime-core
@@ -245,6 +251,9 @@ importers:
       '@biomejs/biome':
         specifier: ^2.2.4
         version: 2.5.15
+      '@zamolxis/test-kit':
+        specifier: workspace:*
+        version: link:../test-kit
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
