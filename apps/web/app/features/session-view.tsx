@@ -1,5 +1,6 @@
 "use client";
 import {
+  AgentRow,
   AppHeader,
   AppShell,
   Button,
@@ -29,10 +30,11 @@ import {
 import { explainError, explainFailure } from "./errors";
 import { PublishTask } from "./publish";
 import { RunDetail } from "./run-detail";
-import { useSearchParam } from "./use-location";
+import { runtimeLabel } from "./run-detail-model";
 import { STEERABLE, SteerRun } from "./steer";
 import { SupervisorLog } from "./supervisor-log";
 import { SessionUsage } from "./usage";
+import { useSearchParam } from "./use-location";
 
 interface Session {
   _id: Id<"workSessions">;
@@ -62,9 +64,15 @@ interface Run {
   _creationTime: number;
   taskId: Id<"tasks">;
   role?: string;
+  runtime: string;
   status: string;
+  modelRequested?: string;
+  modelActual?: string;
   activityLabel?: string;
   totalTokens?: number;
+  estimatedCostUsd?: number;
+  startedAt?: number;
+  completedAt?: number;
   resultSummary?: string;
 }
 
@@ -110,6 +118,7 @@ export function SessionView({
     end.current?.scrollIntoView({ block: "end" });
   }, [count]);
   const ended = session ? ENDED.includes(session.status) : false;
+  const now = useNow((runs ?? []).some((run) => ACTIVE_RUN.includes(run.status)));
   const last = messages?.[messages.length - 1];
   const startsNew = startsNewSession(session?.status);
   const asking = last ? assistantReply(last).kind === "ask" : false;
@@ -273,47 +282,44 @@ export function SessionView({
                     <div className="z-work__runs">
                       {runsFor(task._id).map((run) => (
                         <div className="z-stack" key={run._id}>
-                          <div className="z-row z-small">
-                            <button
-                              type="button"
-                              className="z-pressable"
-                              aria-haspopup="dialog"
-                              onClick={() => setRunParam(run._id, "replace")}
-                            >
-                              <strong>{ROLE[run.role ?? "builder"] ?? "Agent"}</strong>
-                              <StatusBadge status={run.status} />
-                              {run.totalTokens !== undefined && (
-                                <span className="z-xsmall z-muted">
-                                  {run.totalTokens.toLocaleString()} tokens
-                                </span>
-                              )}
-                              <span className="z-pressable__chevron" aria-hidden="true">
-                                ›
-                              </span>
-                            </button>
-                            <span className="z-spacer" />
-                            {(ACTIVE_RUN.includes(run.status) || run.status === "lost") && (
-                              <Button
-                                variant="ghost"
-                                size="small"
-                                onClick={async () => {
-                                  try {
-                                    await stopRun({ runId: run._id });
-                                  } catch (error) {
-                                    setNotice({
-                                      tone: "danger",
-                                      text: explainError(error, "Could not stop this agent."),
-                                    });
-                                  }
-                                }}
-                              >
-                                {run.status === "lost" ? "Dismiss" : "Stop"}
-                              </Button>
-                            )}
-                          </div>
-                          {run.activityLabel && ACTIVE_RUN.includes(run.status) && (
-                            <span className="z-xsmall z-muted">{run.activityLabel}</span>
-                          )}
+                          <AgentRow
+                            role={ROLE[run.role ?? "builder"] ?? "Agent"}
+                            runtime={runtimeLabel({ runtime: run.runtime })}
+                            model={run.modelActual ?? run.modelRequested}
+                            status={run.status}
+                            activity={run.activityLabel}
+                            elapsedMs={
+                              run.startedAt !== undefined
+                                ? (ACTIVE_RUN.includes(run.status)
+                                    ? now
+                                    : (run.completedAt ?? now)) - run.startedAt
+                                : undefined
+                            }
+                            tokens={run.totalTokens}
+                            costUsd={run.estimatedCostUsd}
+                            openLabel={`Open ${ROLE[run.role ?? "builder"] ?? "agent"} details`}
+                            onOpen={() => setRunParam(run._id, "replace")}
+                            actions={
+                              ACTIVE_RUN.includes(run.status) || run.status === "lost" ? (
+                                <Button
+                                  variant="ghost"
+                                  size="small"
+                                  onClick={async () => {
+                                    try {
+                                      await stopRun({ runId: run._id });
+                                    } catch (error) {
+                                      setNotice({
+                                        tone: "danger",
+                                        text: explainError(error, "Could not stop this agent."),
+                                      });
+                                    }
+                                  }}
+                                >
+                                  {run.status === "lost" ? "Dismiss" : "Stop"}
+                                </Button>
+                              ) : undefined
+                            }
+                          />
                           {STEERABLE.includes(run.status) && <SteerRun runId={run._id} />}
                           {run.resultSummary?.trim() && (
                             <div className="z-small">

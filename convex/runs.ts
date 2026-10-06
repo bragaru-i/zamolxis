@@ -2,7 +2,7 @@ import { assertCanQueueRun } from "@zamolxis/application";
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { internalMutation, type MutationCtx, mutation, query } from "./_generated/server";
-import { bounded, fail, load, ownRun, ownSession } from "./lib/access";
+import { bounded, fail, load, ownRun, ownSession, requireUser } from "./lib/access";
 import { ownerInstructionsSection, resolveAgentProfile } from "./lib/agentProfiles";
 import { enqueue, stopRun } from "./lib/commands";
 export async function queueRun(
@@ -265,5 +265,97 @@ export const stop = mutation({
     await ownRun(ctx, args.runId);
     await stopRun(ctx, args.runId);
     return null;
+  },
+});
+const ACTIVE_RUN = new Set([
+  "queued",
+  "starting",
+  "running",
+  "waiting",
+  "needs_approval",
+  "stopping",
+]);
+const IN_FLIGHT_PLAN = new Set(["pending", "claimed", "acknowledged"]);
+const ACTIVE_SESSIONS = 10;
+const RUNS_PER_SESSION = 20;
+const TEXTS_PER_SESSION = 5;
+/**
+ * Every agent working for the owner right now, across Sessions: active Builder, Verifier and
+ * Repair runs plus Supervisor turns still deciding, each with its model and usage so far.
+ * Bounded to the most recently active Sessions that are running or planning.
+ */
+export const listActive = query({
+  args: {},
+  returns: v.array(v.any()),
+  handler: async (ctx) => {
+    const owner = await requireUser(ctx);
+    const agents = [];
+    for (const status of ["running", "planning"] as const) {
+      const sessions = await ctx.db
+        .query("workSessions")
+        .withIndex("by_owner_status_activity", (q) =>
+          q.eq("ownerId", owner._id).eq("status", status),
+        )
+        .order("desc")
+        .take(ACTIVE_SESSIONS);
+      for (const session of sessions) {
+        const runs = await ctx.db
+          .query("agentRuns")
+          .withIndex("by_session_activity", (q) => q.eq("workSessionId", session._id))
+          .order("desc")
+          .take(RUNS_PER_SESSION);
+        for (const run of runs) {
+          if (!ACTIVE_RUN.has(run.status)) continue;
+          const task = await ctx.db.get("tasks", run.taskId);
+          agents.push({
+            kind: "run",
+            _id: run._id,
+            workSessionId: session._id,
+            sessionTitle: session.title,
+            ...(task ? { taskTitle: task.title } : {}),
+            role: run.role ?? "builder",
+            runtime: run.runtime,
+            status: run.status,
+            ...(run.modelRequested !== undefined ? { modelRequested: run.modelRequested } : {}),
+            ...(run.modelActual !== undefined ? { modelActual: run.modelActual } : {}),
+            ...(run.totalTokens !== undefined ? { totalTokens: run.totalTokens } : {}),
+            ...(run.estimatedCostUsd !== undefined ? { costUsd: run.estimatedCostUsd } : {}),
+            ...(run.activityLabel !== undefined ? { activityLabel: run.activityLabel } : {}),
+            startedAt: run.startedAt ?? run._creationTime,
+            lastActivityAt: run.lastActivityAt,
+          });
+        }
+        if (status !== "planning") continue;
+        const texts = await ctx.db
+          .query("textCommands")
+          .withIndex("by_session", (q) => q.eq("workSessionId", session._id))
+          .order("desc")
+          .take(TEXTS_PER_SESSION);
+        for (const text of texts) {
+          if (text.stoppedAt !== undefined || text.planDigest !== undefined) continue;
+          const plan = await ctx.db
+            .query("commands")
+            .withIndex("by_idempotency_key", (q) => q.eq("idempotencyKey", `plan:${text._id}`))
+            .unique();
+          if (!plan || !IN_FLIGHT_PLAN.has(plan.status)) continue;
+          agents.push({
+            kind: "supervisor",
+            _id: text._id,
+            workSessionId: session._id,
+            sessionTitle: session.title,
+            role: "supervisor",
+            status: text.stopRequestedAt !== undefined ? "stopping" : "running",
+            ...(text.modelActual !== undefined ? { modelActual: text.modelActual } : {}),
+            ...(text.totalTokens !== undefined ? { totalTokens: text.totalTokens } : {}),
+            ...(text.supervisorActivity !== undefined
+              ? { activityLabel: text.supervisorActivity }
+              : {}),
+            startedAt: text.supervisorStartedAt ?? text._creationTime,
+            lastActivityAt: text.supervisorProgressAt ?? text._creationTime,
+          });
+        }
+      }
+    }
+    return agents.sort((a, b) => a.startedAt - b.startedAt);
   },
 });

@@ -95,9 +95,9 @@ it("renders the global answer and its linked session separately from the session
   expect(html).toContain("Orchestrator");
   expect(html).toContain("What is going on?");
   expect(html).toContain(">Answer<");
-  expect(html).toContain("Alpha readiness · Needs you");
+  expect(html).toMatch(/Alpha readiness<\/span><span class="z-chip__status">Needs you</);
   expect(html).not.toContain("needs_input");
-  expect(html).toContain("Building: Fix totals · Running");
+  expect(html).toMatch(/Building: Fix totals<\/span><span class="z-chip__status">Running</);
   expect(html).toContain('href="https://github.com/acme/shop/pull/7"');
   expect(html).not.toContain("PR: Unsafe");
   expect(html).not.toContain("javascript:");
