@@ -88,10 +88,10 @@ planned capability as shipped.
 2. **Conversation, partially shipped.** Supervisor replies (Markdown, bounded to 8000)
    and builder/verifier final replies (`agentRuns.resultSummary`) are shown. Not yet:
    intermediate agent messages, verifier review text beyond its final message.
-3. **Steering and approvals, shipped with limits.** Real Codex was exercised only for
-   a rejected command approval; the approve path, file-change approvals, MCP
-   elicitations, live `turn/steer` and the 30-minute timeout are covered by controlled
-   tests only. A completed Codex turn ends its run, so "send to a waiting run" only
+3. **Steering and approvals, shipped with limits.** Real Codex acceptance covers a
+   command approval being rejected (HEAD unchanged) and approved (the command runs and
+   the agent reports its result). File-change approvals, MCP elicitations, live
+   `turn/steer` and the 30-minute timeout are covered by controlled tests only. A completed Codex turn ends its run, so "send to a waiting run" only
    applies to runtimes that pause. Native sessions live in Node memory: a Node
    restart loses runs left waiting or in `needs_approval` (reconciled through their
    start command). A follow-up message in the composer is a new Supervisor turn in

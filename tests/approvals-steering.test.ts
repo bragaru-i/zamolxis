@@ -606,3 +606,82 @@ it.skipIf(process.env.ZAMOLXIS_AUTHENTICATED_ACCEPTANCE !== "1")(
   },
   180_000,
 );
+it.skipIf(process.env.ZAMOLXIS_AUTHENTICATED_ACCEPTANCE !== "1")(
+  "holds a real Codex approval request and runs the command once approved",
+  async () => {
+    const repo = repositoryFixture();
+    cleanup.push(() => rmSync(repo.root, { recursive: true, force: true }));
+    const head = git(repo.path, ["rev-parse", "HEAD"]);
+    const profile = mkdtempSync(join(tmpdir(), "zamolxis-approve-acceptance-"));
+    const children: ReturnType<typeof spawn>[] = [];
+    try {
+      chmodSync(profile, 0o700);
+      copyFileSync(
+        join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "auth.json"),
+        join(profile, "auth.json"),
+      );
+      chmodSync(join(profile, "auth.json"), 0o600);
+      const worktree = join(repo.root, "worktree");
+      git(repo.path, ["worktree", "add", "-b", "acceptance", worktree, "HEAD"]);
+      const runtime = new CodexRuntime({
+        connect: (cwd) =>
+          new AppServerClient({
+            cwd,
+            launch: (executable, assignedCwd) => {
+              const child = spawn(executable, ["app-server", "--listen", "stdio://"], {
+                cwd: assignedCwd,
+                env: { ...process.env, CODEX_HOME: profile },
+                shell: false,
+                stdio: ["pipe", "pipe", "ignore"],
+              });
+              children.push(child);
+              return child;
+            },
+          }),
+      });
+      const session = await runtime.start({
+        runId: "acceptance" as AgentRunId,
+        workstationId: "node" as WorkstationId,
+        role: "builder",
+        instruction:
+          "Run exactly this shell command with escalated permissions because it needs network access: curl -sS -o /dev/null -w '%{http_code}' https://example.com . Then reply with only the HTTP status code it printed. If it is not approved, reply BLOCKED and do nothing else.",
+        workspace: {
+          workspaceId: "workspace" as WorkspaceId,
+          cwd: realpathSync.native(worktree),
+          branch: "acceptance",
+          headSha: head,
+        },
+      });
+      const seen: NormalizedRunEventDto[] = [];
+      for await (const event of runtime.subscribe({ nativeSessionId: session.nativeSessionId })) {
+        seen.push(event);
+        if (event.type === "approval.requested")
+          await runtime.resolveApproval({
+            nativeSessionId: session.nativeSessionId,
+            approvalId: event.payload.approvalId,
+            decision: "approve",
+          });
+      }
+      const requested = seen.filter((event) => event.type === "approval.requested");
+      console.info(
+        "approval acceptance",
+        JSON.stringify(requested.map((event) => event.payload)),
+        seen.at(-1)?.type,
+      );
+      expect(requested.length).toBeGreaterThan(0);
+      expect(
+        seen
+          .filter((event) => event.type === "approval.resolved")
+          .every((event) => event.payload.decision === "approved"),
+      ).toBe(true);
+      const last = seen.at(-1);
+      expect(last?.type).toBe("run.completed");
+      expect(last?.type === "run.completed" ? last.payload.summary : "").toMatch(/\b200\b/);
+      expect(git(repo.path, ["rev-parse", "HEAD"])).toBe(head);
+    } finally {
+      for (const child of children) if (child.exitCode === null) child.kill("SIGKILL");
+      rmSync(profile, { recursive: true, force: true });
+    }
+  },
+  180_000,
+);
