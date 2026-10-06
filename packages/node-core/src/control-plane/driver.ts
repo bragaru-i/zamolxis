@@ -384,6 +384,9 @@ export class ControlPlaneDriver {
   // process; and runs being reattached, so their commands wait for the native session.
   readonly #known = new Set<string>();
   readonly #attaching = new Map<string, Promise<void>>();
+  // Runs followed by their recovery, and those a message or approval reached meanwhile.
+  readonly #recovering = new Set<string>();
+  readonly #nudged = new Set<string>();
   #flushing: Promise<void> | undefined;
   #discovery: RepositoryDiscovery | undefined;
   setRepositoryDiscovery(discovery: RepositoryDiscovery): void {
@@ -405,7 +408,7 @@ export class ControlPlaneDriver {
       await this.flush();
       const listed = await this.transport.listPending();
       // Runs a previous Node process left unfinished are reattached in the background.
-      this.#recoverRuns(listed);
+      await this.#recoverRuns(listed);
       for (const stored of this.store.listInterruptedCommands())
         if (!this.#executing.has(stored.commandId)) await this.reconcileInterrupted(stored);
       const pending = listed.filter((command) => !this.#executing.has(command.commandId));
@@ -675,6 +678,8 @@ export class ControlPlaneDriver {
             message: command.payload.message,
           });
         }
+        // Its recovery follows the run: make sure it looks again after this.
+        if (!context && this.#recovering.has(runId)) this.#nudged.add(runId);
         // A run streamed by another command reports through that command; otherwise this
         // command follows the run until it pauses again and completes it like a start.
         if (context) {
@@ -1064,7 +1069,7 @@ export class ControlPlaneDriver {
    * whose start command was interrupted) and reattaches each once, in the background. The
    * run's commands (stop, message, approval) wait until its session is back.
    */
-  #recoverRuns(pending: readonly ExecutionCommand[]): void {
+  async #recoverRuns(pending: readonly ExecutionCommand[]): Promise<void> {
     const candidates = new Map<string, StoredRuntimeSession | undefined>();
     for (const session of this.store.listUnfinishedRuntimeSessions())
       candidates.set(session.runId, session);
@@ -1076,6 +1081,15 @@ export class ControlPlaneDriver {
     for (const [runId, session] of candidates) {
       if (this.#known.has(runId) || this.#streaming.has(runId)) continue;
       this.#known.add(runId);
+      if (session?.nativeSessionId) {
+        try {
+          // Attached in this process (another driver instance started it): not a restart.
+          await this.runtimes.get(session.runtime).inspect(session.nativeSessionId);
+          continue;
+        } catch {
+          /* Unknown to this process: recover it. */
+        }
+      }
       const stop = this.store.findCommandByIdempotencyKey(`stop:${runId}`);
       const stopRequested =
         pending.some(
@@ -1095,11 +1109,14 @@ export class ControlPlaneDriver {
       const command =
         start?.type === "runtime.start" && start.status === "running" ? start : undefined;
       if (command) this.#executing.add(command.commandId);
+      this.#recovering.add(runId);
       const owner = this.#recover(runId, session, command, stopRequested, () => attached())
         .catch(() => undefined)
         .finally(() => {
           attached();
           this.#attaching.delete(runId);
+          this.#recovering.delete(runId);
+          this.#nudged.delete(runId);
           if (command) this.#executing.delete(command.commandId);
         });
       this.#streaming.set(runId, owner);
@@ -1124,15 +1141,6 @@ export class ControlPlaneDriver {
     stopRequested: boolean,
     attached: () => void,
   ): Promise<void> {
-    if (stored?.nativeSessionId) {
-      try {
-        // Attached in this process (another driver started it): not a restart.
-        await this.runtimes.get(stored.runtime).inspect(stored.nativeSessionId);
-        return;
-      } catch {
-        /* Unknown to this process: resume it below. */
-      }
-    }
     let status: string | undefined;
     try {
       status = (await this.transport.reconcile(runId, "resuming"))?.status;
@@ -1194,14 +1202,15 @@ export class ControlPlaneDriver {
         attached();
         trace.record(recoveryStep(runId, attempt, Date.now(), { policy, state: snapshot.state }));
         if (trace.persist()) await this.flush().catch(() => undefined);
-        await this.#stream(
-          scope,
-          context,
-          this.runtimes.get(stored.runtime),
-          stored.nativeSessionId,
-          deliveries,
-          trace,
-        );
+        const runtime = this.runtimes.get(stored.runtime);
+        await this.#stream(scope, context, runtime, stored.nativeSessionId, deliveries, trace);
+        // A message or approval delivered while this recovery followed the run may have
+        // continued it after the stream paused: keep following until nothing new arrived.
+        while (this.#nudged.delete(runId)) {
+          const state = this.store.getRuntimeSession(runId)?.status;
+          if (state === undefined || TERMINAL.includes(state)) break;
+          await this.#stream(scope, context, runtime, stored.nativeSessionId, deliveries, trace);
+        }
       }
       trace.persist();
       if (command) {
