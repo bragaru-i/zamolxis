@@ -356,6 +356,9 @@ export default defineSchema({
     provider: v.optional(v.string()),
     externalRepositoryId: v.optional(v.string()),
     defaultBranch: v.optional(v.string()),
+    // Set when this entry was folded into another one for the same remote; the survivor
+    // keeps the locations and the Product.
+    mergedIntoId: v.optional(v.id("repositories")),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

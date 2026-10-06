@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { type MutationCtx, mutation, query } from "./_generated/server";
 import { bounded, fail, load, requireNode, requireUser } from "./lib/access";
+import { canonicalRepository } from "./lib/repositories";
 import { githubAccess } from "./schema";
 export const create = mutation({
   args: {
@@ -33,10 +34,11 @@ export const listByProduct = query({
     const owner = await requireUser(ctx);
     const product = await load(ctx, "products", args.productId);
     if (product.ownerId !== owner._id) fail("FORBIDDEN");
-    return ctx.db
+    const rows = await ctx.db
       .query("repositories")
       .withIndex("by_product", (q) => q.eq("productId", args.productId))
       .take(bounded(args.limit ?? 50));
+    return rows.filter((row) => !row.mergedIntoId);
   },
 });
 
@@ -53,7 +55,7 @@ const ACTIVE_RUNS = [
 ] as const;
 const ACTIVE_WORKSPACES = ["requested", "provisioning", "in_use", "integrating"] as const;
 
-async function locationBusy(ctx: MutationCtx, location: Doc<"repositoryLocations">) {
+export async function locationBusy(ctx: MutationCtx, location: Doc<"repositoryLocations">) {
   for (const status of ACTIVE_WORKSPACES) {
     const workspaces = await ctx.db
       .query("workspaces")
@@ -161,8 +163,8 @@ export const removeOwnLocation = mutation({
   returns: v.union(v.literal("removed"), v.literal("absent")),
   handler: async (ctx, args) => {
     const device = await requireNode(ctx, args.workstationId);
-    const repository = await ctx.db.get("repositories", args.repositoryId);
-    if (!repository || repository.ownerId !== device.ownerId) fail("FORBIDDEN");
+    const repository = await canonicalRepository(ctx, args.repositoryId);
+    if (repository.ownerId !== device.ownerId) fail("FORBIDDEN");
     const location = await ctx.db
       .query("repositoryLocations")
       .withIndex("by_repository_workstation", (q) =>

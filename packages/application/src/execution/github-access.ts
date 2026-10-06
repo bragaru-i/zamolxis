@@ -73,6 +73,27 @@ export function githubRepositoryFromRemote(
   }
 }
 
+/**
+ * One identity for a repository however its remote is written: https, ssh or scp-like,
+ * with or without credentials, `.git` or a trailing slash. Hosts are case-insensitive;
+ * GitHub owner and repository names are too. Anything unparseable is its trimmed text.
+ */
+export function repositoryRemoteKey(remote: string): string {
+  const trimmed = remote.trim();
+  const github = githubRepositoryFromRemote(trimmed);
+  if (github) return `${github.host}/${github.owner.toLowerCase()}/${github.repo.toLowerCase()}`;
+  try {
+    const scp = /^(?:[^@/]+@)?([^:/]+):(.+)$/.exec(trimmed);
+    const url =
+      !trimmed.includes("://") && scp ? new URL(`ssh://${scp[1]}/${scp[2]}`) : new URL(trimmed);
+    const path = url.pathname.replace(/^\/+|\/+$/g, "").replace(/\.git$/, "");
+    if (!url.hostname || !path || url.search || url.hash) return trimmed;
+    return `${url.hostname.toLowerCase()}${url.port ? `:${url.port}` : ""}/${path}`;
+  } catch {
+    return trimmed;
+  }
+}
+
 /** `owner/repo`, as GitHub shows it. */
 export const githubSlug = (repository: GitHubRepository) =>
   `${repository.owner}/${repository.repo}`;
