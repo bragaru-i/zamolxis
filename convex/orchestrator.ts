@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
-import { type MutationCtx, mutation, query } from "./_generated/server";
+import { type MutationCtx, mutation, type QueryCtx, query } from "./_generated/server";
 import { fail, load, requireNode, requireUser } from "./lib/access";
 import { resolveAgentProfile } from "./lib/agentProfiles";
 import { enqueue } from "./lib/commands";
@@ -8,6 +8,10 @@ import { explicitlyRequestsWork } from "./lib/orchestration";
 import { assertUsage, submitText, usageArgs } from "./supervisor";
 
 const MAX_MESSAGES = 100;
+const MAX_CONVERSATIONS = 100;
+// Chats created before titles were derived from the first message carry this title.
+const DEFAULT_TITLE = "Zamolxis";
+const TITLE_LIMIT = 80;
 const RUN_VERB: Record<string, string> = {
   builder: "Building",
   verifier: "Checking",
@@ -67,17 +71,83 @@ function sessionLink(session: Doc<"workSessions">): LinkDraft {
   };
 }
 
-export const messages = query({
+/** The first line of the first message, compacted; what the chat list shows. */
+export function conversationTitle(text: string): string {
+  const line = text.split(/\r?\n/).find((candidate) => candidate.trim()) ?? "";
+  const compact = line.replace(/\s+/g, " ").trim();
+  if (!compact) return DEFAULT_TITLE;
+  return compact.length > TITLE_LIMIT ? `${compact.slice(0, TITLE_LIMIT - 1).trimEnd()}…` : compact;
+}
+
+async function ownedConversation(
+  ctx: QueryCtx,
+  ownerId: Id<"users">,
+  conversationId: Id<"orchestratorConversations">,
+) {
+  const conversation = await ctx.db.get(conversationId);
+  if (!conversation || conversation.ownerId !== ownerId) fail("FORBIDDEN");
+  return conversation;
+}
+
+// Chats from before titles existed are named after their first message on read.
+async function displayTitle(ctx: QueryCtx, conversation: Doc<"orchestratorConversations">) {
+  if (conversation.title !== DEFAULT_TITLE) return conversation.title;
+  const first = await ctx.db
+    .query("orchestratorMessages")
+    .withIndex("by_conversation_time", (q) => q.eq("conversationId", conversation._id))
+    .order("asc")
+    .first();
+  return first ? conversationTitle(first.text) : conversation.title;
+}
+
+/** The owner's chats, most recent activity first. Deleted (archived) chats are left out. */
+export const conversations = query({
   args: {},
-  returns: v.array(v.any()),
+  returns: v.array(
+    v.object({
+      _id: v.id("orchestratorConversations"),
+      title: v.string(),
+      lastActivityAt: v.number(),
+      createdAt: v.number(),
+    }),
+  ),
   handler: async (ctx) => {
     const owner = await requireUser(ctx);
-    const conversations = await ctx.db
+    const rows = await ctx.db
       .query("orchestratorConversations")
       .withIndex("by_owner_activity", (q) => q.eq("ownerId", owner._id))
       .order("desc")
-      .take(2);
-    const conversation = conversations.find((row) => !row.archivedAt);
+      .take(MAX_CONVERSATIONS);
+    return Promise.all(
+      rows
+        .filter((row) => !row.archivedAt)
+        .map(async (row) => ({
+          _id: row._id,
+          title: await displayTitle(ctx, row),
+          lastActivityAt: row.lastActivityAt,
+          createdAt: row.createdAt,
+        })),
+    );
+  },
+});
+
+/** Messages of one chat; without `conversationId`, the most recently active chat. */
+export const messages = query({
+  args: { conversationId: v.optional(v.id("orchestratorConversations")) },
+  returns: v.array(v.any()),
+  handler: async (ctx, args) => {
+    const owner = await requireUser(ctx);
+    let conversation: Doc<"orchestratorConversations"> | undefined;
+    if (args.conversationId) {
+      conversation = await ownedConversation(ctx, owner._id, args.conversationId);
+    } else {
+      const conversations = await ctx.db
+        .query("orchestratorConversations")
+        .withIndex("by_owner_activity", (q) => q.eq("ownerId", owner._id))
+        .order("desc")
+        .take(2);
+      conversation = conversations.find((row) => !row.archivedAt);
+    }
     if (!conversation) return [];
     const rows = await ctx.db
       .query("orchestratorMessages")
@@ -96,9 +166,44 @@ export const messages = query({
   },
 });
 
+export const renameConversation = mutation({
+  args: { conversationId: v.id("orchestratorConversations"), title: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const owner = await requireUser(ctx);
+    const conversation = await ownedConversation(ctx, owner._id, args.conversationId);
+    const title = args.title.replace(/\s+/g, " ").trim();
+    if (!title || title.length > TITLE_LIMIT) fail("INVALID_ARGUMENT");
+    await ctx.db.patch("orchestratorConversations", conversation._id, {
+      title,
+      updatedAt: Date.now(),
+    });
+    return null;
+  },
+});
+
+/** Deleting a chat hides it and closes it to new messages; its history is kept. */
+export const archiveConversation = mutation({
+  args: { conversationId: v.id("orchestratorConversations") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const owner = await requireUser(ctx);
+    const conversation = await ownedConversation(ctx, owner._id, args.conversationId);
+    if (conversation.archivedAt) return null;
+    const now = Date.now();
+    await ctx.db.patch("orchestratorConversations", conversation._id, {
+      archivedAt: now,
+      updatedAt: now,
+    });
+    return null;
+  },
+});
+
 const submitArgs = {
   text: v.string(),
   idempotencyKey: v.string(),
+  // Absent: the message starts a new chat.
+  conversationId: v.optional(v.id("orchestratorConversations")),
   productId: v.optional(v.id("products")),
   repositoryId: v.optional(v.id("repositories")),
 };
@@ -107,6 +212,7 @@ export const submit = mutation({
   args: submitArgs,
   returns: v.object({
     messageId: v.id("orchestratorMessages"),
+    conversationId: v.id("orchestratorConversations"),
     route,
     workSessionId: v.optional(v.id("workSessions")),
   }),
@@ -126,11 +232,13 @@ export const submit = mutation({
       if (
         previous.text !== text ||
         previous.productId !== args.productId ||
-        previous.repositoryId !== args.repositoryId
+        previous.repositoryId !== args.repositoryId ||
+        (args.conversationId !== undefined && previous.conversationId !== args.conversationId)
       )
         fail("COMMAND_CONFLICT");
       return {
         messageId: previous._id,
+        conversationId: previous.conversationId,
         route: previous.route,
         ...(previous.workSessionId ? { workSessionId: previous.workSessionId } : {}),
       };
@@ -149,7 +257,9 @@ export const submit = mutation({
       fail("PRODUCT_MISMATCH");
 
     const now = Date.now();
-    const conversation = await activeConversation(ctx, owner._id, now);
+    const conversation = args.conversationId
+      ? await openConversation(ctx, owner._id, args.conversationId)
+      : await createConversation(ctx, owner._id, text, now);
     const proposesWork = explicitlyRequestsWork(text);
     const route: "answer" | "propose" = proposesWork ? "propose" : "answer";
     let reply: string;
@@ -224,21 +334,30 @@ export const submit = mutation({
       lastActivityAt: now,
       updatedAt: now,
     });
-    return { messageId, route };
+    return { messageId, conversationId: conversation._id, route };
   },
 });
 
-async function activeConversation(ctx: MutationCtx, ownerId: Id<"users">, now: number) {
-  const rows = await ctx.db
-    .query("orchestratorConversations")
-    .withIndex("by_owner_activity", (q) => q.eq("ownerId", ownerId))
-    .order("desc")
-    .take(2);
-  const current = rows.find((row) => !row.archivedAt);
-  if (current) return current;
+// A deleted chat does not take new messages.
+async function openConversation(
+  ctx: MutationCtx,
+  ownerId: Id<"users">,
+  conversationId: Id<"orchestratorConversations">,
+) {
+  const conversation = await ownedConversation(ctx, ownerId, conversationId);
+  if (conversation.archivedAt) fail("INVALID_STATE");
+  return conversation;
+}
+
+async function createConversation(
+  ctx: MutationCtx,
+  ownerId: Id<"users">,
+  text: string,
+  now: number,
+) {
   const id = await ctx.db.insert("orchestratorConversations", {
     ownerId,
-    title: "Zamolxis",
+    title: conversationTitle(text),
     lastActivityAt: now,
     createdAt: now,
     updatedAt: now,

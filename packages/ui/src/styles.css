@@ -234,6 +234,43 @@ code,
 .z-home-session:hover {
   background: var(--z-surface-muted);
 }
+.z-home-session--active,
+.z-home-session--active:hover {
+  background: var(--z-secondary);
+  color: var(--z-secondary-fg);
+}
+.z-home-session__title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.z-home-group {
+  margin: var(--z-space-2) 0 0;
+  padding: 0 var(--z-space-3);
+  font-size: var(--z-text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--z-muted);
+}
+.z-home-group:first-child {
+  margin-top: 0;
+}
+.z-home-chat {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.z-home-chat > .z-home-session {
+  flex: 1;
+  min-width: 0;
+}
+.z-button.z-home-chat__menu {
+  flex: none;
+  padding-inline: var(--z-space-2);
+}
 .z-home-main {
   min-width: 0;
   display: flex;

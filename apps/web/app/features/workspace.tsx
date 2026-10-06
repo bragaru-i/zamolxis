@@ -53,6 +53,8 @@ export function Workspace() {
   const [ready, setReady] = useState(false);
   const [problem, setProblem] = useState("");
   const [sessionId, setSessionId] = useSearchParam("session");
+  // The open chat on Home; empty means a new, empty chat.
+  const [chatId, setChatId] = useSearchParam("chat");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const now = useNow();
   useEffect(() => {
@@ -111,6 +113,8 @@ export function Workspace() {
           ready={ready}
           indicator={indicator}
           notices={notices}
+          chatId={chatId}
+          onOpenChat={setChatId}
           onOpen={(id, runId) => {
             setSessionId(id);
             // Read by the Session view when it mounts after this render.

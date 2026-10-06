@@ -544,11 +544,63 @@ function build(name: string) {
   };
 
   const link = (row: Row): Row => ({ _id: `l${Math.random().toString(36).slice(2, 8)}`, ...row });
+  // Chats on Home, newest activity first. Messages name their chat.
+  const conversations: Row[] = empty
+    ? []
+    : [
+        {
+          _id: "c1",
+          title: "Can you check, do we finished alpha?",
+          lastActivityAt: now - 20 * MINUTE,
+          createdAt: now - 50 * MINUTE,
+        },
+        {
+          _id: "c2",
+          title: "How does the verifier work?",
+          lastActivityAt: now - 26 * HOUR,
+          createdAt: now - 26 * HOUR,
+        },
+        {
+          _id: "c3",
+          title: "Why did the checkout fix need a repair?",
+          lastActivityAt: now - 4 * 24 * HOUR,
+          createdAt: now - 4 * 24 * HOUR,
+        },
+      ];
   const orchestrator: Row[] = empty
     ? []
     : [
         {
+          _id: "o3",
+          conversationId: "c2",
+          text: "How does the verifier work?",
+          reply:
+            "After a Builder finishes, a separate Verifier gets its own copy of the exact change and runs the checks (tests, lint, build). Only a change that passes those checks is trusted and goes on to integration. The Verifier never sees the Builder's reasoning, only the acceptance criteria and the code.",
+          route: "answer",
+          status: "answered",
+          answeredBy: "model",
+          modelActual: "gpt-6.1-sol",
+          totalTokens: 1_800,
+          createdAt: now - 26 * HOUR,
+          links: [],
+        },
+        {
+          _id: "o4",
+          conversationId: "c3",
+          text: "Why did the checkout fix need a repair?",
+          reply:
+            "The first Builder change failed the Verifier: two invoice tests expected rounded VAT. A Repair run fixed the rounding and the second check passed.",
+          route: "answer",
+          status: "answered",
+          answeredBy: "model",
+          modelActual: "gpt-6.1-sol",
+          totalTokens: 2_100,
+          createdAt: now - 4 * 24 * HOUR,
+          links: [],
+        },
+        {
           _id: "o1",
+          conversationId: "c1",
           text: "Can you check, do we finished alpha?",
           reply:
             'I can\'t confirm that alpha is finished from the current state. Both "Current project status?" and "So what shall be done to finish the alpha?" are waiting for your input, and neither has recorded tasks or completion evidence.\n\nOpen those Work Sessions to resolve the outstanding questions and verify alpha completion.',
@@ -600,6 +652,7 @@ function build(name: string) {
         },
         {
           _id: "o2",
+          conversationId: "c1",
           text: "Reorganize Home Screen:\n- sessions can be hidden and filtered\n- I must see a chat gpt like interface\nThink about it, then describe the screen.",
           reply:
             "I'd make Home a **conversation** first. Sessions live in a sidebar.\n\n- **Main area:** the conversation with a clear composer.\n- **Sidebar:** Work Sessions with search and filters.\n- **Hide sessions:** remove them from the usual list without closing them.\n\nKeep chatting and starting work separate: discussing an idea produces a proposal; work begins only when you explicitly open a Work Session.",
@@ -865,8 +918,14 @@ function build(name: string) {
           return approvals;
         case "approvals:listPendingBySession":
           return approvals.filter((row) => row.workSessionId === args.workSessionId);
-        case "orchestrator:messages":
-          return orchestrator;
+        case "orchestrator:conversations":
+          return [...conversations].sort(
+            (a, b) => (b.lastActivityAt as number) - (a.lastActivityAt as number),
+          );
+        case "orchestrator:messages": {
+          const conversationId = args.conversationId ?? conversations[0]?._id;
+          return orchestrator.filter((row) => row.conversationId === conversationId);
+        }
         case "supervisor:products":
           return products;
         case "repositories:listByProduct":
@@ -1000,8 +1059,22 @@ function build(name: string) {
       switch (name) {
         case "orchestrator:submit": {
           const id = `o${Date.now()}`;
+          let conversationId = args.conversationId as string | undefined;
+          if (conversationId) {
+            const chat = conversations.find((row) => row._id === conversationId);
+            if (chat) chat.lastActivityAt = Date.now();
+          } else {
+            conversationId = `c${Date.now()}`;
+            conversations.push({
+              _id: conversationId,
+              title: String(args.text).split("\n")[0]?.trim().slice(0, 80) || "Zamolxis",
+              lastActivityAt: Date.now(),
+              createdAt: Date.now(),
+            });
+          }
           orchestrator.push({
             _id: id,
+            conversationId,
             text: args.text,
             reply: "Looking at your sessions…",
             route: "answer",
@@ -1031,7 +1104,17 @@ function build(name: string) {
               });
             bump();
           }, 1500);
-          return id;
+          return { messageId: id, conversationId, route: "answer" };
+        }
+        case "orchestrator:renameConversation": {
+          const chat = conversations.find((row) => row._id === args.conversationId);
+          if (chat) chat.title = args.title;
+          return null;
+        }
+        case "orchestrator:archiveConversation": {
+          const index = conversations.findIndex((row) => row._id === args.conversationId);
+          if (index >= 0) conversations.splice(index, 1);
+          return null;
         }
         case "supervisor:submit": {
           const sessionId = (args.sessionId as string) ?? "s1";

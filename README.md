@@ -279,8 +279,9 @@ manifest supports standalone use; authenticated offline operation is not provide
 ## Web app
 
 The web app is phone-first and follows `docs/ui-ux-design-system.md`; shared tokens and
-components live in `packages/ui`. It opens with a durable top-level Orchestrator conversation
-outside Work Sessions. Status questions summarize existing control-plane state and return typed
+components live in `packages/ui`. It opens with a new, empty top-level Orchestrator chat
+outside Work Sessions; earlier chats and Work Sessions are listed in the sidebar grouped by day,
+and a chat can be reopened, renamed or deleted. Status questions summarize existing control-plane state and return typed
 links without creating work: Sessions, pending approvals, pull requests, Tasks that need you
 (with their trust decision) and active Runs. A Run link opens Run detail directly (`?run=<id>`). Explicit execution language creates a Session; explicit
 continuation follows a recent linked Session when its Product and repository match. Each routing
