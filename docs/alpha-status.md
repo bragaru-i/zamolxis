@@ -120,7 +120,9 @@ shipped or a tested implementation as proven in production.
   still never reported by Codex or Claude (see Usage).
 - **Owner-friendly UI:** choices use a styled `Picker` (a popover list on wide screens, a bottom
   drawer on phones) and dialogs are centered on wide screens and drawers with a grab handle on
-  phones; message link chips wrap, so a long Session title can no longer widen the page on iOS
+  phones; a drawer inside a drawer (a Picker in Settings → Agents on a phone) no longer closes
+  the outer sheet when an option is chosen or Escape is pressed, which lost the unsaved agent
+  editor (fixed 2026-10-06); message link chips wrap, so a long Session title can no longer widen the page on iOS
   (fixed 2026-10-06); an idle Session reads **Idle** (not a yellow "Waiting") and has **Close session**
   (`sessions.close`: only when nothing runs; unfinished Tasks are cancelled; a follow-up reopens
   it); statuses, link labels, the deterministic summary and failure messages use plain language;

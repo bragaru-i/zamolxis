@@ -441,17 +441,28 @@ export function Sheet({
     if (open && !element.open) element.showModal();
     if (!open && element.open) element.close();
   }, [open]);
+  // A sheet can hold another sheet (a Picker's drawer inside Settings on a phone). React
+  // re-dispatches a nested dialog's `close` and its Escape keydown to every ancestor
+  // `onClose`/`onKeyDown`, so each sheet reacts only to events of its own dialog: the
+  // closest dialog around the event target must be this one. The browser's own Escape
+  // handling (`cancel`) may target the outer dialog while an inner one is open, so it is
+  // declined and Escape is handled through the keydown below instead.
+  const own = (event: { target: EventTarget | null; currentTarget: HTMLDialogElement }) =>
+    event.target instanceof Element && event.target.closest("dialog") === event.currentTarget;
   return (
     <dialog
       ref={dialog}
       className={`z-sheet z-sheet--${size}`}
       aria-labelledby={titleId}
-      onClose={onClose}
+      onCancel={(event) => event.preventDefault()}
+      onClose={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
       onClick={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
       onKeyDown={(event) => {
-        if (event.key === "Escape") onClose();
+        if (event.key === "Escape" && own(event)) onClose();
       }}
     >
       <div className="z-sheet__head">
