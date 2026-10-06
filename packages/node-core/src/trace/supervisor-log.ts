@@ -32,7 +32,7 @@ type LogStepInput = Omit<TraceStepInput, "kind"> & { readonly kind: SupervisorLo
 
 const RUNTIME_LABEL: Record<string, string> = {
   codex: "Codex",
-  claude: "Claude Code",
+  claude: "Claude",
   hermes: "Hermes",
   fake: "Test runtime",
 };
