@@ -143,6 +143,24 @@ export function parseExecutionCommand(value: unknown): ExecutionCommand {
       },
     };
   }
+  if (command.type === "orchestrator.answer") {
+    const orchestratorMessageId = field(payload, "orchestratorMessageId");
+    if (command.targetType !== "orchestratorMessage" || command.targetId !== orchestratorMessageId)
+      throw new Error("INVALID_COMMAND_TARGET");
+    return {
+      ...common,
+      type: "orchestrator.answer",
+      payload: {
+        orchestratorMessageId,
+        text: field(payload, "text", 16000),
+        context: field(payload, "context", 16000),
+        conversation: parseConversation(payload.conversation),
+        ...(payload.orchestrator !== undefined
+          ? { orchestrator: parseSupervisorSelection(payload.orchestrator) }
+          : {}),
+      },
+    };
+  }
   if (command.type === "integration.prepare") {
     const taskId = field(payload, "taskId");
     if (command.targetType !== "task" || command.targetId !== taskId)
@@ -326,6 +344,18 @@ export class ConvexControlPlaneTransport implements ControlPlaneTransport {
           workstationId: this.workstationId,
           ...args,
           tasks: delivery.tasks.map((task) => ({ ...task })),
+          ...(usage && Object.keys(usage).length ? { usage: { ...usage } } : {}),
+        },
+      );
+    } else if (delivery.kind === "orchestrator.answer") {
+      const { kind: _, usage, ...args } = delivery;
+      await this.client.mutation(
+        makeFunctionReference<"mutation", Record<string, Value>, unknown>(
+          "orchestrator:settleAnswer",
+        ),
+        {
+          workstationId: this.workstationId,
+          ...args,
           ...(usage && Object.keys(usage).length ? { usage: { ...usage } } : {}),
         },
       );
