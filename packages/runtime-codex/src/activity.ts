@@ -2,11 +2,12 @@
 // bounded activity for normalized events. Output, arguments, results and agent text are
 // never copied; only the command line, tool identity or a fixed label.
 import { isAbsolute, relative, resolve } from "node:path";
-import { RUN_MESSAGE_LIMIT, TOOL_READ_PATH_LIMIT, TOOL_READS_LIMIT } from "@zamolxis/contracts";
-import { boundText, redactSecrets, SUMMARY_LIMIT, safeSummary } from "@zamolxis/runtime-core";
+import { TOOL_READ_PATH_LIMIT, TOOL_READS_LIMIT } from "@zamolxis/contracts";
+import { boundText, SUMMARY_LIMIT, safeSummary } from "@zamolxis/runtime-core";
 
-/** Backend limit is 16 KiB of JSON per event payload; keep a margin. */
-export const PAYLOAD_LIMIT = 15 * 1024;
+// Shared with other adapters; re-exported for existing importers.
+export { agentNote, fitPayload, PAYLOAD_LIMIT, redactedText } from "@zamolxis/runtime-core";
+
 // Room left for a failure suffix (" · exit code 127", " · failed: <reason>").
 const SUBJECT_LIMIT = 400;
 const REASON_LIMIT = 80;
@@ -145,39 +146,6 @@ export function describeItem(
 }
 
 /**
- * Keeps a payload under PAYLOAD_LIMIT bytes of JSON: drops trailing list entries first,
- * then shortens text fields. Small payloads are returned unchanged.
- */
-export function fitPayload(
-  payload: Record<string, unknown>,
-  limit = PAYLOAD_LIMIT,
-): Record<string, unknown> {
-  const size = (value: Record<string, unknown>) => Buffer.byteLength(JSON.stringify(value));
-  if (size(payload) <= limit) return payload;
-  const copy: Record<string, unknown> = { ...payload };
-  for (const [key, value] of Object.entries(copy)) {
-    if (!Array.isArray(value)) continue;
-    const list = [...value];
-    copy[key] = list;
-    while (list.length > 1 && size(copy) > limit) list.pop();
-  }
-  for (const [key, value] of Object.entries(copy)) {
-    if (typeof value !== "string") continue;
-    let text = value;
-    while (text.length > 1 && size(copy) > limit) {
-      text = boundText(text, Math.floor(text.length * 0.8));
-      copy[key] = text;
-    }
-  }
-  return copy;
-}
-
-/** Redacted (not flattened) free text, such as the agent's final reply. */
-export function redactedText(text: string, limit: number): string {
-  return boundText(redactSecrets(text), limit);
-}
-
-/**
  * Files a command reads, from Codex's best-effort parse of the command line
  * (`commandActions` entries of type "read"). Workspace paths are shown relative to it;
  * every path is redacted and bounded. Undefined when the command reads nothing known.
@@ -197,9 +165,4 @@ export function readPaths(item: Record<string, unknown>, cwd: string): string[] 
     if (paths.size >= TOOL_READS_LIMIT) break;
   }
   return paths.size ? [...paths] : undefined;
-}
-
-/** An intermediate agent message: redacted, line breaks kept, bounded to RUN_MESSAGE_LIMIT. */
-export function agentNote(text: string): string {
-  return redactedText(text, RUN_MESSAGE_LIMIT);
 }
