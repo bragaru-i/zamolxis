@@ -14,6 +14,7 @@
 //   --strict-mcp-config): they are not execution grants. The login itself is unaffected.
 // - Pro/Max plan limits assume ordinary individual use; heavy parallel or always-on use
 //   can hit them.
+
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -30,7 +31,6 @@ import {
   approvalIdFor,
   boundText,
   fitPayload,
-  knownCommit,
   RESTART_CONTINUATION,
   RESTART_INTERRUPTED_CODE,
   type ResumeRunInput,
@@ -41,6 +41,7 @@ import {
   safeSummary,
   type UsageCounter,
 } from "@zamolxis/runtime-core";
+import { knownCommit } from "@zamolxis/runtime-core/known-commits";
 import { changedPath, completedSummary, describePermission, describeTool } from "./activity";
 import { ClaudeCliProcess, type ClaudeLaunch, type ClaudeProcess } from "./cli-process";
 import {
