@@ -28,10 +28,12 @@ export class RepositoryRegistry {
     )
       throw new Error("REPOSITORY_IDENTITY_MISMATCH");
     const existing = this.store.getRepositoryLocation(input.repositoryLocationId);
+    // The same checkout under another repository id is not a conflict: the backend merged
+    // two entries for one remote (#115) and setup rewrote the id in the config. A different
+    // computer, Git directory or remote for this location id is.
     if (
       existing &&
-      (existing.repositoryId !== input.repositoryId ||
-        existing.workstationId !== input.workstationId ||
+      (existing.workstationId !== input.workstationId ||
         existing.gitCommonDir !== snapshot.gitCommonDir ||
         existing.remoteIdentity !== snapshot.remoteIdentity)
     ) {

@@ -378,9 +378,12 @@ export class LocalStateStore {
 
   saveRepositoryLocation(location: RepositoryLocation): void {
     this.#db
+      // The repository id may change for a location (the backend merged two entries for
+      // one remote); the computer never does.
       .prepare(`INSERT INTO repository_locations VALUES (?, ?, ?, ?)
-      ON CONFLICT(location_id) DO UPDATE SET metadata_json = excluded.metadata_json
-      WHERE repository_id = excluded.repository_id AND workstation_id = excluded.workstation_id`)
+      ON CONFLICT(location_id) DO UPDATE
+      SET repository_id = excluded.repository_id, metadata_json = excluded.metadata_json
+      WHERE workstation_id = excluded.workstation_id`)
       .run(
         location.repositoryLocationId,
         location.repositoryId,
