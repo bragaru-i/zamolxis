@@ -353,3 +353,91 @@ export function failureText(message: string): string {
 export function modalityLabel(modality: string): string {
   return MODALITY_LABEL[modality] ?? modality;
 }
+
+/** A stored trace step (TraceStepDto plus its Convex identity and order). */
+export interface TraceStepRecord {
+  _id: string;
+  sequence: number;
+  stepId: string;
+  kind: string;
+  label: string;
+  status: string;
+  startedAt: number;
+  finishedAt?: number;
+  detail?: string;
+  references?: { runId?: string; sha?: string; script?: string; exitCode?: number };
+}
+
+export type TraceTone = "info" | "success" | "danger" | "neutral";
+
+export interface TraceRow {
+  key: string;
+  title: string;
+  /** Kind of step, such as "Check" or "Runtime". */
+  kind: string;
+  status: string;
+  tone: TraceTone;
+  at: number;
+  duration?: string;
+  /** Short facts: exit code, snapshot. */
+  facts: string[];
+  detail?: string;
+  /** The detail is command output (rendered monospace). */
+  mono: boolean;
+}
+
+const TRACE_KIND_LABEL: Record<string, string> = {
+  discovery: "Discovery",
+  supervisor: "Supervisor",
+  workspace: "Workspace",
+  runtime: "Runtime",
+  "verification-check": "Check",
+  trust: "Trust",
+  integration: "Integration",
+};
+const TRACE_STATUS: Record<string, { label: string; tone: TraceTone }> = {
+  started: { label: "Running", tone: "info" },
+  passed: { label: "Passed", tone: "success" },
+  failed: { label: "Failed", tone: "danger" },
+  skipped: { label: "Skipped", tone: "neutral" },
+};
+
+/** Sub-second durations in milliseconds, longer ones like durationLabel. */
+export function stepDuration(milliseconds: number): string {
+  const value = Math.max(0, Math.round(milliseconds));
+  return value < 1000 ? `${value} ms` : durationLabel(value);
+}
+
+/**
+ * Trace steps in recorded order with display status, duration and facts. A step still
+ * "started" shows how long it has run so far while the Run is active, otherwise no duration.
+ */
+export function traceRows(
+  steps: readonly TraceStepRecord[],
+  now: number,
+  active: boolean,
+): TraceRow[] {
+  return [...steps]
+    .sort((a, b) => a.sequence - b.sequence)
+    .map((step) => {
+      const status = TRACE_STATUS[step.status] ?? { label: step.status, tone: "neutral" as const };
+      const end = step.finishedAt ?? (active && step.status === "started" ? now : undefined);
+      const references = step.references ?? {};
+      const facts: string[] = [];
+      if (references.exitCode !== undefined) facts.push(`exit code ${references.exitCode}`);
+      if (references.sha) facts.push(`at ${shortSha(references.sha)}`);
+      const detail = text(step.detail) || undefined;
+      return {
+        key: step._id,
+        title: text(step.label) || TRACE_KIND_LABEL[step.kind] || step.kind,
+        kind: TRACE_KIND_LABEL[step.kind] ?? step.kind,
+        status: status.label,
+        tone: status.tone,
+        at: step.startedAt,
+        ...(end !== undefined ? { duration: stepDuration(end - step.startedAt) } : {}),
+        facts,
+        ...(detail ? { detail } : {}),
+        mono: step.kind === "verification-check",
+      };
+    });
+}
