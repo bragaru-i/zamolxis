@@ -55,6 +55,7 @@ const modules = {
   "./runs.ts": () => import("../convex/runs"),
   "./events.ts": () => import("../convex/events"),
   "./node.ts": () => import("../convex/node"),
+  "./traces.ts": () => import("../convex/traces"),
 };
 const cleanup: Array<() => void> = [];
 afterEach(() => {
@@ -826,6 +827,36 @@ it("runs text intent through discovery, native Builder, independent Verifier, de
   expect((await f.user.query(api.trust.listByRun, { runId: candidate._id }))[0]!.eligible).toBe(
     true,
   );
+  // The Node recorded both execution traces through the outbox.
+  const trace = async (runId: Id<"agentRuns">) =>
+    (
+      await f.user.query(api.traces.listByRun, {
+        runId,
+        paginationOpts: { numItems: 100, cursor: null },
+      })
+    ).page as {
+      kind: string;
+      status: string;
+      label: string;
+      references?: Record<string, unknown>;
+    }[];
+  const built = await trace(candidate._id);
+  expect(built.map((step) => [step.kind, step.status])).toEqual([
+    ["discovery", "passed"],
+    ["workspace", "passed"],
+    ["runtime", "passed"],
+    ["workspace", "passed"],
+  ]);
+  expect(built[3]?.references?.sha).toBe(candidate.finalHeadSha);
+  const checked = await trace(verifier._id);
+  expect(checked.filter((step) => step.kind === "verification-check")).toEqual([
+    expect.objectContaining({ status: "passed", label: "git diff --check HEAD^ HEAD" }),
+    expect.objectContaining({
+      status: "passed",
+      label: "npm run test",
+      references: { script: "test", exitCode: 0, sha: candidate.finalHeadSha },
+    }),
+  ]);
   const spaces = await f.user.query(api.workspaces.listBySession, { workSessionId: sessionId });
   expect(
     spaces.some(

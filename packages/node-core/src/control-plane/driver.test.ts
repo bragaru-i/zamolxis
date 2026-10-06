@@ -1,6 +1,6 @@
 import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { NormalizedRunEventDto } from "@zamolxis/contracts";
+import { type NormalizedRunEventDto, traceStepProblem } from "@zamolxis/contracts";
 import { git } from "@zamolxis/git";
 import {
   FakeRuntime,
@@ -802,5 +802,114 @@ describe("Supervisor progress and stop", { timeout: 30_000 }, () => {
     await f.driver.tick();
     expect(f.deliveries).toEqual([{ kind: "command.complete", commandId: stop.commandId }]);
     expect(f.store.listInterruptedCommands()).toEqual([]);
+  });
+});
+
+describe("execution trace", { timeout: 30_000 }, () => {
+  const start = (
+    id: string,
+    workspaceId: string,
+    role: "builder" | "verifier",
+    verificationScripts?: string[],
+  ): ExecutionCommand => ({
+    commandId: id,
+    idempotencyKey: `start:${id}`,
+    workstationId: "node",
+    type: "runtime.start",
+    payload: {
+      runId: `run-${id}`,
+      workspaceId,
+      runtime: "fake",
+      role,
+      instruction: "Work",
+      ...(verificationScripts
+        ? { verificationScripts, requiredModalities: ["static", "test"] }
+        : {}),
+    },
+  });
+  const traced = (deliveries: readonly Delivery[], runId: string) =>
+    deliveries.flatMap((delivery) =>
+      delivery.kind === "run.trace" && delivery.runId === runId ? delivery.steps : [],
+    );
+
+  it("records a builder and an independent verifier run as ordered, bounded steps", async () => {
+    const f = fixture(() => answer("done"));
+    const build = f.workspaces.inspect("build");
+    writeFileSync(join(build.path, "feature.txt"), "feature\n");
+    await f.driver.execute(start("b", "build", "builder"));
+    const candidate = f.workspaces.inspect("build").headSha;
+    expect(candidate).not.toBe(build.baseSha);
+    const builder = traced(f.deliveries, "run-b");
+    expect(builder.map((step) => [step.stepId, step.kind, step.status])).toEqual([
+      ["b:discovery", "discovery", "passed"],
+      ["b:workspace", "workspace", "passed"],
+      ["run:run-b:runtime", "runtime", "started"],
+      ["run:run-b:runtime", "runtime", "passed"],
+      ["b:candidate", "workspace", "passed"],
+    ]);
+    expect(builder[0]).toMatchObject({
+      label: "Repository discovered",
+      references: { sha: build.baseSha },
+    });
+    expect(builder[0]?.detail).toMatch(/^\d+ sources?, \d+ capabilit/);
+    expect(builder[4]).toMatchObject({
+      label: "Candidate committed",
+      references: { sha: candidate },
+    });
+    // The runtime step keeps its start time when it is settled.
+    expect(builder[3]?.startedAt).toBe(builder[2]?.startedAt);
+    expect(builder[3]?.finishedAt).toBeGreaterThanOrEqual(builder[3]?.startedAt ?? 0);
+
+    // The verifier checks another workspace's committed snapshot with repository scripts.
+    const plan = f.workspaces.inspect("plan").path;
+    writeFileSync(
+      join(plan, "package.json"),
+      JSON.stringify({
+        scripts: {
+          "check:ok": "node -e \"console.log('all good')\"",
+          "check:fail":
+            "node -e \"console.log('x'.repeat(3000));console.error('API_TOKEN=supersecretvalue123');process.exit(3)\"",
+        },
+      }),
+    );
+    git(plan, ["add", "."]);
+    git(plan, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "checks"]);
+    const subject = git(plan, ["rev-parse", "HEAD"]);
+    f.deliveries.length = 0;
+    await f.driver.execute(start("v", "plan", "verifier", ["check:ok", "check:fail", "nope"]));
+    const verifier = traced(f.deliveries, "run-v");
+    expect(verifier.map((step) => [step.kind, step.status])).toEqual([
+      ["discovery", "passed"],
+      ["workspace", "passed"],
+      ["runtime", "started"],
+      ["runtime", "passed"],
+      ["verification-check", "passed"],
+      ["verification-check", "passed"],
+      ["verification-check", "failed"],
+      ["verification-check", "failed"],
+    ]);
+    const checks = verifier.filter((step) => step.kind === "verification-check");
+    expect(checks.map((step) => step.label)).toEqual([
+      "git diff --check HEAD^ HEAD",
+      "npm run check:ok",
+      "npm run check:fail",
+      "npm run nope",
+    ]);
+    expect(checks[1]).toMatchObject({
+      stepId: "v:check:001",
+      references: { script: "check:ok", exitCode: 0, sha: subject },
+      detail: expect.stringContaining("all good"),
+    });
+    expect(checks[2]?.references).toEqual({ script: "check:fail", exitCode: 3, sha: subject });
+    expect(checks[2]?.detail?.length).toBeLessThanOrEqual(1000);
+    expect(checks[2]?.detail).toContain("API_TOKEN=***");
+    expect(checks[2]?.detail).not.toContain("supersecretvalue123");
+    expect(checks[3]).toMatchObject({
+      references: { script: "nope", sha: subject },
+      detail: "Not run: the script is not defined in package.json.",
+    });
+    for (const step of [...builder, ...verifier]) expect(traceStepProblem(step)).toBeUndefined();
+    // Everything left the durable outbox.
+    expect(f.store.listPendingEvents()).toEqual([]);
   });
 });

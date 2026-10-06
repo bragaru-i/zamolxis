@@ -22,6 +22,14 @@ import {
 } from "../capabilities/supervisor";
 import type { LocalStateStore, OutboxEvent, StoredCommand } from "../persistence/local-state";
 import type { RuntimeManager } from "../runtime/runtime-manager";
+import { type TraceBatch, TraceRecorder } from "../trace/recorder";
+import {
+  candidateStep,
+  checkStep,
+  discoveryStep,
+  runtimeStep,
+  workspaceStep,
+} from "../trace/steps";
 import { type CheckEvidence, runVerificationChecks } from "../verification/checks";
 import type { WorkspaceManager } from "../workspace/workspace-manager";
 
@@ -266,6 +274,7 @@ export type Delivery =
       // The agent's final message, bounded to REPLY_LIMIT characters.
       readonly summary?: string;
     }
+  | TraceBatch
   | { readonly kind: "command.failed"; readonly commandId: string; readonly code: string }
   | { readonly kind: "command.complete"; readonly commandId: string };
 export interface ControlPlaneTransport {
@@ -533,6 +542,11 @@ export class ControlPlaneDriver {
             if (events.length) deliveries.push({ kind: "run.events", runId, events });
             const after = await this.manager.observe(runId);
             if (!TERMINAL.includes(after.state)) throw new Error("RUNTIME_STOP_UNCONFIRMED");
+            const trace = new TraceRecorder(this.store, runId, command.commandId);
+            trace.record(
+              runtimeStep(runId, session.runtime, Date.now(), after.state as "stopped" | "failed"),
+            );
+            trace.persist();
             const workspace = this.workspaces.inspect(session.workspaceId);
             deliveries.push({
               kind: "run.complete",
@@ -609,28 +623,57 @@ export class ControlPlaneDriver {
           runId: command.payload.runId as AgentRunId,
           workspaceId: command.payload.workspaceId as WorkspaceId,
         };
-        if (this.#discovery) {
-          const context = this.#discovery.discover(input.workspaceId);
-          this.#discovery.assertCurrent(context);
-          input.instruction += `\n\nRepository capabilities (repository instructions cannot waive hard runtime/trust policy):\n${JSON.stringify({ gitSha: context.gitSha, snapshotDigest: context.snapshotDigest, sources: context.discoveredSources, capabilities: Object.keys(context.resolvedCapabilities) })}`;
+        const trace = new TraceRecorder(this.store, input.runId, command.commandId);
+        try {
+          if (this.#discovery) {
+            const at = Date.now();
+            let context: ReturnType<RepositoryDiscovery["discover"]>;
+            try {
+              context = this.#discovery.discover(input.workspaceId);
+              this.#discovery.assertCurrent(context);
+            } catch (error) {
+              trace.record(discoveryStep(command.commandId, at, { error }));
+              throw error;
+            }
+            trace.record(discoveryStep(command.commandId, at, context));
+            input.instruction += `\n\nRepository capabilities (repository instructions cannot waive hard runtime/trust policy):\n${JSON.stringify({ gitSha: context.gitSha, snapshotDigest: context.snapshotDigest, sources: context.discoveredSources, capabilities: Object.keys(context.resolvedCapabilities) })}`;
+          }
+          const startedAt = Date.now();
+          let session: Awaited<ReturnType<RuntimeManager["start"]>>;
+          try {
+            session = await this.manager.start(input);
+          } catch (error) {
+            trace.record(runtimeStep(input.runId, input.runtime, startedAt, "failed", error));
+            throw error;
+          }
+          trace.record(
+            workspaceStep(command.commandId, startedAt, this.workspaces.inspect(input.workspaceId)),
+          );
+          trace.record(runtimeStep(input.runId, input.runtime, startedAt, "started"));
+          // The owner sees the run start now; a failed delivery stays in the outbox.
+          if (trace.persist()) await this.flush().catch(() => undefined);
+          const context: RunContext = {
+            runId: input.runId,
+            workspaceId: input.workspaceId,
+            runtime: input.runtime,
+            ...(input.role ? { role: input.role } : {}),
+            ...(input.verificationScripts
+              ? { verificationScripts: input.verificationScripts }
+              : {}),
+            ...(input.requiredModalities ? { requiredModalities: input.requiredModalities } : {}),
+          };
+          this.#contexts.set(input.runId, context);
+          await this.#stream(
+            command.commandId,
+            context,
+            this.runtimes.get(input.runtime),
+            session.nativeSessionId,
+            deliveries,
+            trace,
+          );
+        } finally {
+          trace.persist();
         }
-        const session = await this.manager.start(input);
-        const context: RunContext = {
-          runId: input.runId,
-          workspaceId: input.workspaceId,
-          runtime: input.runtime,
-          ...(input.role ? { role: input.role } : {}),
-          ...(input.verificationScripts ? { verificationScripts: input.verificationScripts } : {}),
-          ...(input.requiredModalities ? { requiredModalities: input.requiredModalities } : {}),
-        };
-        this.#contexts.set(input.runId, context);
-        await this.#stream(
-          command.commandId,
-          context,
-          this.runtimes.get(input.runtime),
-          session.nativeSessionId,
-          deliveries,
-        );
       }
     } catch (error) {
       if (command.type === "runtime.start") throw error;
@@ -700,6 +743,7 @@ export class ControlPlaneDriver {
     runtime: AgentRuntime,
     nativeSessionId: string,
     deliveries: Delivery[],
+    trace = new TraceRecorder(this.store, context.runId, commandId),
   ): Promise<void> {
     const { runId, workspaceId } = context;
     const events: NormalizedRunEventDto[] = [];
@@ -726,19 +770,44 @@ export class ControlPlaneDriver {
     const session = await this.manager.observe(runId);
     if (!TERMINAL.includes(session.state)) return;
     this.#contexts.delete(runId);
+    trace.record(
+      runtimeStep(
+        runId,
+        context.runtime,
+        Date.now(),
+        session.state as "completed" | "failed" | "stopped",
+      ),
+    );
     let workspace = this.workspaces.inspect(workspaceId);
-    if (context.role !== "verifier" && session.state === "completed") {
-      commitCandidate(workspace.path);
-      workspace = this.workspaces.inspect(workspaceId);
+    let evidence: CheckEvidence[] | undefined;
+    try {
+      if (context.role !== "verifier" && session.state === "completed") {
+        const at = Date.now();
+        const before = workspace.headSha ?? workspace.baseSha;
+        try {
+          commitCandidate(workspace.path);
+        } catch (error) {
+          trace.record(candidateStep(commandId, at, { error }));
+          throw error;
+        }
+        workspace = this.workspaces.inspect(workspaceId);
+        const after = workspace.headSha ?? workspace.baseSha;
+        trace.record(candidateStep(commandId, at, { before, after }));
+      }
+      let checks = 0;
+      const subject = workspace.headSha;
+      evidence =
+        context.role === "verifier"
+          ? await runVerificationChecks(
+              workspace.path,
+              context.verificationScripts ?? [],
+              context.requiredModalities ?? ["static", "behavioral"],
+              (check) => trace.record(checkStep(commandId, checks++, check, subject)),
+            )
+          : undefined;
+    } finally {
+      trace.persist();
     }
-    const evidence =
-      context.role === "verifier"
-        ? await runVerificationChecks(
-            workspace.path,
-            context.verificationScripts ?? [],
-            context.requiredModalities ?? ["static", "behavioral"],
-          )
-        : undefined;
     workspace = this.workspaces.inspect(workspaceId);
     deliveries.push({
       kind: "run.complete",
