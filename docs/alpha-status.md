@@ -129,10 +129,22 @@ shipped or a tested implementation as proven in production.
 - **Access administration (#67):** Settings → People (admins approve, block,
   restore, promote; blocking revokes all sign-ins) and Settings → Signed-in devices.
   First admin via the internal `admin:bootstrapAdmin` (done on prod for the owner).
-- **Agents and usage (#68):** Settings → Agents (effective profile per role, edit
+- **Agents and usage (#68, #114):** Settings → Agents (effective profile per role, edit
   runtime/model/effort, turn off), Settings → Usage (24h/7d/30d tokens by role and
-  model, top sessions) and a Usage row per session. Cost appears only if a provider
-  reports it (nothing does today).
+  model, top sessions) and a Usage row per session. Since #114 every role shows model
+  calls, fresh input (input minus cached), cached input and output (with reasoning
+  tokens where Codex reports them) next to the processed total, which is what the
+  Codex and Claude plan limits count; Run detail and the Supervisor log show the same
+  line. Cost shows a provider-reported price or "Subscription" (nothing reports a
+  price today). The Codex adapter also records cache-write tokens, reasoning tokens and
+  one model call per usage report; the Claude adapter cache-write tokens and distinct
+  assistant message ids as calls. All counters are monotonic and survive a Node restart.
+- **Lean agent prompts (#114):** the Supervisor prompt asks for task descriptions that
+  name specific files and sections (never AGENTS.md, which the runtime injects, nor whole
+  status/runbook documents) and for large requests split into independent tasks; the
+  Node's Codex home writes a `config.toml` that disables multi-agent, skills, plugins,
+  apps, goals, memories, hooks, browser/computer use, image generation, realtime and web
+  search for every Zamolxis agent. The real-Codex acceptance runs with that config.
 - **Runtime model catalog:** the Node asks Codex app-server for its models (`model/list`,
   hidden excluded) at startup and at most every 30 minutes, and reports them with
   reasoning efforts in the heartbeat; `agentProfiles:models` returns them per runtime for
@@ -301,8 +313,14 @@ module aliases exist only when the variable is set.
    editable in Settings → Agents. Instructions are appended to Builder, Verifier and
    Repair prompts and to the Supervisor prompt in a labelled block, recorded on each
    run (digest + revision, shown in Run detail diagnostics), and never change trust,
-   approval, sandbox or capacity behaviour. Missing: any cost data source (Codex
-   reports tokens only).
+   approval, sandbox or capacity behaviour. Missing: any cost data source (Codex and
+   Claude report tokens only, so the UI says "Subscription"); the share of the Codex
+   5-hour and weekly limits a Session used (Codex reports `rate_limits` per account,
+   not per thread, so attributing it to a Session needs a design); the before/after
+   token measurement for the same kind of task that #114 asks for still has to be taken
+   on a real Session (the lean Codex config and the Supervisor guidance shipped without
+   it). Recommended but not enforced: a smaller model or low effort for the Verifier and
+   Supervisor profiles.
 5. **Identity (#47), mostly shipped.** Signed-in devices show a self-reported label
    ("Safari on iPhone"); a minimal service worker makes the app installable with an
    offline page (no caching of app data or API responses); a second-account isolation
@@ -350,6 +368,8 @@ module aliases exist only when the variable is set.
 1. Make the configured repository publishing identity pass the production push and
    open one real PR entirely through Zamolxis.
 2. Reconcile or close the remaining Alpha tracking issues against shipped behavior.
+   For #114, re-run a logo-redesign-sized task and compare the Builder's processed
+   tokens and calls (now visible in Run detail) with the 2.6M / 41 baseline.
 3. Owner-deferred validation: real iPhone/PWA/offline behavior, a second Google
    account and a second workstation.
 4. External ticket links (GitHub/Linear) need a connector first and are not part of

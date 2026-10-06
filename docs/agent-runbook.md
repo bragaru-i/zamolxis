@@ -190,6 +190,15 @@ against a written contract. When lanes are integrated:
 - A manual `convex deploy` from the canonical checkout regenerates
   `convex/_generated/api.ts`; reset it before updating the checkout.
 - `/tmp` is cleared on reboot; keep helpers in the repo, not in `/tmp`.
+- **Token usage (#114):** a Builder resends its whole conversation on every model call,
+  so one task that read AGENTS.md, README, alpha-status and the runbook in full cost 2.6M
+  processed tokens over 41 calls (97% cached, still counted by the Codex 5-hour window).
+  Task descriptions name specific files and sections; AGENTS.md is injected by Codex and
+  must not be re-read; long procedures stay in docs read on demand. Run detail and
+  Settings → Usage show calls, fresh, cached and output per role, so a run whose cached
+  input dwarfs its fresh input is a long conversation, not a bug in the accounting.
+  Codex features Zamolxis agents never use are disabled in the Node's Codex home
+  (`codex-home.ts`, `CODEX_CONFIG`); a Node restart rewrites that file.
 - Setup's service reload must wait for launchd to finish unloading (#70).
 - GitHub CI sometimes leaves a job queued without a runner until it is cancelled
   after 15 minutes; re-run it before treating it as a failure.
