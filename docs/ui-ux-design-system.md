@@ -7,30 +7,37 @@ Infrastructure complexity is progressive disclosure, not the default screen.
 ## Primary mental model
 
 ```text
-                    SESSION
+              ORCHESTRATOR CONVERSATION
 +---------------------------------------------------+
-| context / title / status                          |
+| product context / linked work                     |
 +---------------------------------------------------+
 |                                                   |
 | conversation                                      |
 |                                                   |
 | User                                              |
-| Build the reporting dashboard                     |
+| What is happening with ticket ABC-123?            |
 |                                                   |
 | Zamolxis                                          |
-| I split this into API and UI work.                |
+| The API fix passed verification. The UI task is   |
+| waiting for approval.                             |
 |                                                   |
-|  [ API implementation       Running ]             |
-|  [ UI implementation        Running ]             |
+|  [ Open Work Session ] [ Open waiting Agent ]     |
 |                                                   |
-| Agent activity / results appear inline            |
+| User                                              |
+| Fix the UI issue and continue.                    |
+|                                                   |
+| Zamolxis                                          |
+| I continued the existing Session with Builder X.  |
 |                                                   |
 +---------------------------------------------------+
-| + attachment     Ask / steer...          Send     |
+| + attachment     Ask Zamolxis...         Send     |
 +---------------------------------------------------+
 ```
 
-A user should not need to understand Workstations, Workspaces, Runs, adapters or Git worktrees to ask Zamolxis to do work.
+A user should not need to create a Work Session before asking Zamolxis a question. The
+Orchestrator decides whether to answer from durable state, link existing work, continue a
+Session, or create one for new execution. Workstations, Workspaces, Runs, adapters and Git
+worktrees remain progressive disclosure.
 
 ## Desktop shell
 
@@ -38,7 +45,7 @@ A user should not need to understand Workstations, Workspaces, Runs, adapters or
 +-----------------------------------------------------------------------+
 | Sidebar       | Conversation / Session                   | Inspector  |
 |               |                                          |            |
-| New session   | user + assistant messages                | Tasks      |
+| New chat      | Orchestrator conversation                | Linked work|
 | My Work       |                                          | Agents     |
 | Needs You     | inline run/task cards                    | Activity   |
 | Recent        |                                          | Changes    |
@@ -56,7 +63,7 @@ Conversation owns the largest visual area. Composer is persistent. Inspector is 
 
 ```text
 +-------------------------------+
-| < Sessions     Title      ... |
+| < Chats        Zamolxis   ... |
 +-------------------------------+
 |                               |
 | Conversation                  |
@@ -74,15 +81,30 @@ Do not reproduce a three-column desktop dashboard on a phone.
 
 ## Conversation model
 
-Conversation is the user-facing representation of a Work Session.
+> **Breaking architecture boundary:** the home conversation is not a Work Session. UI mocks,
+> routes and copy must not use “New session” or **Start** as the default chat entry point.
 
-Supported blocks include user message, Supervisor message, plan, task group, Agent Run card, approval request, result summary, changed-files summary, error/recovery state, artifact and compact activity group.
+The primary conversation is a durable Orchestrator conversation owned by the user. It exists
+outside Work Sessions. A normal question, status request, explanation or summary stays in this
+conversation and creates no Work Session, Task or Agent Run.
+
+The Orchestrator can render linked cards for an existing Work Session, Task, Agent Run, approval,
+verification result, pull request or external ticket. Opening a card navigates to its detail. A
+Work Session has its own focused conversation and activity after the Orchestrator creates or
+reuses it for execution.
+
+Supported blocks include user message, Orchestrator answer, proposal, routing decision, linked
+ticket/Session/Task/Agent Run, approval request, result summary, changed-files summary, error or
+recovery state, artifact and compact activity group.
 
 Raw low-level events belong in Activity detail, not as thousands of chat messages.
 
 ## Composer
 
-Composer is a first-class product component, not a plain textarea. It supports multiline prompt, Send, attachment/context affordance, optional runtime override, current Session context, Stop while executing, mobile keyboard/safe-area behavior and future slash commands.
+Composer is a first-class product component, not a plain textarea. The home composer sends to the
+Orchestrator and says **Send**, never **Start**. It supports multiline prompts, attachments,
+optional Product/repository context and future slash commands. A Session composer adds current
+Session context, steering and Stop while executing.
 
 Default interaction stays simple: type and send.
 
@@ -204,4 +226,8 @@ Frontend review/CI should reject arbitrary hard-coded palette colors, arbitrary 
 
 ## UX acceptance test
 
-A first-time user on a phone can open Zamolxis, start/open a Session, type a normal-language request, understand what work started, inspect a running agent if desired, steer it, respond to an approval and understand completion without learning infrastructure terminology.
+A first-time user on a phone can open Zamolxis and ask a normal-language question without creating
+work. The reply summarizes current state and links relevant tickets, Sessions and Agents. An
+explicit execution request creates or continues the appropriate Session; the user can then inspect
+a running agent, steer it, respond to an approval and understand deterministic completion without
+learning infrastructure terminology.

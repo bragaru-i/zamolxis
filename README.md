@@ -210,11 +210,15 @@ manifest supports standalone use; authenticated offline operation is not provide
 ## Web app
 
 The web app is phone-first and follows `docs/ui-ux-design-system.md`; shared tokens and
-components live in `packages/ui`. It opens on a list of your Sessions; the open Session is
-kept in the URL (`?session=<id>`), so refresh and back navigation keep it. A Session shows
+components live in `packages/ui`. The current Alpha opens on a list of your Sessions and its
+home composer creates a Session before the Supervisor decides. The target architecture replaces
+that entry point with a durable top-level Orchestrator chat: status questions summarize and link
+existing work without creating a Session, while explicit execution routes to a new or existing
+Session. This global routing layer is not shipped yet. An open Session is kept in the URL
+(`?session=<id>`), so refresh and back navigation keep it. A Session shows
 your messages, the planning outcome for each, Task cards with their Runs (status, live
 activity label, reported token totals) and a Stop control per active Run and per Session.
-The composer stays pinned to the bottom; in an ended Session, sending starts a new Session.
+The Session composer stays pinned to the bottom; in an ended Session, sending starts a new Session.
 Mac status, removal of a Mac and sign-out are in Settings.
 
 Supervisor replies (answers, proposals, delegated work, questions) and each agent's final reply appear in

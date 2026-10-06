@@ -58,9 +58,9 @@ planned capability as shipped.
 - **Release (#62, #64):** every push to main that passes CI deploys Convex and the
   web app automatically; `pnpm deploy:prod` is the manual path.
 - **Supervisor and conversation (#66):** ordinary questions, status checks, explanations and
-  reviews stay conversational and create no Tasks or Agent Runs. A requested plan is shown as a
-  proposal with "Open this work"; only that owner action or explicit execution language delegates
-  work to Builders. See gap 1 and 2 below.
+  reviews inside a Session create no Tasks or Agent Runs. A requested plan is shown as a proposal
+  with "Open this work"; only that owner action or explicit execution language delegates work to
+  Builders. The separate global Orchestrator boundary is still missing; see gap 1 and 2 below.
 - **Access administration (#67):** Settings → People (admins approve, block,
   restore, promote; blocking revokes all sign-ins) and Settings → Signed-in devices.
   First admin via the internal `admin:bootstrapAdmin` (done on prod for the owner).
@@ -97,7 +97,13 @@ planned capability as shipped.
    #73's reply redaction turned plan task keys into `***`, so every real plan was
    rejected for about 40 minutes until #74 (the Supervisor reply is now redacted per
    field after parsing).
-2. **Conversation, shipped.** Supervisor replies (Markdown, bounded to 8000),
+2. **Global Orchestrator conversation, not shipped.** The home composer still invokes
+   `supervisor.submit`, immediately creates a Work Session and opens it. The required architecture
+   has a durable owner-level Orchestrator conversation outside Work Sessions. It must answer and
+   summarize from control-plane state, return links to relevant tickets, Sessions, Tasks, Agent
+   Runs, evidence and pull requests, and create or reuse a Session only when routing determines
+   durable investigation or execution is needed. Its routing decision must be persisted and
+   explainable. **In-Session conversation is shipped:** Supervisor replies (Markdown, bounded to 8000),
    builder/verifier final replies (`agentRuns.resultSummary`) and intermediate agent
    notes (`run.message`, redacted, ≤2000 chars, shown in Run detail Activity) are
    shown. Whether a model writes commentary is up to the model.
