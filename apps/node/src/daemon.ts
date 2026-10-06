@@ -13,6 +13,7 @@ import {
   RuntimeModelCatalog,
   WorkspaceManager,
 } from "@zamolxis/node-core";
+import { ClaudeCliProcess, ClaudeRuntime, claudeEnv } from "@zamolxis/runtime-claude";
 import {
   AppServerClient,
   CodexRuntime,
@@ -22,6 +23,7 @@ import {
 import { RuntimeRegistry } from "@zamolxis/runtime-core";
 import { ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
+import { claudeSignedIn, findClaude } from "./claude";
 import { ConvexControlPlaneTransport } from "./convex-control-plane";
 import { KeychainCredentialStore, loadDeviceCredential } from "./credential-store";
 import { configPath, pause, readConfig } from "./setup";
@@ -78,6 +80,32 @@ try {
         }),
     }),
   );
+  // Claude Code is registered only when its CLI runs here. It uses the owner's own Claude
+  // Code login (subscription); API key variables are removed from its environment. It is
+  // advertised while that login is signed in.
+  const claude = findClaude();
+  if (claude)
+    runtimes.register(
+      new ClaudeRuntime({
+        executable: claude.executable,
+        launch: (launch) =>
+          new ClaudeCliProcess({
+            ...launch,
+            executable: claude.executable,
+            spawnChild: (file, args, cwd) => {
+              const child = spawn(file, [...args], {
+                cwd,
+                env: claudeEnv(),
+                shell: false,
+                stdio: ["pipe", "pipe", "ignore"],
+              });
+              children.add(child);
+              child.once("exit", () => children.delete(child));
+              return child;
+            },
+          }),
+      }),
+    );
   // Models are fetched at startup and then at most every 30 minutes per runtime; a
   // failure keeps the previous list and never fails the heartbeat.
   const catalog = new RuntimeModelCatalog((id) =>
@@ -108,6 +136,15 @@ try {
             // "message": steering active runs; "approval": held operations wait for a human.
             capabilities: ["start", "stop", "message", "approval"],
           },
+          ...(claude && claudeSignedIn(claude.executable)
+            ? [
+                {
+                  runtime: "claude",
+                  version: findClaude(undefined, [claude.executable])?.version ?? claude.version,
+                  capabilities: ["start", "stop", "message", "approval"],
+                },
+              ]
+            : []),
         ]),
       });
     } finally {
@@ -161,7 +198,7 @@ try {
       workspaces,
       runtimes,
       config.workstationId as WorkstationId,
-      (runtime) => runtime === "codex",
+      (runtime) => runtime === "codex" || (!!claude && runtime === "claude"),
     );
     const driver = new ControlPlaneDriver(
       store,

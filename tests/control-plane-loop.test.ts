@@ -31,6 +31,8 @@ import { RepositoryRegistry } from "../packages/node-core/src/repository/reposit
 import { RuntimeManager } from "../packages/node-core/src/runtime/runtime-manager";
 import { repositoryFixture } from "../packages/node-core/src/testing/git-fixture";
 import { WorkspaceManager } from "../packages/node-core/src/workspace/workspace-manager";
+import { ClaudeRuntime } from "../packages/runtime-claude/src/claude-runtime";
+import { ClaudeCliProcess, claudeEnv } from "../packages/runtime-claude/src/cli-process";
 import {
   AppServerClient,
   type AppServerNotification,
@@ -1762,4 +1764,444 @@ it.skipIf(process.env.ZAMOLXIS_CODEX_ACCEPTANCE !== "1")(
     expect(models.some((model) => (model.efforts?.length ?? 0) > 0)).toBe(true);
   },
   120_000,
+);
+
+// Real Claude Code acceptance (ZAMOLXIS_CLAUDE_ACCEPTANCE=1): the installed, signed-in
+// `claude` CLI with the owner's subscription login (API key variables removed), using
+// Haiku to spare quota. Every run uses a disposable repository and managed worktrees.
+const claudeAcceptance = process.env.ZAMOLXIS_CLAUDE_ACCEPTANCE === "1";
+const CLAUDE_TEST_MODEL = "claude-haiku-4-5";
+function realClaude() {
+  const children: ReturnType<typeof spawn>[] = [];
+  cleanup.push(() => {
+    for (const child of children) child.kill("SIGKILL");
+  });
+  const runtime = new ClaudeRuntime({
+    launch: (launch) =>
+      new ClaudeCliProcess({
+        ...launch,
+        spawnChild: (file, args, cwd) => {
+          const child = spawn(file, [...args], {
+            cwd,
+            env: claudeEnv(),
+            shell: false,
+            stdio: ["pipe", "pipe", "ignore"],
+          });
+          children.push(child);
+          return child;
+        },
+      }),
+  });
+  return { runtime, children };
+}
+async function claudeProfiles(
+  f: Awaited<ReturnType<typeof fixture>>,
+  roles: readonly ("supervisor" | "builder" | "verifier" | "repair")[],
+) {
+  for (const role of roles)
+    await f.user.mutation(api.agentProfiles.upsert, {
+      name: `Claude ${role}`,
+      role,
+      runtime: "claude",
+      model: CLAUDE_TEST_MODEL,
+      enabled: true,
+    });
+}
+
+it.skipIf(!claudeAcceptance)(
+  "answers a read-only Supervisor question with real Claude Code and edits nothing",
+  async () => {
+    const f = await fixture("claude");
+    const productId = await f.t.run(async (ctx) => {
+      const session = await ctx.db.get("workSessions", f.workSessionId);
+      const id = await ctx.db.insert("products", {
+        ownerId: session!.ownerId,
+        name: "Claude question",
+        slug: "claude-question",
+        createdAt: 0,
+        updatedAt: 0,
+      });
+      await ctx.db.patch("repositories", f.repositoryId, { productId: id });
+      await ctx.db.patch("repositoryLocations", f.repositoryLocationId, {
+        lastKnownHead: f.originalHead,
+      });
+      return id;
+    });
+    await claudeProfiles(f, ["supervisor", "builder", "verifier", "repair"]);
+    const { runtime } = realClaude();
+    const starts: Array<string | undefined> = [];
+    const original = runtime.start.bind(runtime);
+    runtime.start = (input) => {
+      starts.push(input.role);
+      return original(input);
+    };
+    const n = await f.boot(runtime, ["start", "stop", "message", "approval"]);
+    const driver = n.driver();
+    const { RepositoryDiscovery } = await import(
+      "../packages/node-core/src/capabilities/repository-discovery"
+    );
+    driver.setRepositoryDiscovery(new RepositoryDiscovery(n.workspaces));
+    const sessionId = await f.user.mutation(api.supervisor.submit, {
+      productId,
+      repositoryId: f.repositoryId,
+      text: "What exact text does source.txt contain? Answer the question only; do not plan any work or change anything.",
+      idempotencyKey: "claude-question",
+    });
+    for (let tick = 0; tick < 10; tick++) {
+      await f.node.mutation(api.supervisor.dispatch, { workstationId: f.workstationId });
+      await driver.tick();
+      const [message] = await f.user.query(api.supervisor.messages, { workSessionId: sessionId });
+      if (message?.planned) break;
+    }
+    expect(starts).toEqual(["supervisor"]);
+    const messages = await f.user.query(api.supervisor.messages, { workSessionId: sessionId });
+    expect(messages[0]).toMatchObject({ planned: true, decision: "answer", planTaskCount: 0 });
+    expect(String(messages[0]?.reply)).toMatch(/base/);
+    expect(await f.user.query(api.runs.listBySession, { workSessionId: sessionId })).toEqual([]);
+    const log = (await f.user.query(api.supervisor.log, {
+      textCommandId: messages[0]?._id as never,
+    })) as { kind: string; label: string }[];
+    console.log(`Claude Supervisor log: ${log.map((step) => step.label).join(" | ")}`);
+    expect(n.store.listPendingEvents()).toEqual([]);
+    expect(git(f.path, ["rev-parse", "HEAD"])).toBe(f.originalHead);
+    expect(git(f.path, ["status", "--porcelain"])).toBe(f.originalStatus);
+  },
+  180_000,
+);
+
+it.skipIf(!claudeAcceptance)(
+  "real Claude Orchestrator answers a top-level question without a repository",
+  async () => {
+    const f = await fixture("claude");
+    await f.user.mutation(api.agentProfiles.upsert, {
+      name: "Claude orchestrator",
+      role: "orchestrator",
+      runtime: "claude",
+      model: CLAUDE_TEST_MODEL,
+      enabled: true,
+    });
+    const { runtime } = realClaude();
+    const starts: StartRunInput[] = [];
+    const original = runtime.start.bind(runtime);
+    runtime.start = (input) => {
+      starts.push(input);
+      return original(input);
+    };
+    const n = await f.boot(runtime, ["start", "stop", "message", "approval"]);
+    const driver = n.driver();
+    await f.user.mutation(api.orchestrator.submit, {
+      text: "Question only: how many Work Sessions are listed in the current state? Reply in one short sentence that contains the number as digits.",
+      idempotencyKey: "claude-orchestrator",
+    });
+    for (let tick = 0; tick < 5; tick++) {
+      await driver.tick();
+      await driver.idle();
+      const [message] = await f.user.query(api.orchestrator.messages, {});
+      if (message?.status === "answered") break;
+    }
+    const [message] = await f.user.query(api.orchestrator.messages, {});
+    console.log(`Claude Orchestrator: ${message?.route} · ${message?.reply}`);
+    expect(message).toMatchObject({ status: "answered", answeredBy: "model", runtime: "claude" });
+    expect(["answer", "ask"]).toContain(message?.route);
+    expect(String(message?.reply)).toMatch(/\d/);
+    expect(message?.totalTokens).toBeGreaterThan(0);
+    // Read-only, in an empty scratch directory that is removed afterwards.
+    expect(starts).toHaveLength(1);
+    expect(starts[0]?.role).toBe("supervisor");
+    expect(starts[0]?.workspace.cwd).not.toContain(f.path);
+    expect(existsSync(starts[0]?.workspace.cwd ?? "")).toBe(false);
+    expect(await f.t.run((ctx) => ctx.db.query("textCommands").collect())).toEqual([]);
+    expect(n.store.listInterruptedCommands()).toEqual([]);
+    expect(git(f.path, ["rev-parse", "HEAD"])).toBe(f.originalHead);
+    expect(git(f.path, ["status", "--porcelain"])).toBe(f.originalStatus);
+  },
+  180_000,
+);
+
+it.skipIf(!claudeAcceptance)(
+  "makes a Builder change with real Claude Code in its own worktree and reports usage",
+  async () => {
+    const f = await fixture("claude");
+    await claudeProfiles(f, ["builder"]);
+    await f.t.run(async (ctx) => {
+      await ctx.db.patch("tasks", f.taskId, {
+        description:
+          "Create the file claude.txt containing exactly CLAUDE_OK followed by a newline, using the Write tool. Do not run shell commands, Git or tests, and do not change any other file.",
+      });
+    });
+    const { runtime } = realClaude();
+    const n = await f.boot(runtime, ["start", "stop", "message", "approval"]);
+    const workspaceId = await f.user.mutation(api.workspaces.request, {
+      taskId: f.taskId,
+      repositoryLocationId: f.repositoryLocationId,
+      baseRef: "main",
+    });
+    await n.driver().tick();
+    const runId = await f.user.mutation(api.runs.request, {
+      taskId: f.taskId,
+      workspaceId,
+      runtime: "claude",
+    });
+    await n.driver().tick();
+    const run = await f.user.query(api.runs.get, { runId });
+    expect(run.status).toBe("completed");
+    expect(run.modelActual).toMatch(/haiku/);
+    expect(run.inputTokens).toBeGreaterThan(0);
+    expect(run.outputTokens).toBeGreaterThan(0);
+    expect(run.totalTokens).toBe((run.inputTokens ?? 0) + (run.outputTokens ?? 0));
+    const stored = n.store.getRuntimeSession(runId);
+    expect(stored?.runtime).toBe("claude");
+    expect(stored?.nativeSessionId).toMatch(/^[0-9a-f-]{36}$/);
+    const events = (
+      await f.user.query(api.events.listByRun, {
+        runId,
+        paginationOpts: { numItems: 100, cursor: null },
+      })
+    ).page as { type: string; payload: Record<string, unknown> }[];
+    expect(events.some((event) => event.type === "files.changed")).toBe(true);
+    expect(events.some((event) => event.type === "approval.requested")).toBe(false);
+    const workspace = n.workspaces.inspect(workspaceId);
+    expect(workspace.path).not.toBe(f.path);
+    const { readFileSync } = await import("node:fs");
+    expect(readFileSync(join(workspace.path, "claude.txt"), "utf8").trim()).toBe("CLAUDE_OK");
+    console.log(
+      `Claude Builder: ${run.modelActual}, ${run.inputTokens} in (${run.cachedInputTokens} cached) / ${run.outputTokens} out; events ${events.map((event) => event.type).join(",")}`,
+    );
+    expect(n.store.listPendingEvents()).toEqual([]);
+    expect(n.store.getWorkspaceLease(workspaceId)).toBeUndefined();
+    expect(git(f.path, ["rev-parse", "HEAD"])).toBe(f.originalHead);
+    expect(git(f.path, ["status", "--porcelain"])).toBe(f.originalStatus);
+    expect(existsSync(join(f.path, "claude.txt"))).toBe(false);
+  },
+  180_000,
+);
+
+it.skipIf(!claudeAcceptance)(
+  "lists the models of the real Claude Code CLI",
+  async () => {
+    const { runtime } = realClaude();
+    const models = await runtime.listModels();
+    console.log(`Claude models: ${models.map((model) => model.id).join(", ")}`);
+    expect(models.length).toBeGreaterThan(0);
+    expect(models.filter((model) => model.isDefault)).toHaveLength(1);
+    expect(models.every((model) => model.id && model.displayName)).toBe(true);
+  },
+  90_000,
+);
+
+it.skipIf(!claudeAcceptance)(
+  "holds a real Claude permission request for a human, then stops and resumes after a restart",
+  async () => {
+    const repo = repositoryFixture();
+    cleanup.push(() => rmSync(repo.root, { recursive: true, force: true }));
+    const head = git(repo.path, ["rev-parse", "HEAD"]);
+    const input = {
+      runId: "claude-acceptance-run" as never,
+      workstationId: "claude-acceptance-node" as never,
+      role: "builder" as const,
+      model: CLAUDE_TEST_MODEL,
+      instruction:
+        "Run exactly this shell command with the Bash tool, in the foreground: node -e \"setTimeout(()=>console.log('done'),20000)\" . If it is not allowed, reply with the single word BLOCKED and stop.",
+      workspace: {
+        workspaceId: "claude-ws" as never,
+        cwd: repo.path,
+        branch: "main",
+        headSha: head,
+      },
+    };
+    const first = realClaude();
+    const started = await first.runtime.start(input);
+    const seen: NormalizedRunEventDto[] = [];
+    for await (const event of first.runtime.subscribe({
+      nativeSessionId: started.nativeSessionId,
+    })) {
+      seen.push(event);
+      if (event.type === "approval.requested" || event.type.startsWith("run.c")) break;
+    }
+    const requested = seen.at(-1);
+    expect(requested?.type).toBe("approval.requested");
+    if (requested?.type !== "approval.requested") throw new Error("no approval");
+    expect(requested.payload.kind).toBe("command");
+    expect(requested.payload.summary).toContain("node -e");
+    // A Node restart: the CLI process dies with its pending request.
+    for (const child of first.children) child.kill("SIGKILL");
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const second = realClaude();
+    const resumed = await second.runtime.resume({
+      ...input,
+      nativeSessionId: started.nativeSessionId,
+      afterSequence: requested.sequence,
+      pendingApprovalIds: [requested.payload.approvalId],
+      interrupted: "continue",
+    });
+    expect(resumed.nativeSessionId).toBe(started.nativeSessionId);
+    const after: NormalizedRunEventDto[] = [];
+    for await (const event of second.runtime.subscribe({
+      nativeSessionId: started.nativeSessionId,
+    })) {
+      after.push(event);
+      if (event.type === "approval.requested") {
+        // The resumed agent asks again under a new id; stopping rejects it first.
+        expect(event.payload.approvalId).not.toBe(requested.payload.approvalId);
+        await second.runtime.stop({ nativeSessionId: started.nativeSessionId });
+      }
+    }
+    console.log(`Claude resume events: ${after.map((event) => event.type).join(",")}`);
+    expect(after[0]).toMatchObject({
+      sequence: requested.sequence + 1,
+      type: "approval.resolved",
+      payload: {
+        approvalId: requested.payload.approvalId,
+        decision: "rejected",
+        reason: "withdrawn",
+      },
+    });
+    expect(["run.stopped", "run.completed"]).toContain(after.at(-1)?.type);
+    expect(
+      after.some(
+        (event) => event.type === "approval.resolved" && event.payload.decision === "approved",
+      ),
+    ).toBe(false);
+    // Stop while a request is held: it is rejected before the run reports stopped.
+    const third = realClaude();
+    const held = await third.runtime.start({ ...input, runId: "claude-acceptance-stop" as never });
+    const stopped: NormalizedRunEventDto[] = [];
+    for await (const event of third.runtime.subscribe({ nativeSessionId: held.nativeSessionId })) {
+      stopped.push(event);
+      if (event.type === "approval.requested")
+        await third.runtime.stop({ nativeSessionId: held.nativeSessionId });
+    }
+    console.log(`Claude stop events: ${stopped.map((event) => event.type).join(",")}`);
+    const types = stopped.map((event) => event.type);
+    expect(types.at(-1)).toBe("run.stopped");
+    expect(types.indexOf("approval.resolved")).toBeGreaterThan(types.indexOf("approval.requested"));
+    expect(stopped.find((event) => event.type === "approval.resolved")?.payload).toMatchObject({
+      decision: "rejected",
+      reason: "stopped",
+    });
+    expect(git(repo.path, ["status", "--porcelain"])).toBe("");
+  },
+  180_000,
+);
+
+it.skipIf(!claudeAcceptance)(
+  "keeps a real Claude Verifier read-only even when told to write",
+  async () => {
+    const repo = repositoryFixture();
+    cleanup.push(() => rmSync(repo.root, { recursive: true, force: true }));
+    const head = git(repo.path, ["rev-parse", "HEAD"]);
+    const { runtime } = realClaude();
+    const started = await runtime.start({
+      runId: "claude-acceptance-verifier" as never,
+      workstationId: "claude-acceptance-node" as never,
+      role: "verifier",
+      model: CLAUDE_TEST_MODEL,
+      instruction:
+        "Read source.txt. Then try to create written.txt containing x with a file tool, and run the shell command `touch touched.txt`. Report which of these worked.",
+      workspace: {
+        workspaceId: "claude-ws" as never,
+        cwd: repo.path,
+        branch: "main",
+        headSha: head,
+      },
+    });
+    const events: NormalizedRunEventDto[] = [];
+    for await (const event of runtime.subscribe({ nativeSessionId: started.nativeSessionId }))
+      events.push(event);
+    console.log(`Claude Verifier events: ${events.map((event) => event.type).join(",")}`);
+    expect(events.at(-1)?.type).toBe("run.completed");
+    expect(events.some((event) => event.type === "approval.requested")).toBe(false);
+    expect(events.some((event) => event.type === "files.changed")).toBe(false);
+    expect(existsSync(join(repo.path, "written.txt"))).toBe(false);
+    expect(existsSync(join(repo.path, "touched.txt"))).toBe(false);
+    expect(git(repo.path, ["status", "--porcelain"])).toBe("");
+    expect(git(repo.path, ["rev-parse", "HEAD"])).toBe(head);
+  },
+  120_000,
+);
+
+it.skipIf(!claudeAcceptance)(
+  "runs text intent with real Claude Code as Supervisor, Builder and independent Verifier",
+  async () => {
+    const f = await fixture("claude");
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(
+      join(f.path, "package.json"),
+      JSON.stringify({
+        scripts: {
+          test: "node -e \"require('node:assert/strict').equal(require('node:fs').readFileSync('outcome.txt','utf8').trim(),'ALPHA_OK')\"",
+        },
+      }),
+    );
+    git(f.path, ["add", "."]);
+    git(f.path, ["commit", "-m", "acceptance check"]);
+    const canonicalSha = git(f.path, ["rev-parse", "HEAD"]);
+    const productId = await f.t.run(async (ctx) => {
+      const session = await ctx.db.get("workSessions", f.workSessionId);
+      const id = await ctx.db.insert("products", {
+        ownerId: session!.ownerId,
+        name: "Claude native",
+        slug: "claude-native",
+        createdAt: 0,
+        updatedAt: 0,
+      });
+      await ctx.db.patch("repositories", f.repositoryId, { productId: id });
+      await ctx.db.patch("repositoryLocations", f.repositoryLocationId, {
+        lastKnownHead: canonicalSha,
+      });
+      return id;
+    });
+    await claudeProfiles(f, ["supervisor", "builder", "verifier", "repair"]);
+    const { runtime } = realClaude();
+    const n = await f.boot(runtime, ["start", "stop", "message", "approval"]);
+    const driver = n.driver();
+    const { RepositoryDiscovery } = await import(
+      "../packages/node-core/src/capabilities/repository-discovery"
+    );
+    driver.setRepositoryDiscovery(new RepositoryDiscovery(n.workspaces));
+    const sessionId = await f.user.mutation(api.supervisor.submit, {
+      productId,
+      repositoryId: f.repositoryId,
+      text: "Create outcome.txt containing exactly ALPHA_OK and a newline. Use the file editing tool. Do not run Git commands, tests or network tools. Zamolxis will commit your edits and run checks independently.",
+      idempotencyKey: "claude-native-alpha",
+    });
+    for (let tick = 0; tick < 20; tick++) {
+      await f.node.mutation(api.supervisor.dispatch, { workstationId: f.workstationId });
+      await driver.tick();
+      const session = await f.user.query(api.sessions.get, { workSessionId: sessionId });
+      if (["completed", "failed", "needs_input"].includes(session.status)) break;
+    }
+    const runs = await f.user.query(api.runs.listBySession, { workSessionId: sessionId });
+    console.log(
+      `Claude loop runs: ${runs.map((run) => `${run.role}:${run.runtime}:${run.status}:${run.modelActual ?? "-"}`).join(" ")}`,
+    );
+    const session = await f.user.query(api.sessions.get, { workSessionId: sessionId });
+    expect(session.status).toBe("completed");
+    expect(runs.every((run) => run.runtime === "claude")).toBe(true);
+    const candidate = runs.find(
+      (run) =>
+        (run.role === "builder" || run.role === "repair") &&
+        run.status === "completed" &&
+        run.finalHeadSha,
+    );
+    if (!candidate) throw new Error("Missing candidate run");
+    const verifier = runs.find(
+      (run) => run.role === "verifier" && run.finalHeadSha === candidate.finalHeadSha,
+    );
+    if (!verifier) throw new Error("Missing verifier run");
+    expect(verifier.workspaceId).not.toBe(candidate.workspaceId);
+    expect((await f.user.query(api.trust.listByRun, { runId: candidate._id }))[0]?.eligible).toBe(
+      true,
+    );
+    const spaces = await f.user.query(api.workspaces.listBySession, { workSessionId: sessionId });
+    expect(
+      spaces.some(
+        (space) => space.kind === "integration" && space.currentHeadSha === candidate.finalHeadSha,
+      ),
+    ).toBe(true);
+    expect(git(f.path, ["rev-parse", "HEAD"])).toBe(canonicalSha);
+    expect(git(f.path, ["status", "--porcelain"])).toBe("");
+    expect(n.store.listPendingEvents()).toEqual([]);
+  },
+  300_000,
 );

@@ -21,6 +21,7 @@ vi.mock("convex/react", () => ({
 import {
   AgentsSettings,
   concurrencyProblem,
+  describeProfile,
   effectiveProfile,
   explainProfileError,
   INSTRUCTIONS_LIMIT,
@@ -30,6 +31,7 @@ import {
   ProfileEditor,
   profileNameProblem,
   runtimeChoices,
+  runtimeLabel,
   scopeProfile,
   upsertArgs,
 } from "./agents";
@@ -87,6 +89,22 @@ describe("profile resolution", () => {
         "claude",
       ),
     ).toEqual(["claude", "codex"]);
+  });
+
+  it("offers Claude when a Mac reports it, labelled Claude", () => {
+    const choices = runtimeChoices([
+      {
+        status: "online",
+        runtimes: [
+          { runtime: "codex", status: "available" },
+          { runtime: "claude", status: "available" },
+        ],
+      },
+    ]);
+    expect(choices).toEqual(["claude", "codex"]);
+    expect(choices.map(runtimeLabel)).toEqual(["Claude", "Codex"]);
+    expect(describeProfile({ runtime: "claude", model: "claude-haiku-4-5" })).toContain("Claude");
+    expect(runtimeLabel("hermes")).toBe("Hermes");
   });
 
   it("builds upsert arguments with the edited name and concurrency, inventing nothing", () => {

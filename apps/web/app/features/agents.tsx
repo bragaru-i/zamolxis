@@ -79,8 +79,9 @@ const EFFORT_HELP: Record<string, string> = {
 };
 // Only roles that start runs can be limited in how many run at once.
 const RUN_ROLES: readonly Role[] = ["builder", "verifier", "repair"];
+const RUNTIME_LABELS: Record<string, string> = { codex: "Codex", claude: "Claude" };
 export function runtimeLabel(runtime: string): string {
-  return runtime === "codex" ? "Codex" : runtime[0]?.toUpperCase() + runtime.slice(1);
+  return RUNTIME_LABELS[runtime] ?? runtime[0]?.toUpperCase() + runtime.slice(1);
 }
 function effortLabel(effort: string): string {
   return effort === "xhigh" ? "Extra high" : effort[0]?.toUpperCase() + effort.slice(1);

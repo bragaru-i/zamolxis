@@ -87,6 +87,28 @@ planned capability as shipped.
   reasoning efforts in the heartbeat; `agentProfiles:models` returns them per runtime for
   the owner's Macs. Settings → Agents offers them as a Model picker whose effort choices follow
   the chosen model; until a Mac reports models it falls back to a text field.
+- **Claude runtime (branch `feat/claude-runtime`, not yet on main or the Mac Node):**
+  `packages/runtime-claude` drives the installed `claude` CLI (Claude Code) over its
+  `-p` stream-json protocol in the same managed worktrees as Codex; it is labelled
+  "Claude" in the web app. Auth and billing: the owner's own Claude Code login
+  (subscription); Zamolxis never reads, copies or forwards Claude credentials or tokens,
+  does not use the Agent SDK, and strips `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`
+  and `ANTHROPIC_BASE_URL` from the CLI's environment. Pro/Max limits assume ordinary
+  individual use, so heavy parallel or always-on use may hit plan limits. The Node
+  registers it when `claude --version` runs (PATH or `~/.local/bin/claude`) and
+  advertises it (`start`, `stop`, `message`, `approval`) while `claude auth status`
+  reports a Claude subscription login; models come from the CLI's `initialize`
+  catalog (default `claude-opus-5-5`). Read-only roles (Verifier, Supervisor,
+  Orchestrator) get only Read/Glob/Grep and Claude Code's read-only shell commands
+  (`dontAsk`); Builder/Repair accept edits in the workspace and run sandboxed shell
+  commands, everything else is held for the owner. Real acceptance (Haiku,
+  2026-10-06): Supervisor question, Orchestrator answer, Builder edit with usage,
+  read-only Verifier, a held approval rejected by stop, restart resume with the
+  pending approval withdrawn, and the full Supervisor → Builder → Verifier → trust →
+  integration loop. Limits: after a restart an unfinished Claude turn is always
+  treated as interrupted (the transcript is not read); real Repair and an approved
+  real permission request are covered by controlled tests only; cost is not recorded
+  (the CLI's cost figure is an estimate, not the subscription's billing).
 - **Run detail (#68):** tapping a run opens result, grouped live activity, changes
   (files, base → head, branch) and verification (evidence, trust decision, repairs).
 - **Setup repair (#69):** rerunning setup offers Check and repair, repositories,

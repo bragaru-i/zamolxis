@@ -16,6 +16,7 @@
     "@zamolxis/contracts": "workspace:*",
     "@zamolxis/git": "workspace:*",
     "@zamolxis/node-core": "workspace:*",
+    "@zamolxis/runtime-claude": "workspace:*",
     "@zamolxis/runtime-codex": "workspace:*",
     "@zamolxis/runtime-core": "workspace:*",
     "convex": "^1.46.0",
