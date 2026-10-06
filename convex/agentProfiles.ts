@@ -1,7 +1,8 @@
-import { v } from "convex/values";
+import { type Infer, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { fail, requireUser } from "./lib/access";
 import { instructionsDigest, normalizeInstructions } from "./lib/agentProfiles";
+import { runtimeModel } from "./schema";
 
 const role = v.union(
   v.literal("orchestrator"),
@@ -23,6 +24,54 @@ export const list = query({
       .take(101);
     if (rows.length > 100) fail("LIMIT_EXCEEDED");
     return rows.filter((row) => row.productId === args.productId);
+  },
+});
+
+type RuntimeModel = Infer<typeof runtimeModel>;
+/**
+ * The models the signed-in owner's paired Macs report per runtime, for Settings -> Agents.
+ * Only available runtimes on non-revoked workstations count; models are deduplicated by
+ * id per runtime (first seen wins, default if any Mac reports it as default) and sorted
+ * default first, then by display name.
+ */
+export const models = query({
+  args: {},
+  returns: v.array(v.object({ runtime: v.string(), models: v.array(runtimeModel) })),
+  handler: async (ctx) => {
+    const owner = await requireUser(ctx);
+    const workstations = await ctx.db
+      .query("workstations")
+      .withIndex("by_owner", (q) => q.eq("ownerId", owner._id))
+      .take(50);
+    const byRuntime = new Map<string, Map<string, RuntimeModel>>();
+    for (const workstation of workstations) {
+      if (workstation.status === "revoked" || workstation.revokedAt !== undefined) continue;
+      const installations = await ctx.db
+        .query("runtimeInstallations")
+        .withIndex("by_workstation", (q) => q.eq("workstationId", workstation._id))
+        .take(32);
+      for (const installation of installations) {
+        if (installation.status !== "available" || !installation.models?.length) continue;
+        const known = byRuntime.get(installation.runtime) ?? new Map<string, RuntimeModel>();
+        byRuntime.set(installation.runtime, known);
+        for (const model of installation.models) {
+          const seen = known.get(model.id);
+          if (!seen) known.set(model.id, model);
+          else if (model.isDefault && !seen.isDefault)
+            known.set(model.id, { ...seen, isDefault: true });
+        }
+      }
+    }
+    return [...byRuntime.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([runtime, known]) => ({
+        runtime,
+        models: [...known.values()].sort(
+          (a, b) =>
+            Number(b.isDefault === true) - Number(a.isDefault === true) ||
+            a.displayName.localeCompare(b.displayName),
+        ),
+      }));
   },
 });
 
