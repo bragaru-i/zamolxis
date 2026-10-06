@@ -4,6 +4,7 @@ import {
   Button,
   Chip,
   Composer,
+  IconButton,
   Markdown,
   Message,
   Notice,
@@ -25,6 +26,7 @@ import { ApprovalsInbox } from "./approvals";
 import { explainError } from "./errors";
 import { LiveAgents } from "./live-agents";
 import { OnboardingChecklist } from "./onboarding";
+import type { SettingsPage } from "./settings";
 import { groupByRecency, relativeTime } from "./time";
 import { useNow } from "./workspace";
 
@@ -60,7 +62,7 @@ export function SessionList({
   chatId: string;
   onOpenChat: (id: string, mode?: "push" | "replace") => void;
   onOpen: (id: Id<"workSessions">, runId?: Id<"agentRuns">) => void;
-  onSettings: () => void;
+  onSettings: (page?: SettingsPage) => void;
 }) {
   const now = useNow(30000);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -100,14 +102,12 @@ export function SessionList({
           <ProductMark />
           <strong>Zamolxis</strong>
         </div>
-        <Button
-          variant="ghost"
-          size="small"
+        <IconButton
+          icon="close"
+          label="Close menu"
           className="z-home-nav__close"
           onClick={() => setDrawerOpen(false)}
-        >
-          Close
-        </Button>
+        />
       </div>
       <button
         type="button"
@@ -120,6 +120,28 @@ export function SessionList({
       >
         + New chat
       </button>
+      <div className="z-home-nav__links">
+        <button
+          type="button"
+          className="z-home-link"
+          onClick={() => {
+            setDrawerOpen(false);
+            onSettings("usage");
+          }}
+        >
+          Usage
+        </button>
+        <button
+          type="button"
+          className="z-home-link"
+          onClick={() => {
+            setDrawerOpen(false);
+            onSettings();
+          }}
+        >
+          Settings
+        </button>
+      </div>
       <TextInput
         value={search}
         aria-label="Search chats and work sessions"
@@ -263,24 +285,18 @@ export function SessionList({
       <div className="z-home-main">
         <AppHeader
           leading={
-            <Button
-              variant="ghost"
-              size="small"
+            <IconButton
+              icon="menu"
+              label="Open chats and sessions"
               className="z-home-sessions-trigger"
               aria-expanded={drawerOpen}
               aria-controls="work-sessions"
               onClick={() => setDrawerOpen(true)}
-            >
-              Sessions
-            </Button>
+            />
           }
           title={chatId ? (openChat?.title ?? "Chat") : "Home"}
           subtitle={indicator}
-          trailing={
-            <Button variant="ghost" onClick={onSettings}>
-              Settings
-            </Button>
-          }
+          trailing={<IconButton icon="settings" label="Settings" onClick={() => onSettings()} />}
         />
         <main className="z-home-conversation">
           {notices}

@@ -48,23 +48,41 @@ interface DeviceRuntimes {
   runtimes: Array<{ runtime: string; status: string }>;
 }
 
-export const ROLES: Array<{ role: Role; label: string; help: string }> = [
+export const ROLES: Array<{ role: Role; label: string; job: string; help: string }> = [
   {
     role: "orchestrator",
     label: "Orchestrator",
+    job: "Chats with you",
     help: "Writes replies in the home conversation from current Sessions, approvals and runs. It only talks: work starts in a Session when you ask for it or open a proposal. Without a connected Mac, Zamolxis answers without a model.",
   },
   {
     role: "supervisor",
     label: "Supervisor",
+    job: "Plans the work",
     help: "Your conversational project lead. It answers, summarizes and proposes work; execution starts only when you explicitly delegate.",
   },
-  { role: "builder", label: "Builder", help: "Implements each task." },
-  { role: "verifier", label: "Verifier", help: "Checks each result independently." },
-  { role: "repair", label: "Repair", help: "Fixes results that failed verification." },
+  {
+    role: "builder",
+    label: "Builder",
+    job: "Writes the code",
+    help: "Implements each task in its own copy of the repository.",
+  },
+  {
+    role: "verifier",
+    label: "Verifier",
+    job: "Checks the result",
+    help: "Checks each result independently, in a separate copy, without seeing how it was built.",
+  },
+  {
+    role: "repair",
+    label: "Repair",
+    job: "Fixes failed checks",
+    help: "Fixes results that failed verification. At most two attempts per task.",
+  },
   {
     role: "integration",
     label: "Integration",
+    job: "Prepares the merge",
     help: "Saved for later; integration runs without an agent in Alpha.",
   },
 ];
@@ -218,12 +236,17 @@ export function upsertArgs(input: {
 export function AgentsSettings({
   active,
   devices,
+  initialRole,
+  initialScope = "",
 }: {
   active: boolean;
   devices: DeviceRuntimes[] | undefined;
+  /** Opens one role directly, e.g. from a Session's work map. */
+  initialRole?: Role;
+  initialScope?: string;
 }) {
-  const [scope, setScope] = useState("");
-  const [editing, setEditing] = useState<Role>();
+  const [scope, setScope] = useState(initialScope);
+  const [editing, setEditing] = useState<Role | undefined>(initialRole);
   const products = useQuery(api.supervisor.products, active ? {} : "skip") as Product[] | undefined;
   const global = useQuery(api.agentProfiles.list, active ? {} : "skip") as Profile[] | undefined;
   const productId = scope ? (scope as Id<"products">) : undefined;
@@ -232,16 +255,76 @@ export function AgentsSettings({
     | undefined;
   const scopeRows = productId ? scoped : global;
   const scopeName = products?.find((product) => product._id === productId)?.name ?? "All products";
+  const roleState = (role: Role) => {
+    const rows = scopeRows ?? [];
+    const effective = effectiveProfile(role, productId ? rows : undefined, global ?? []);
+    return { effective, own: scopeProfile(role, rows), shown: effective.profile };
+  };
+  const badge = (source: "product" | "global" | "default") =>
+    source === "default" ? (
+      <StatusBadge status="planned" label="Default" />
+    ) : productId && source === "product" ? (
+      <StatusBadge status="completed" label="Override" />
+    ) : (
+      <StatusBadge status="completed" label="Custom" />
+    );
+  const summary = (shown: Profile | undefined) =>
+    `${shown ? describeProfile(shown) : `${runtimeLabel(DEFAULT_RUNTIME)} · default model`}${
+      shown?.maxConcurrency ? ` · up to ${shown.maxConcurrency} at once` : ""
+    }`;
+  const loading = global === undefined || scopeRows === undefined;
+  const open = editing ? ROLES.find((item) => item.role === editing) : undefined;
+  if (open && !loading) {
+    const { effective, own, shown } = roleState(open.role);
+    return (
+      <section className="z-stack" aria-label={`${open.label} agent`}>
+        <Button
+          variant="ghost"
+          size="small"
+          className="z-back-link"
+          onClick={() => setEditing(undefined)}
+        >
+          ‹ All agents
+        </Button>
+        <div className="z-row">
+          <h4 className="z-title">{open.label}</h4>
+          {badge(effective.source)}
+        </div>
+        <p className="z-small z-muted">{open.help}</p>
+        <p className="z-small">
+          Now: {summary(shown)}
+          {productId ? ` · for ${scopeName}` : ""}
+        </p>
+        {instructionsPreview(shown?.instructions) && (
+          <p className="z-xsmall z-muted" title={shown?.instructions}>
+            Instructions: {instructionsPreview(shown?.instructions)}
+          </p>
+        )}
+        <ProfileNotes
+          own={own}
+          source={effective.source}
+          productId={productId}
+          scopeName={scopeName}
+        />
+        <ProfileEditor
+          key={`${open.role}:${scope}`}
+          role={open.role}
+          label={open.label}
+          scopeName={scopeName}
+          productId={productId}
+          existing={own}
+          prefill={own ?? shown}
+          runtimes={runtimeChoices(devices, (own ?? shown)?.runtime)}
+          onDone={() => setEditing(undefined)}
+        />
+      </section>
+    );
+  }
   return (
-    <section className="z-stack" aria-label="Orchestration">
-      <h3 className="z-section-title">Orchestration</h3>
-      <p className="z-small z-muted">
-        Ask the Supervisor about the project without opening work. When you explicitly delegate,
-        Builders implement, the Verifier checks the exact result, Repair handles failed checks and
-        Integration prepares trusted changes.
-      </p>
+    <section className="z-stack" aria-label="Agents">
       <p className="z-xsmall z-muted">
-        Changes apply to new runs. Running and past runs keep the settings they started with.
+        Each job is done by its own agent. Tap one to change its agent or model. Changes apply to
+        new runs. Running and past runs keep the settings they started with.
       </p>
       {products && products.length > 0 && (
         <Picker
@@ -263,80 +346,69 @@ export function AgentsSettings({
           back to All products.
         </p>
       )}
-      {global === undefined || scopeRows === undefined ? (
+      {loading ? (
         <p className="z-muted z-small" role="status">
           Loading agents…
         </p>
       ) : (
-        <div className="z-list">
-          {ROLES.map(({ role, label, help }) => {
-            const effective = effectiveProfile(role, productId ? scopeRows : undefined, global);
-            const own = scopeProfile(role, scopeRows);
-            const shown = effective.profile;
+        <div className="z-settings-list">
+          {ROLES.map(({ role, label, job }) => {
+            const { effective, own, shown } = roleState(role);
             return (
-              <div className="z-list-item" key={role}>
-                <div className="z-row">
-                  <span className="z-list-item__title">{label}</span>
-                  <span className="z-spacer" />
-                  {effective.source === "default" ? (
-                    <StatusBadge status="planned" label="Default" />
-                  ) : productId && effective.source === "product" ? (
-                    <StatusBadge status="completed" label="Override" />
-                  ) : (
-                    <StatusBadge status="completed" label="Custom" />
+              <button
+                type="button"
+                className="z-settings-row"
+                key={role}
+                aria-label={`${label}: ${summary(shown)}. Change`}
+                onClick={() => setEditing(role)}
+              >
+                <span className="z-settings-row__text">
+                  <span className="z-row">
+                    <span className="z-settings-row__title">{label}</span>
+                    <span className="z-xsmall z-muted">{job}</span>
+                  </span>
+                  <span className="z-settings-row__summary">{summary(shown)}</span>
+                  {own && !own.enabled && (
+                    <span className="z-xsmall z-muted">Your {scopeName} profile is off.</span>
                   )}
-                </div>
-                <span className="z-xsmall z-muted">{help}</span>
-                <span className="z-small">
-                  {shown
-                    ? describeProfile(shown)
-                    : `${runtimeLabel(DEFAULT_RUNTIME)} · default model`}
-                  {shown?.maxConcurrency ? ` · up to ${shown.maxConcurrency} at once` : ""}
                 </span>
-                {shown && <span className="z-xsmall z-muted">{shown.name}</span>}
-                {instructionsPreview(shown?.instructions) && (
-                  <span className="z-xsmall z-muted" title={shown?.instructions}>
-                    Instructions: {instructionsPreview(shown?.instructions)}
-                  </span>
-                )}
-                {(own && !own.enabled) || (productId && effective.source !== "product") ? (
-                  <span className="z-xsmall z-muted">
-                    {own && !own.enabled ? `Your ${scopeName} profile is off. ` : ""}
-                    {effective.source === "global" && productId
-                      ? "Using All products."
-                      : effective.source === "default"
-                        ? "Using the built-in default."
-                        : ""}
-                  </span>
-                ) : null}
-                {editing === role ? (
-                  <ProfileEditor
-                    role={role}
-                    label={label}
-                    scopeName={scopeName}
-                    productId={productId}
-                    existing={own}
-                    prefill={own ?? shown}
-                    runtimes={runtimeChoices(devices, (own ?? shown)?.runtime)}
-                    onDone={() => setEditing(undefined)}
-                  />
-                ) : (
-                  <Button variant="ghost" size="small" onClick={() => setEditing(role)}>
-                    {own
-                      ? productId
-                        ? "Edit override"
-                        : "Edit"
-                      : productId
-                        ? `Override for ${scopeName}`
-                        : "Set up"}
-                  </Button>
-                )}
-              </div>
+                {badge(effective.source)}
+                <span className="z-settings-row__chevron" aria-hidden="true">
+                  ›
+                </span>
+              </button>
             );
           })}
         </div>
       )}
     </section>
+  );
+}
+
+function ProfileNotes({
+  own,
+  source,
+  productId,
+  scopeName,
+}: {
+  own: Profile | undefined;
+  source: "product" | "global" | "default";
+  productId: Id<"products"> | undefined;
+  scopeName: string;
+}) {
+  const off = own && !own.enabled ? `Your ${scopeName} profile is off. ` : "";
+  const using =
+    source === "global" && productId
+      ? "Using All products."
+      : source === "default"
+        ? "Using the built-in default."
+        : "";
+  if (!off && !using) return null;
+  return (
+    <p className="z-xsmall z-muted">
+      {off}
+      {using}
+    </p>
   );
 }
 

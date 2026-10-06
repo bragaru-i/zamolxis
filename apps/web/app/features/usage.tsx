@@ -121,9 +121,12 @@ export function SessionUsage({
 export function UsageSettings({
   active,
   onOpenSession,
+  showTitle = true,
 }: {
   active: boolean;
   onOpenSession?: (id: Id<"workSessions">) => void;
+  /** Off when the surrounding page already names the section. */
+  showTitle?: boolean;
 }) {
   const [period, setPeriod] = useState<Period>("7d");
   const usage = useQuery(api.usage.summary, active ? { period } : "skip") as
@@ -131,7 +134,7 @@ export function UsageSettings({
     | undefined;
   return (
     <section className="z-stack" aria-label="Usage">
-      <h3 className="z-section-title">Usage</h3>
+      {showTitle && <h3 className="z-section-title">Usage</h3>}
       <SegmentedControl label="Period" options={PERIODS} value={period} onChange={setPeriod} />
       {usage === undefined ? (
         <p className="z-muted z-small" role="status">

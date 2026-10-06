@@ -6,6 +6,7 @@ import {
   Button,
   Collapsible,
   Composer,
+  IconButton,
   Markdown,
   Message,
   Notice,
@@ -131,11 +132,7 @@ export function SessionView({
     <AppShell
       header={
         <AppHeader
-          leading={
-            <Button variant="ghost" onClick={onBack} aria-label="Back to sessions">
-              ‹ Sessions
-            </Button>
-          }
+          leading={<IconButton icon="back" label="Back to Home" onClick={onBack} />}
           title={session?.title ?? "Session"}
           subtitle={
             <>
