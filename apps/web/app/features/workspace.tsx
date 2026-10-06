@@ -19,6 +19,7 @@ import { errorCode, explainError } from "./errors";
 import { PeopleSection } from "./people";
 import { SessionView } from "./session-view";
 import { SessionList } from "./sessions";
+import { StorageSettings } from "./storage";
 import { UsageSettings } from "./usage";
 import { useSearchParam } from "./use-location";
 
@@ -202,6 +203,7 @@ function Settings({
       </section>
       <AgentsSettings active={open} devices={devices} />
       <UsageSettings active={open} onOpenSession={onOpenSession} />
+      <StorageSettings active={open} now={now} />
       <PeopleSection active={open} now={now} />
       <DevicesSection active={open} now={now} />
       <Button
