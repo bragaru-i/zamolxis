@@ -30,6 +30,7 @@ import {
   approvalIdFor,
   boundText,
   fitPayload,
+  knownCommit,
   RESTART_CONTINUATION,
   RESTART_INTERRUPTED_CODE,
   type ResumeRunInput,
@@ -637,7 +638,7 @@ export class ClaudeRuntime implements AgentRuntime {
           ? // The Supervisor's reply is structured JSON that the Node parses and redacts
             // field by field; redacting it here would corrupt values such as task keys.
             boundText(reply, REPLY_LIMIT)
-          : redactedText(reply, REPLY_LIMIT)
+          : redactedText(reply, REPLY_LIMIT, { keep: knownCommit(session.input.workspace.cwd) })
         : "Claude turn completed";
       this.#finish(session, "completed", summary);
     } else if (session.stopping) this.#finish(session, "stopped", "Claude turn interrupted");

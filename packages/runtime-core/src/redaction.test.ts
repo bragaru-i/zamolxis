@@ -103,3 +103,37 @@ describe("bounds", () => {
     expect(safeSummary(`TOKEN=${SECRET}\necho`)).toBe("TOKEN=*** echo");
   });
 });
+
+describe("known commits", () => {
+  it("keeps a SHA only when the caller proves it, and never a named secret", async () => {
+    const sha = "937dc44a1b2c3d4e5f60718293a4b5c6d7e8f901";
+    expect(redactSecrets(`Reviewed exact SHA ${sha}.`)).toBe("Reviewed exact SHA ***.");
+    const keep = (run: string) => run === sha;
+    expect(redactSecrets(`Reviewed exact SHA ${sha}.`, { keep })).toBe(
+      `Reviewed exact SHA ${sha}.`,
+    );
+    expect(redactSecrets(`GITHUB_TOKEN=${sha}`, { keep })).toBe("GITHUB_TOKEN=***");
+    expect(redactSecrets(`other ${"a".repeat(40)}`, { keep })).toBe("other ***");
+  });
+
+  it("asks Git whether a SHA is a commit of the repository", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { knownCommit } = await import("./known-commits");
+    const dir = mkdtempSync(join(tmpdir(), "zam-commit-"));
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { cwd: dir, encoding: "utf8" }).trim();
+    git("init", "-q");
+    writeFileSync(join(dir, "a.txt"), "a");
+    git("add", ".");
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "a");
+    const head = git("rev-parse", "HEAD");
+    const keep = knownCommit(dir);
+    expect(keep(head)).toBe(true);
+    expect(keep("f".repeat(40))).toBe(false);
+    expect(keep("not-a-sha")).toBe(false);
+    expect(knownCommit(join(dir, "missing"))(head)).toBe(false);
+  });
+});

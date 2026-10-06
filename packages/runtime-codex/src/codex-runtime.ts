@@ -17,6 +17,7 @@ import {
   boundText,
   classifyCommandRisk,
   insideWorkspace,
+  knownCommit,
   maxRisk,
   RESTART_CONTINUATION,
   RESTART_INTERRUPTED_CODE,
@@ -81,6 +82,8 @@ interface Session {
   approvals: Map<string, PendingApproval>;
   // Paths proposed by in-progress file change items, for approval summaries.
   fileItems: Map<string, { path: string; kind: string }[]>;
+  // Commit SHAs of the run's repository stay readable in its replies (see knownCommit).
+  readonly commits: (run: string) => boolean;
 }
 interface PendingApproval {
   requestId: AppServerRequestId;
@@ -242,6 +245,7 @@ export class CodexRuntime implements AgentRuntime {
     const session: Session = {
       input,
       client,
+      commits: knownCommit(input.workspace.cwd),
       id: "",
       turnId: "",
       state: "running",
@@ -448,7 +452,7 @@ export class CodexRuntime implements AgentRuntime {
           session.reply =
             session.input.role === "supervisor"
               ? boundText(reply, REPLY_LIMIT)
-              : redactedText(reply, REPLY_LIMIT);
+              : redactedText(reply, REPLY_LIMIT, { keep: session.commits });
         this.#turnFinished(session, turn.status);
       }
       return this.#snapshot(session);
@@ -626,7 +630,7 @@ export class CodexRuntime implements AgentRuntime {
           session.reply =
             session.input.role === "supervisor"
               ? boundText(item.text, REPLY_LIMIT)
-              : redactedText(item.text, REPLY_LIMIT);
+              : redactedText(item.text, REPLY_LIMIT, { keep: session.commits });
           // Interim commentary is a progress note now; a final answer is only the reply;
           // without a phase the message is held until something follows it.
           if (item.phase === "commentary")

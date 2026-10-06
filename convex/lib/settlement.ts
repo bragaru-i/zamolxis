@@ -1,7 +1,7 @@
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
-import { refreshSession } from "./lifecycle";
 import { fail, load } from "./access";
+import { refreshSession } from "./lifecycle";
 
 export async function refreshDependents(ctx: MutationCtx, taskId: Id<"tasks">) {
   const edges = await ctx.db

@@ -77,6 +77,19 @@ planned capability as shipped.
   page with a back button; wide screens show the menu as a left column next to the page. Agents
   is a compact list of roles; tapping one opens its description and editor. Usage and Settings are
   also at the top of the Home sidebar, and the Mac status in the header opens Macs directly.
+- **Proof images:** Builder, Repair and Verifier instructions ask the agent to save up to 8
+  screenshots or previews (PNG, JPEG, WebP, GIF, SVG, at most 5 MB each) in `.zamolxis-proof`
+  at the repository root when the result can be seen. When the run ends the Node moves that
+  folder out of the worktree (before the candidate commit and the checks, so it is never
+  committed), adds images the candidate added or edited (e.g. a new logo) up to the limit, and
+  delivers them through the durable outbox: `proof:uploadUrl` → Convex storage → `proof:record`
+  (Node-authenticated for its own run; the stored size and type are checked; duplicates and
+  files outside the limits are deleted). Each run row in a Session shows thumbnails; a tap opens
+  the image full size. Only the Session owner can list them. Screenshots are uploaded as taken:
+  they are not redacted, so an agent that screenshots a terminal could capture a secret.
+- **Commit IDs in agent replies:** redaction keeps a 40/64-hex string only when Git confirms it
+  is a commit of the run's repository (`knownCommit`), so "Reviewed exact SHA …" is readable
+  while other hex strings (e.g. old-style tokens) stay hidden.
 - **Session work map:** a Session with tasks shows how its work moves in five plain steps (Plan,
   Build, Check, Fix, Ready), each with its state derived from task phases and runs (for example
   "1 agent writing code · 2 of 3 done", "Not needed so far"), and the agent that did it (the

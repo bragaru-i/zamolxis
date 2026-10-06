@@ -1,7 +1,7 @@
 import { publishBranchName } from "@zamolxis/application";
 import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
-import { mutation, type MutationCtx, type QueryCtx, query } from "./_generated/server";
+import { type MutationCtx, mutation, type QueryCtx, query } from "./_generated/server";
 import { fail, load, ownSession, requireNode } from "./lib/access";
 import { enqueue } from "./lib/commands";
 import { recordPublishStep } from "./traces";

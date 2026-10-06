@@ -1,9 +1,9 @@
 import { createPublicKey, generateKeyPairSync, verify } from "node:crypto";
 import { convexTest } from "convex-test";
 import { afterEach, expect, it, vi } from "vitest";
+import { seedHuman } from "../tests/fixtures/auth";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
-import { seedHuman } from "../tests/fixtures/auth";
 
 const modules = {
   "./_generated/server.ts": () => import("./_generated/server"),

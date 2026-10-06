@@ -251,7 +251,7 @@ try {
       manager,
       new ConvexControlPlaneTransport(client, config.workstationId, identity.instanceId),
       config.workstationId,
-      { githubCredentials, github },
+      { githubCredentials, github, proofRoot: join(root, "proof") },
     );
     // Discovery is performed before every assigned run by the driver. Its first tick
     // reattaches the runs a previous Node process left unfinished (resumed from the

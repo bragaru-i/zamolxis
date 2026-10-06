@@ -1,5 +1,5 @@
+import { getAuthSessionId, getAuthUserId } from "@convex-dev/auth/server";
 import { ConvexError } from "convex/values";
-import { getAuthUserId, getAuthSessionId } from "@convex-dev/auth/server";
 import type { Doc, Id, TableNames } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
 export function fail(code: string, message = code): never {
