@@ -1,9 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { PUBLISH_TOKEN_ENV, tokenPushOptions } from "./publish";
+import { PUBLISH_TOKEN_ENV, pushCommit, tokenPushOptions } from "./publish";
 
 const TOKEN = `github_pat_${"Z9y8X7w6V5".repeat(8)}`;
 const roots: string[] = [];
@@ -61,5 +61,29 @@ describe("token pushes", () => {
     expect(asLogin).toContain(`password=${TOKEN}`);
     expect(() => tokenPushOptions(TOKEN, "bad\nname")).toThrow("INVALID_PUSH_USERNAME");
     expect(() => tokenPushOptions(`${TOKEN}\n`)).toThrow("INVALID_PUSH_TOKEN");
+  });
+
+  it("treats an exact remote branch as an idempotent successful push", () => {
+    const root = mkdtempSync(join(tmpdir(), "zamolxis-publish-retry-"));
+    roots.push(root);
+    const remote = join(root, "remote.git");
+    const repo = join(root, "repo");
+    execFileSync("git", ["init", "-q", "--bare", remote]);
+    execFileSync("git", ["init", "-q", repo]);
+    execFileSync("git", ["-C", repo, "config", "user.name", "Zamolxis Test"]);
+    execFileSync("git", ["-C", repo, "config", "user.email", "test@example.invalid"]);
+    writeFileSync(join(repo, "source.txt"), "candidate\n");
+    execFileSync("git", ["-C", repo, "add", "source.txt"]);
+    execFileSync("git", ["-C", repo, "commit", "-q", "-m", "candidate"]);
+    const sha = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], {
+      encoding: "utf8",
+    }).trim();
+    const branch = `zamolxis/candidate-${sha.slice(0, 7)}`;
+    execFileSync("git", ["-C", repo, "push", "-q", remote, `${sha}:refs/heads/${branch}`]);
+    const hook = join(repo, ".git", "hooks", "pre-push");
+    writeFileSync(hook, "#!/bin/sh\nexit 1\n");
+    chmodSync(hook, 0o755);
+
+    expect(() => pushCommit(repo, sha, branch, { target: remote, token: TOKEN })).not.toThrow();
   });
 });

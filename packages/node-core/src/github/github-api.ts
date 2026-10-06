@@ -19,7 +19,7 @@ export interface PullRequestRequest {
 export interface GitHubClient {
   /** Who the token is and whether it may push here. Never throws for a bad token. */
   checkAccess(repository: GitHubRepository, token: string): Promise<GitHubAccess>;
-  /** Finds the open pull request for `head`, or opens one. Resolves to its URL. */
+  /** Finds the pull request already created for `head`, or opens one. Resolves to its URL. */
   openPullRequest(request: PullRequestRequest): Promise<string>;
 }
 
@@ -140,10 +140,13 @@ export class RestGitHubClient implements GitHubClient {
     }
   }
 
-  async #findOpen(request: PullRequestRequest): Promise<string | undefined> {
+  async #findExisting(request: PullRequestRequest): Promise<string | undefined> {
     const { owner, repo } = request.repository;
     const query = new URLSearchParams({
-      state: "open",
+      // Publication means that this exact SHA-bound branch reached GitHub. A retry after
+      // its PR was closed or merged must recover that durable result rather than attempt
+      // to create a duplicate PR (which GitHub rejects once the head is in the base).
+      state: "all",
       head: `${owner}:${request.head}`,
       base: request.base,
       per_page: "1",
@@ -163,7 +166,7 @@ export class RestGitHubClient implements GitHubClient {
 
   async openPullRequest(request: PullRequestRequest): Promise<string> {
     // A retry after a lost result finds the pull request opened the first time.
-    const existing = await this.#findOpen(request);
+    const existing = await this.#findExisting(request);
     if (existing) return existing;
     const { owner, repo } = request.repository;
     const created = await this.#request(
@@ -187,7 +190,7 @@ export class RestGitHubClient implements GitHubClient {
     }
     // 422 when it already exists (for example opened concurrently): look once more.
     if (created.status === 422) {
-      const raced = await this.#findOpen(request);
+      const raced = await this.#findExisting(request);
       if (raced) return raced;
     }
     throw new Error("GITHUB_PR_CREATE_FAILED");

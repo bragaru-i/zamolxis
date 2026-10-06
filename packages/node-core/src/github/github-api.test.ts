@@ -142,8 +142,8 @@ describe("opening a pull request", () => {
     body: "Opened by Zamolxis",
   };
   const list =
-    "GET /repos/bragaru-i/zamolxis/pulls?state=open&head=bragaru-i%3Azamolxis%2Ffix-1234567&base=main&per_page=1";
-  it("reuses an open pull request for the branch", async () => {
+    "GET /repos/bragaru-i/zamolxis/pulls?state=all&head=bragaru-i%3Azamolxis%2Ffix-1234567&base=main&per_page=1";
+  it("reuses an existing pull request for the branch, including a closed one", async () => {
     const { calls, client } = fake({
       [list]: { status: 200, body: [{ html_url: "https://github.com/bragaru-i/zamolxis/pull/3" }] },
     });
