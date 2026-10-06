@@ -82,6 +82,34 @@ export const create = mutation({
     return id;
   },
 });
+// The owner is done with an idle Session: nothing is running, so nothing is interrupted.
+// Unfinished Tasks are cancelled; a later message reopens the Session as usual.
+export const close = mutation({
+  args: { workSessionId: v.id("workSessions") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const session = await ownSession(ctx, args.workSessionId);
+    if (["completed", "cancelled"].includes(session.status)) return null;
+    if (["planning", "running"].includes(session.status) || session.activeRunCount > 0)
+      fail("INVALID_STATE");
+    const tasks = await ctx.db
+      .query("tasks")
+      .withIndex("by_session", (q) => q.eq("workSessionId", session._id))
+      .take(101);
+    if (tasks.length > 100) fail("LIMIT_EXCEEDED");
+    const now = Date.now();
+    for (const task of tasks)
+      if (!["completed", "failed", "cancelled"].includes(task.status))
+        await ctx.db.patch("tasks", task._id, { status: "cancelled", updatedAt: now });
+    await ctx.db.patch("workSessions", session._id, {
+      status: "completed",
+      needsInputCount: 0,
+      completedAt: now,
+      updatedAt: now,
+    });
+    return null;
+  },
+});
 export const cancel = mutation({
   args: { workSessionId: v.id("workSessions") },
   returns: v.null(),

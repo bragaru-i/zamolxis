@@ -423,6 +423,31 @@ it("keeps an active Session running when the Supervisor only answers", async () 
   expect(session.totalTaskCount).toBe(1);
 });
 
+it("closes an idle Session on the owner's action, never one that is working", async () => {
+  const f = await fixture();
+  const idle = await f.submit("Hello");
+  await f.accept({ decision: "answer", reply: "Hi." });
+  await f.user.mutation(api.sessions.close, { workSessionId: idle });
+  await f.user.mutation(api.sessions.close, { workSessionId: idle });
+  expect(await f.user.query(api.sessions.get, { workSessionId: idle })).toMatchObject({
+    status: "completed",
+    needsInputCount: 0,
+  });
+  // A follow-up picks the closed Session up again.
+  await f.submit("One more question", idle);
+  expect((await f.user.query(api.sessions.get, { workSessionId: idle })).status).toBe("planning");
+
+  const working = await f.submit("Build");
+  const plan = await f.accept({}, [task("one")]);
+  await f.settlePlan(plan.command._id);
+  await expect(f.user.mutation(api.sessions.close, { workSessionId: working })).rejects.toThrow(
+    "INVALID_STATE",
+  );
+  await expect(f.other.mutation(api.sessions.close, { workSessionId: idle })).rejects.toThrow(
+    "FORBIDDEN",
+  );
+});
+
 it("reopens a completed or failed Session on follow-up and refuses a cancelled one", async () => {
   const f = await fixture();
   for (const status of ["completed", "failed"] as const) {
