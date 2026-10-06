@@ -1,6 +1,11 @@
 import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type NormalizedRunEventDto, traceStepProblem } from "@zamolxis/contracts";
+import {
+  type NormalizedRunEventDto,
+  SUPERVISOR_LOG_STEPS_LIMIT,
+  supervisorLogStepProblem,
+  traceStepProblem,
+} from "@zamolxis/contracts";
 import { git } from "@zamolxis/git";
 import {
   FakeRuntime,
@@ -14,6 +19,7 @@ import { LocalStateStore } from "../persistence/local-state";
 import { RepositoryRegistry } from "../repository/repository-registry";
 import { RuntimeManager } from "../runtime/runtime-manager";
 import { repositoryFixture } from "../testing/git-fixture";
+import type { SupervisorLogBatch } from "../trace/supervisor-log";
 import { WorkspaceManager } from "../workspace/workspace-manager";
 import {
   ControlPlaneDriver,
@@ -91,13 +97,19 @@ function fixture(
   const manager = new RuntimeManager(store, workspaces, runtimes, "node" as never, () => true);
   const deliveries: Delivery[] = [];
   const progress: SupervisorProgress[] = [];
-  const state = { pending: [] as ExecutionCommand[] };
+  const logs: SupervisorLogBatch[] = [];
+  const state ={ pending: [] as ExecutionCommand[] };
   const transport: ControlPlaneTransport = {
     listPending: async () => state.pending,
     claim: async () => {},
     acknowledge: async () => {},
     reconcile: async () => {},
     deliver: async (delivery) => {
+      // Supervisor logs are asserted on their own.
+      if (delivery.kind === "supervisor.log") {
+        logs.push(delivery);
+        return;
+      }
       deliveries.push(delivery);
       if (delivery.kind === "command.complete" || delivery.kind === "command.failed")
         state.pending = state.pending.filter((command) => command.commandId !== delivery.commandId);
@@ -157,6 +169,7 @@ function fixture(
     runtime,
     deliveries,
     progress,
+    logs,
     state,
     driver,
     plan,
@@ -639,6 +652,95 @@ it("rejects Supervisor approval requests: nobody can approve a Node-local read-o
   ]);
 });
 
+describe("Supervisor activity log", { timeout: 30_000 }, () => {
+  it("records phases, tools, files read, notes, refused approvals, usage and the decision", async () => {
+    const f = fixture(() => [
+      { type: "activity", label: "Thinking" },
+      { type: "activity", label: "Thinking" },
+      {
+        type: "tool",
+        tool: "command",
+        summary: "GITHUB_TOKEN=*** cat convex/schema.ts",
+        reads: ["convex/schema.ts"],
+      },
+      { type: "tool", tool: "command", summary: "pnpm missing · exit code 1", success: false },
+      { type: "message", text: "Schema read; checking the API next." },
+      { type: "approval", kind: "command", summary: "Run: curl https://example.com", risk: "high" },
+      ...json({
+        decision: "plan",
+        reply: "Two tasks.",
+        tasks: [
+          { key: "a", title: "Add field", description: "d" },
+          { key: "b", title: "Show field", description: "d", dependencies: ["a"] },
+        ],
+      }),
+    ]);
+    const { id, textCommandId } = await f.plan("Add a field", {
+      supervisor: { runtime: "fake", model: "m-1", reasoningEffort: "high" },
+    });
+    expect(f.deliveries[0]).toMatchObject({ kind: "repository.plan", decision: "plan" });
+    expect(f.logs).toHaveLength(1);
+    const [log] = f.logs;
+    expect(log?.textCommandId).toBe(textCommandId);
+    const steps = log?.steps ?? [];
+    for (const step of steps) expect(supervisorLogStepProblem(step)).toBeUndefined();
+    expect(steps.map((step) => [step.kind, step.label, step.status])).toEqual([
+      ["discovery", "Repository discovered", "passed"],
+      ["supervisor", "Supervisor finished", "passed"],
+      ["phase", "Thinking", "passed"],
+      ["tool", "GITHUB_TOKEN=*** cat convex/schema.ts", "passed"],
+      ["tool", "pnpm missing · exit code 1", "failed"],
+      ["message", "Note", "passed"],
+      ["approval", "Approval request refused", "failed"],
+      ["supervisor", "Planned 2 tasks", "passed"],
+    ]);
+    expect(steps[0]?.references).toEqual({ sha: f.head });
+    expect(steps[1]?.detail).toBe(
+      "Test runtime · model m-1 · reasoning high · reported model model-x\n15 tokens (10 in · 5 out)",
+    );
+    expect(steps[3]?.detail).toBe("Read convex/schema.ts");
+    expect(steps[5]?.detail).toBe("Schema read; checking the API next.");
+    expect(steps[6]?.detail).toContain("Run: curl https://example.com");
+    expect(steps[7]?.detail).toBe("1. Add field\n2. Show field");
+    // Stable ids scoped by the plan command: a replayed batch is a no-op on the backend.
+    expect(steps.every((step) => step.stepId.startsWith(`${id}:`))).toBe(true);
+    expect(new Set(steps.map((step) => step.stepId)).size).toBe(steps.length);
+    // The log is delivered before the plan outcome, through the durable outbox.
+    expect(f.store.listPendingEvents(100, "control-plane.delivery")).toEqual([]);
+  });
+  it("logs a stopped or failed Supervisor with its failure code", async () => {
+    const failing = fixture(() => [
+      { type: "message", text: "Starting with PASSWORD=hunter2" },
+      { type: "failure", message: "boom" },
+    ]);
+    await failing.plan("Question");
+    const steps = failing.logs.flatMap((log) => log.steps);
+    expect(steps.map((step) => [step.kind, step.label, step.status])).toEqual([
+      ["discovery", "Repository discovered", "passed"],
+      ["supervisor", "Supervisor failed", "failed"],
+      ["message", "Note", "passed"],
+      ["supervisor", "No answer", "failed"],
+    ]);
+    // The Node redacts again whatever the adapter reported.
+    expect(steps[2]?.detail).toBe("Starting with PASSWORD=***");
+    expect(steps[3]?.detail).toBe("Failure: SUPERVISOR_FAILED");
+  });
+  it("keeps the log bounded and says how many later steps were not recorded", async () => {
+    const tools: FakeStep[] = Array.from({ length: 400 }, (_, index) => ({
+      type: "tool",
+      tool: "command",
+      summary: `rg pattern-${index}`,
+    }));
+    const f = fixture(() => [...tools, ...json({ decision: "answer", reply: "Done", tasks: [] })]);
+    await f.plan("Search everything");
+    const steps = f.logs.flatMap((log) => log.steps);
+    expect(steps).toHaveLength(SUPERVISOR_LOG_STEPS_LIMIT);
+    expect(f.logs.map((log) => log.steps.length)).toEqual([100, 100, 100]);
+    expect(steps.at(-1)).toMatchObject({ kind: "supervisor", label: "Answered" });
+    expect(steps[1]?.detail).toContain("103 later steps not recorded");
+  });
+});
+
 describe("Supervisor progress and stop", { timeout: 30_000 }, () => {
   it("describes activities and tool calls in one bounded line", () => {
     const base = {
@@ -750,6 +852,10 @@ describe("Supervisor progress and stop", { timeout: 30_000 }, () => {
       { kind: "command.failed", commandId: command.commandId, code: "SUPERVISOR_STOPPED" },
     ]);
     expect(f.state.pending).toEqual([]);
+    // What it did before the stop stays visible.
+    const logged = f.logs.flatMap((log) => log.steps);
+    expect(logged.map((step) => step.label)).toContain("Reading convex/schema.ts");
+    expect(logged.at(-1)).toMatchObject({ label: "Stopped before answering", status: "failed" });
     expect((await runtime.inspect(`fake:supervisor:${textCommandId}`)).state).toBe("stopped");
     expect(f.store.getWorkspaceLease("plan")).toBeUndefined();
     expect(git(f.repo.path, ["rev-parse", "HEAD"])).toBe(f.head);

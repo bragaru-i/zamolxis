@@ -5,5 +5,6 @@ export * from "./repository/repository-context";
 export * from "./runtime/runtime";
 export * from "./shared/errors";
 export * from "./shared/ids";
+export * from "./trace/supervisor-log";
 export * from "./trace/trace-step";
 export * from "./workspaces/workspace";

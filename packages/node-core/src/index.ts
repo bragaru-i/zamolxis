@@ -13,5 +13,6 @@ export * from "./repository/repository-registry";
 export * from "./runtime/runtime-manager";
 export * from "./trace/recorder";
 export * from "./trace/steps";
+export * from "./trace/supervisor-log";
 export * from "./workspace/workspace-manager";
 export * from "./integration/publish";
