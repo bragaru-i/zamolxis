@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
 import {
   chmodSync,
-  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -37,6 +36,7 @@ import {
   AppServerClient,
   type AppServerNotification,
 } from "../packages/runtime-codex/src/app-server-client";
+import { prepareCodexHome } from "../packages/runtime-codex/src/codex-home";
 import { type CodexConnection, CodexRuntime } from "../packages/runtime-codex/src/codex-runtime";
 import type { AgentRuntime, StartRunInput } from "../packages/runtime-core/src/agent-runtime";
 import { FakeRuntime } from "../packages/runtime-core/src/fake/fake-runtime";
@@ -619,12 +619,9 @@ it.skipIf(process.env.ZAMOLXIS_AUTHENTICATED_ACCEPTANCE !== "1")(
     const profile = mkdtempSync(join(tmpdir(), "zamolxis-authenticated-node-"));
     const children: ReturnType<typeof spawn>[] = [];
     try {
-      chmodSync(profile, 0o700);
-      copyFileSync(
-        join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "auth.json"),
-        join(profile, "auth.json"),
-      );
-      chmodSync(join(profile, "auth.json"), 0o600);
+      prepareCodexHome(profile, {
+        authSource: join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "auth.json"),
+      });
       await f.t.run(async (ctx) => {
         await ctx.db.patch("tasks", f.taskId, {
           description: "Reply ALPHA_OK. Do not use tools, execute commands or modify files.",
@@ -701,13 +698,11 @@ it("runs text intent through discovery, native Builder, independent Verifier, de
   cleanup.push(() => {
     for (const child of children) child.kill();
   });
-  if (authenticated) {
-    copyFileSync(
-      join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "auth.json"),
-      join(profile, "auth.json"),
-    );
-    chmodSync(join(profile, "auth.json"), 0o600);
-  }
+  // Prepared like the Node's own CODEX_HOME: the login plus the lean config (#114).
+  if (authenticated)
+    prepareCodexHome(profile, {
+      authSource: join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "auth.json"),
+    });
   const { writeFileSync } = await import("node:fs");
   writeFileSync(
     join(f.path, "package.json"),
@@ -939,6 +934,12 @@ it("runs text intent through discovery, native Builder, independent Verifier, de
   expect(git(f.path, ["rev-parse", "HEAD"])).toBe(canonicalSha);
   expect(git(f.path, ["status", "--porcelain"])).toBe("");
   expect(n.store.listPendingEvents()).toEqual([]);
+  // Where the tokens went (#114): processed = input (cached included) + output.
+  for (const run of await f.user.query(api.runs.listBySession, { workSessionId: sessionId }))
+    if (run.totalTokens !== undefined)
+      console.log(
+        `${run.role} usage: ${run.totalTokens} processed, ${run.modelCalls ?? "?"} calls, ${(run.inputTokens ?? 0) - (run.cachedInputTokens ?? 0)} fresh, ${run.cachedInputTokens ?? 0} cached, ${run.outputTokens ?? 0} out (${run.reasoningOutputTokens ?? 0} reasoning), model ${run.modelActual}`,
+      );
   console.log(
     `PASS Alpha ${authenticated ? (nativeRepair ? "native Codex with repair" : "native Codex") : "fixture runtime with repair"}: intent → context → plan → candidate → verifier → evidence → trust → integration; canonical unchanged`,
   );
@@ -1518,12 +1519,9 @@ it.skipIf(process.env.ZAMOLXIS_CODEX_ACCEPTANCE !== "1")(
     const f = await fixture("codex");
     const profile = mkdtempSync(join(tmpdir(), "zamolxis-supervisor-native-"));
     cleanup.push(() => rmSync(profile, { recursive: true, force: true }));
-    chmodSync(profile, 0o700);
-    copyFileSync(
-      join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "auth.json"),
-      join(profile, "auth.json"),
-    );
-    chmodSync(join(profile, "auth.json"), 0o600);
+    prepareCodexHome(profile, {
+      authSource: join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "auth.json"),
+    });
     const children: ReturnType<typeof spawn>[] = [];
     cleanup.push(() => {
       for (const child of children) child.kill();
@@ -1675,12 +1673,9 @@ it.skipIf(process.env.ZAMOLXIS_CODEX_ACCEPTANCE !== "1")(
     const f = await fixture("codex");
     const profile = mkdtempSync(join(tmpdir(), "zamolxis-orchestrator-native-"));
     cleanup.push(() => rmSync(profile, { recursive: true, force: true }));
-    chmodSync(profile, 0o700);
-    copyFileSync(
-      join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "auth.json"),
-      join(profile, "auth.json"),
-    );
-    chmodSync(join(profile, "auth.json"), 0o600);
+    prepareCodexHome(profile, {
+      authSource: join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "auth.json"),
+    });
     const children: ReturnType<typeof spawn>[] = [];
     cleanup.push(() => {
       for (const child of children) child.kill();
@@ -1732,12 +1727,9 @@ it.skipIf(process.env.ZAMOLXIS_CODEX_ACCEPTANCE !== "1")(
   async () => {
     const profile = mkdtempSync(join(tmpdir(), "zamolxis-models-native-"));
     cleanup.push(() => rmSync(profile, { recursive: true, force: true }));
-    chmodSync(profile, 0o700);
-    copyFileSync(
-      join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "auth.json"),
-      join(profile, "auth.json"),
-    );
-    chmodSync(join(profile, "auth.json"), 0o600);
+    prepareCodexHome(profile, {
+      authSource: join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "auth.json"),
+    });
     const children: ReturnType<typeof spawn>[] = [];
     cleanup.push(() => {
       for (const child of children) child.kill();

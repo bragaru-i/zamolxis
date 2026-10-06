@@ -12,7 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { prepareCodexHome, releaseCodexHome } from "./codex-home";
+import { CODEX_CONFIG, prepareCodexHome, releaseCodexHome } from "./codex-home";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -32,6 +32,10 @@ it("keeps rollouts across restarts, refreshes only the login and prunes old roll
   prepareCodexHome(home, { authSource });
   expect(statSync(home).mode & 0o777).toBe(0o700);
   expect(statSync(join(home, "auth.json")).mode & 0o777).toBe(0o600);
+  // The lean config is the Node's, rewritten on every start (#114).
+  expect(statSync(join(home, "config.toml")).mode & 0o777).toBe(0o600);
+  expect(readFileSync(join(home, "config.toml"), "utf8")).toBe(CODEX_CONFIG);
+  writeFileSync(join(home, "config.toml"), "[features]\nmulti_agent = true\n");
   const day = join(home, "sessions", "2026", "10", "06");
   mkdirSync(day, { recursive: true });
   const recent = join(day, "rollout-recent.jsonl");
@@ -49,9 +53,28 @@ it("keeps rollouts across restarts, refreshes only the login and prunes old roll
   writeFileSync(authSource, '{"token":"refreshed"}');
   prepareCodexHome(home, { authSource, now: () => now });
   expect(readFileSync(join(home, "auth.json"), "utf8")).toBe('{"token":"refreshed"}');
+  expect(readFileSync(join(home, "config.toml"), "utf8")).toBe(CODEX_CONFIG);
   expect(existsSync(recent)).toBe(true);
   expect(existsSync(old)).toBe(false);
   expect(existsSync(other)).toBe(true);
+});
+
+it("turns off every Codex feature Zamolxis agents do not use", () => {
+  for (const line of [
+    'web_search = "disabled"',
+    "multi_agent = false",
+    "plugins = false",
+    "apps = false",
+    "goals = false",
+    "memories = false",
+    "hooks = false",
+    "enabled = false",
+    "max_context_tokens = 1",
+  ])
+    expect(CODEX_CONFIG).toContain(line);
+  // Nothing here can widen what an agent may do: no sandbox, approval or MCP settings.
+  for (const key of ["sandbox", "approval", "mcp_servers", "model", "shell_environment"])
+    expect(CODEX_CONFIG).not.toContain(key);
 });
 
 it("refuses a symlinked home or login file", () => {
@@ -63,6 +86,9 @@ it("refuses a symlinked home or login file", () => {
   const home = join(base, "home");
   mkdirSync(home);
   symlinkSync(authSource, join(home, "auth.json"));
+  expect(() => prepareCodexHome(home, { authSource })).toThrow("UNSAFE_CODEX_HOME");
+  rmSync(join(home, "auth.json"));
+  symlinkSync(authSource, join(home, "config.toml"));
   expect(() => prepareCodexHome(home, { authSource })).toThrow("UNSAFE_CODEX_HOME");
   expect(() => prepareCodexHome("relative", { authSource })).toThrow("NOT_ABSOLUTE");
 });
