@@ -82,6 +82,28 @@ codes (`PUBLISH_DIRTY`, `PUBLISH_SHA_MISMATCH`, `PUBLISH_PUSH_FAILED`,
 plain language, never with remote output; a failed publication can be retried and
 does not change the Task or Session outcome. Merging stays a human decision.
 
+**Worktree retention.** Managed worktrees (planning, Builder, Verifier, Repair,
+integration) are removed by an hourly backend sweep (`convex/crons.ts`) that sends
+`workspace.cleanup` for at most 10 eligible worktrees per online Mac; Settings →
+Storage shows the count per Mac, what can be removed now and the last cleanup, offers
+"Clean up now" (owner-only, same rules and batch) and sets the retention window
+(1–30 days, default 3). The rules (`convex/lib/retention.ts`) are deterministic: a
+worktree must be `ready`, clean, without an owner Run or any unfinished Run, and
+unused for the window (Session activity, last Run, publication). A planning worktree
+goes one day after the Supervisor decided (or was stopped). Any other worktree needs
+its Session completed, failed, cancelled or waiting with nothing running or queued,
+and its Task not verifying, repairing or integrating. Always kept: an integration
+worktree whose trusted work was not published (or is being published), a published
+one younger than the window, and any worktree holding a trusted, unpublished commit
+unless the clean integration worktree holds the same commit. The Node removes a
+worktree only with `git worktree remove` (never forced; untracked or modified files
+make it refuse with `DIRTY_WORKSPACE_PRESERVED`, recorded as dirty and kept), then
+`git worktree prune`. It deletes only that worktree's own `zam/<repository>/<workspace>`
+branch, only when the backend named the exact commit (never for trusted, unpublished
+work) and the branch still points at it; user branches and published `zamolxis/*`
+branches are never touched. Failures are recorded on the worktree with their code and
+retried after 6 h and 24 h, at most 3 attempts.
+
 ## Agent Profiles and runtimes
 
 Runtime is an execution environment; model is an inference choice. `runtime-core`
