@@ -1,5 +1,5 @@
 "use client";
-import { Button, Notice, StatusBadge, TextInput } from "@zamolxis/ui";
+import { Button, Notice, Picker, StatusBadge, TextInput } from "@zamolxis/ui";
 import { useMutation, useQuery } from "convex/react";
 import { useId, useState } from "react";
 import { api } from "../../../../convex/_generated/api";
@@ -58,6 +58,19 @@ export const ROLES: Array<{ role: Role; label: string; help: string }> = [
   },
 ];
 const EFFORTS = ["low", "medium", "high"];
+const EFFORT_HELP: Record<string, string> = {
+  low: "Fastest replies, lighter thinking.",
+  medium: "Balanced speed and depth.",
+  high: "Slower, for complex problems.",
+};
+// Only roles that start runs can be limited in how many run at once.
+const RUN_ROLES: readonly Role[] = ["builder", "verifier", "repair"];
+export function runtimeLabel(runtime: string): string {
+  return runtime === "codex" ? "Codex" : runtime[0]?.toUpperCase() + runtime.slice(1);
+}
+function effortLabel(effort: string): string {
+  return effort === "xhigh" ? "Extra high" : effort[0]?.toUpperCase() + effort.slice(1);
+}
 /** The backend's built-in runtime when no enabled profile applies. */
 export const DEFAULT_RUNTIME = "codex";
 
@@ -95,9 +108,11 @@ export function runtimeChoices(devices: DeviceRuntimes[] | undefined, current?: 
 
 export function describeProfile(profile: Pick<Profile, "runtime" | "model" | "reasoningEffort">) {
   return [
-    profile.runtime,
+    runtimeLabel(profile.runtime),
     profile.model ?? "default model",
-    profile.reasoningEffort ? `${profile.reasoningEffort} effort` : undefined,
+    profile.reasoningEffort
+      ? `${effortLabel(profile.reasoningEffort).toLowerCase()} effort`
+      : undefined,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -214,24 +229,18 @@ export function AgentsSettings({
         Changes apply to new runs. Running and past runs keep the settings they started with.
       </p>
       {products && products.length > 0 && (
-        <label className="z-field">
-          Applies to
-          <select
-            className="z-select"
-            value={scope}
-            onChange={(event) => {
-              setScope(event.target.value);
-              setEditing(undefined);
-            }}
-          >
-            <option value="">All products</option>
-            {products.map((product) => (
-              <option key={product._id} value={product._id}>
-                {product.name}
-              </option>
-            ))}
-          </select>
-        </label>
+        <Picker
+          label="Applies to"
+          value={scope}
+          options={[
+            { value: "", label: "All products" },
+            ...products.map((product) => ({ value: product._id, label: product.name })),
+          ]}
+          onChange={(value) => {
+            setScope(value);
+            setEditing(undefined);
+          }}
+        />
       )}
       {productId && (
         <p className="z-xsmall z-muted">
@@ -264,7 +273,9 @@ export function AgentsSettings({
                 </div>
                 <span className="z-xsmall z-muted">{help}</span>
                 <span className="z-small">
-                  {shown ? describeProfile(shown) : `${DEFAULT_RUNTIME} · default model`}
+                  {shown
+                    ? describeProfile(shown)
+                    : `${runtimeLabel(DEFAULT_RUNTIME)} · default model`}
                   {shown?.maxConcurrency ? ` · up to ${shown.maxConcurrency} at once` : ""}
                 </span>
                 {shown && <span className="z-xsmall z-muted">{shown.name}</span>}
@@ -405,20 +416,12 @@ export function ProfileEditor({
           onChange={(event) => setName(event.target.value)}
         />
       </label>
-      <label className="z-field">
-        Runtime
-        <select
-          className="z-select"
-          value={runtime}
-          onChange={(event) => setRuntime(event.target.value)}
-        >
-          {runtimes.map((choice) => (
-            <option key={choice} value={choice}>
-              {choice}
-            </option>
-          ))}
-        </select>
-      </label>
+      <Picker
+        label="Agent"
+        value={runtime}
+        options={runtimes.map((choice) => ({ value: choice, label: runtimeLabel(choice) }))}
+        onChange={setRuntime}
+      />
       <label className="z-field" htmlFor={modelId}>
         Model
         <TextInput
@@ -434,33 +437,32 @@ export function ProfileEditor({
           onChange={(event) => setModel(event.target.value)}
         />
       </label>
-      <label className="z-field">
-        Reasoning effort
-        <select
-          className="z-select"
-          value={effort}
-          onChange={(event) => setEffort(event.target.value)}
-        >
-          <option value="">Runtime default</option>
-          {efforts.map((choice) => (
-            <option key={choice} value={choice}>
-              {choice[0]?.toUpperCase()}
-              {choice.slice(1)}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="z-field" htmlFor={concurrencyId}>
-        Max concurrent runs
-        <TextInput
-          id={concurrencyId}
-          value={concurrency}
-          inputMode="numeric"
-          maxLength={2}
-          placeholder="No limit"
-          onChange={(event) => setConcurrency(event.target.value)}
-        />
-      </label>
+      <Picker
+        label="Thinking effort"
+        value={effort}
+        options={[
+          { value: "", label: "Default", description: "Let the model decide." },
+          ...efforts.map((choice) => ({
+            value: choice,
+            label: effortLabel(choice),
+            ...(EFFORT_HELP[choice] ? { description: EFFORT_HELP[choice] } : {}),
+          })),
+        ]}
+        onChange={setEffort}
+      />
+      {RUN_ROLES.includes(role) && (
+        <label className="z-field" htmlFor={concurrencyId}>
+          Max concurrent runs
+          <TextInput
+            id={concurrencyId}
+            value={concurrency}
+            inputMode="numeric"
+            maxLength={2}
+            placeholder="No limit"
+            onChange={(event) => setConcurrency(event.target.value)}
+          />
+        </label>
+      )}
       <label className="z-field" htmlFor={instructionsId}>
         Instructions
         <textarea

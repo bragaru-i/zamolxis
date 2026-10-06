@@ -8,6 +8,21 @@ import { explicitlyRequestsWork, requestsContinuation } from "./lib/orchestratio
 import { assertUsage, submitText, usageArgs } from "./supervisor";
 
 const MAX_MESSAGES = 100;
+const RUN_VERB: Record<string, string> = {
+  builder: "Building",
+  verifier: "Checking",
+  repair: "Fixing",
+};
+// Session status in the owner's words, as the app shows it.
+const OWNER_STATUS: Record<string, string> = {
+  planning: "thinking",
+  running: "working",
+  waiting: "idle",
+  needs_input: "needs you",
+  completed: "done",
+  failed: "failed",
+  cancelled: "stopped",
+};
 const HISTORY_MESSAGES = 10;
 const HISTORY_TEXT_LIMIT = 4000;
 const CONTEXT_LIMIT = 16000;
@@ -299,7 +314,7 @@ async function statusAnswer(
   ) {
     return {
       reply:
-        "The Orchestrator owns this top-level conversation. It answers and summarizes here. Only an explicit request to do work opens or continues a Work Session, whose Supervisor may delegate to Builder, Verifier and Repair agents. You can choose each role’s runtime, model and instructions in Settings → Agents.",
+        "I'm your main assistant here: ask me anything and I'll answer from what's going on. Nothing starts until you ask me to do something, like “fix the checkout bug”. Then I open a session where agents build the change and another agent checks it. You can pick which model each agent uses in Settings → Agents.",
       links: [] as LinkDraft[],
     };
   }
@@ -332,7 +347,7 @@ async function statusAnswer(
   if (!owned.length) {
     return {
       reply:
-        "There are no Work Sessions in this scope yet. I answered here and did not open one. Tell me explicitly to start, fix, build or continue something when you want work delegated.",
+        "Nothing is going on yet, and I haven't started anything. When you want something done, just tell me, for example “add a dark mode” or “fix the login bug”.",
       links: [] as LinkDraft[],
     };
   }
@@ -340,16 +355,33 @@ async function statusAnswer(
     ["planning", "running", "waiting", "needs_input"].includes(session.status),
   );
   const needsInput = owned.filter((session) => session.status === "needs_input");
-  const lines = owned.map(
-    (session) =>
-      `• ${session.title}: ${session.status}; ${session.completedTaskCount}/${session.totalTaskCount} tasks complete${session.activeRunCount ? `; ${session.activeRunCount} active run${session.activeRunCount === 1 ? "" : "s"}` : ""}.`,
-  );
+  const lines = owned.map((session) => {
+    const details = [
+      OWNER_STATUS[session.status] ?? session.status,
+      session.totalTaskCount
+        ? `${session.completedTaskCount} of ${session.totalTaskCount} task${session.totalTaskCount === 1 ? "" : "s"} done`
+        : undefined,
+      session.activeRunCount
+        ? `${session.activeRunCount} agent${session.activeRunCount === 1 ? "" : "s"} working`
+        : undefined,
+    ].filter(Boolean);
+    return `- **${session.title}**: ${details.join(", ")}`;
+  });
+  const headline = [
+    active.length
+      ? `${active.length} session${active.length === 1 ? "" : "s"} in progress`
+      : "Nothing is in progress",
+    needsInput.length
+      ? `${needsInput.length} need${needsInput.length === 1 ? "s" : ""} you`
+      : undefined,
+    approvals.length
+      ? `${approvals.length} approval${approvals.length === 1 ? "" : "s"} waiting for you`
+      : undefined,
+  ]
+    .filter(Boolean)
+    .join(", ");
   return {
-    reply: [
-      `${active.length} active Work Session${active.length === 1 ? "" : "s"}; ${needsInput.length} need${needsInput.length === 1 ? "s" : ""} your input; ${approvals.length} pending approval${approvals.length === 1 ? "" : "s"}.`,
-      ...lines,
-      "I only summarized existing control-plane state; I did not open a new Work Session.",
-    ].join("\n"),
+    reply: [`${headline}.`, "", ...lines].join("\n"),
     links: await workLinks(ctx, owned, approvals),
   };
 }
@@ -369,7 +401,7 @@ async function workLinks(
         targetType: "approval",
         targetId: approval._id,
         workSessionId: approval.workSessionId,
-        label: `Approve: ${approval.action}`.slice(0, 120),
+        label: `Needs your OK: ${approval.action}`.slice(0, 120),
         status: approval.risk,
       });
   const prs: LinkDraft[] = [];
@@ -387,7 +419,7 @@ async function workLinks(
           targetType: "pull_request",
           targetId: task._id,
           workSessionId: session._id,
-          label: `PR: ${task.title}`.slice(0, 120),
+          label: `Pull request: ${task.title}`.slice(0, 120),
           ...(task.publishStatus ? { status: task.publishStatus } : {}),
           url: task.prUrl,
         });
@@ -406,7 +438,7 @@ async function workLinks(
           targetType: "trust",
           targetId: trust._id,
           workSessionId: session._id,
-          label: `Trust: ${task.title}`.slice(0, 120),
+          label: `Check result: ${task.title}`.slice(0, 120),
           status: trust.eligible ? "trusted" : "not_trusted",
         });
     }
@@ -421,7 +453,10 @@ async function workLinks(
           targetType: "run",
           targetId: run._id,
           workSessionId: session._id,
-          label: `${run.role ?? "builder"}: ${titles.get(run.taskId) ?? "Run"}`.slice(0, 120),
+          label: `${RUN_VERB[run.role ?? "builder"]}: ${titles.get(run.taskId) ?? "a task"}`.slice(
+            0,
+            120,
+          ),
           status: run.status,
         });
   }

@@ -136,6 +136,10 @@ describe("SessionView conversation", () => {
 
   it("marks a clarifying question and asks for a reply", () => {
     const html = render({ status: "waiting" }, [{ decision: "ask", reply: "Which branch?" }]);
+    // Nothing is running: the session reads as idle and can be closed, not stopped.
+    expect(html).toContain(">Idle<");
+    expect(html).toContain("Close session");
+    expect(html).not.toContain(">Waiting<");
     expect(html).toContain("Needs your answer");
     expect(html).toContain("Which branch?");
     expect(html).toContain('placeholder="Reply…"');
@@ -172,7 +176,11 @@ describe("SessionView conversation", () => {
         planTaskCount: 1,
         reply: "I suggest one focused change.",
         proposedTasks: [
-          { key: "diagnostics", title: "Improve diagnostics", description: "Show the failing step." },
+          {
+            key: "diagnostics",
+            title: "Improve diagnostics",
+            description: "Show the failing step.",
+          },
         ],
       },
     ]);

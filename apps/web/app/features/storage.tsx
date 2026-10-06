@@ -1,5 +1,5 @@
 "use client";
-import { Button, KeyValueList, Notice, StatusBadge } from "@zamolxis/ui";
+import { Button, KeyValueList, Notice, Picker, StatusBadge } from "@zamolxis/ui";
 import { useMutation, useQuery } from "convex/react";
 import { useState } from "react";
 import { api } from "../../../../convex/_generated/api";
@@ -142,24 +142,18 @@ export function StorageSettings({ active, now }: { active: boolean; now: number 
           ) : (
             <p className="z-muted z-small">No Mac paired yet.</p>
           )}
-          <label className="z-field">
-            Keep finished work for
-            <select
-              className="z-select"
-              value={storage.retentionDays}
-              onChange={(event) => void changeDays(Number(event.target.value))}
-            >
-              {Array.from(
-                { length: storage.maxRetentionDays - storage.minRetentionDays + 1 },
-                (_, index) => storage.minRetentionDays + index,
-              ).map((days) => (
-                <option key={days} value={days}>
-                  {plural(days, "day")}
-                  {days === storage.defaultRetentionDays ? " (default)" : ""}
-                </option>
-              ))}
-            </select>
-          </label>
+          <Picker
+            label="Keep finished work for"
+            value={String(storage.retentionDays)}
+            options={Array.from(
+              { length: storage.maxRetentionDays - storage.minRetentionDays + 1 },
+              (_, index) => storage.minRetentionDays + index,
+            ).map((days) => ({
+              value: String(days),
+              label: `${plural(days, "day")}${days === storage.defaultRetentionDays ? " (default)" : ""}`,
+            }))}
+            onChange={(value) => void changeDays(Number(value))}
+          />
         </>
       )}
       {message && <Notice tone={message.tone}>{message.text}</Notice>}

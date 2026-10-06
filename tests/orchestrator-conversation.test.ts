@@ -91,7 +91,7 @@ it("answers a status question without creating hidden work", async () => {
     text: "What is going on?",
     links: [],
   });
-  expect(messages[0]?.reply).toContain("did not open one");
+  expect(messages[0]?.reply).toContain("I haven't started anything");
   expect(await f.other.query(api.orchestrator.messages, {})).toEqual([]);
 });
 
@@ -129,8 +129,9 @@ it("summarizes existing sessions and returns typed navigation links", async () =
   });
   const [message] = await f.user.query(api.orchestrator.messages, {});
   if (!message) throw new Error("Missing Orchestrator answer");
-  expect(message.reply).toContain("2/3 tasks complete");
-  expect(message.reply).toContain("did not open a new Work Session");
+  expect(message.reply).toContain("**Alpha readiness**: needs you, 2 of 3 tasks done");
+  expect(message.reply).toContain("1 session in progress, 1 needs you.");
+  expect(message.reply).not.toContain("needs_input");
   expect(message.links).toEqual([
     expect.objectContaining({
       targetType: "session",
@@ -370,7 +371,7 @@ it("hands a question to the Orchestrator model on an online Node and settles onl
     },
     conversation: [
       { role: "user", text: "First question" },
-      { role: "supervisor", text: expect.stringContaining("did not open one") },
+      { role: "supervisor", text: expect.stringContaining("I haven't started anything") },
     ],
   });
   expect(command?.payload.context).toContain('Scope: Product "Product"');

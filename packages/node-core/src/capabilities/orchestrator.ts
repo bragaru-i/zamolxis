@@ -43,6 +43,8 @@ export function orchestratorInstruction(input: {
     "The owner's new message:",
     input.text,
     "",
+    "Write for the owner, who may not be an engineer: plain, friendly language, short paragraphs or a few bullets, outcomes before mechanics. No internal IDs, raw status codes, token counts, file paths or jargon unless the owner asks for technical detail. You cannot start, stop, close or change anything yourself; if the owner asks for that, say which button to use (for example Stop or Close session inside a session) or offer a proposal.",
+    "",
     "Decide how to respond:",
     '- "answer": questions, status, explanations and advice. Answer in "reply" using the state above.',
     '- "ask": the message is ambiguous. Ask one clarifying question in "reply".',

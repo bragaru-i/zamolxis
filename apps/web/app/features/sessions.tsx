@@ -7,9 +7,13 @@ import {
   Markdown,
   Message,
   Notice,
+  Picker,
   ProductMark,
+  SessionStatusBadge,
+  sessionStatusLabel,
   StatusBadge,
   safeHref,
+  statusLabel,
   Thinking,
 } from "@zamolxis/ui";
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
@@ -88,7 +92,7 @@ export function SessionList({
               >
                 <span className="z-list-item__title">{session.title}</span>
                 <span className="z-row z-xsmall z-muted">
-                  <StatusBadge status={session.status} />
+                  <SessionStatusBadge status={session.status} />
                   {session.totalTaskCount > 0 && (
                     <span>
                       {session.completedTaskCount}/{session.totalTaskCount} tasks
@@ -141,7 +145,18 @@ function OrchestratorLinkButton({
   link: OrchestratorLink;
   onOpen: (id: Id<"workSessions">, runId?: Id<"agentRuns">) => void;
 }) {
-  const text = `${link.label}${link.status ? ` · ${link.status}` : ""}`;
+  const status = link.status
+    ? link.targetType === "session"
+      ? sessionStatusLabel(link.status).label
+      : link.targetType === "approval"
+        ? `${link.status} risk`
+        : link.targetType === "trust"
+          ? link.status === "trusted"
+            ? "Trusted"
+            : "Not trusted"
+          : statusLabel(link.status).label
+    : undefined;
+  const text = `${link.label}${status ? ` · ${status}` : ""}`;
   if (link.targetType === "pull_request") {
     const href = link.url ? safeHref(link.url) : undefined;
     return href ? (
@@ -195,16 +210,14 @@ interface OrchestratorMessage {
 const THINKING_SHOWN_MS = 10 * 60_000;
 
 function routeMeta(message: OrchestratorMessage, thinking: boolean) {
-  if (thinking) return "Summary from current state · the Orchestrator is writing a reply";
-  if (message.route === "create") return "Opened linked work";
-  if (message.route === "continue") return "Continued linked work";
+  if (thinking) return "Quick summary · a fuller answer is on its way";
+  if (message.route === "create") return "Started new work";
+  if (message.route === "continue") return "Added to existing work";
   const by =
-    message.answeredBy === "model"
-      ? ` · ${message.modelActual ?? message.runtime ?? "model"}${message.totalTokens ? ` · ${message.totalTokens.toLocaleString()} tokens` : ""}`
-      : "";
-  if (message.route === "ask") return `Asked you a question${by}`;
-  if (message.route === "propose") return `Proposed work, nothing started${by}`;
-  return `Answered without opening work${by}`;
+    message.answeredBy === "model" && message.modelActual ? ` · ${message.modelActual}` : "";
+  if (message.route === "ask") return `Question for you${by}`;
+  if (message.route === "propose") return `Suggestion, nothing started yet${by}`;
+  return `Answer${by}`;
 }
 
 function OpenProposal({
@@ -265,10 +278,8 @@ function OrchestratorConversation({
   return (
     <section className="z-stack" aria-label="Orchestrator conversation">
       <div className="z-row z-row--between">
-        <h2 className="z-section-title">Orchestrator</h2>
-        <span className="z-xsmall z-muted">
-          Questions stay here · explicit work opens a session
-        </span>
+        <h2 className="z-section-title">Ask Zamolxis</h2>
+        <span className="z-xsmall z-muted">Ask anything · nothing starts until you say so</span>
       </div>
       {messages === undefined ? (
         <p className="z-muted" role="status">
@@ -334,36 +345,29 @@ function OrchestratorComposer({ ready }: { ready: boolean }) {
   }, [repositories]);
   const context =
     products && products.length > 1 ? (
-      <select
-        className="z-select"
-        aria-label="Product"
+      <Picker
+        label="Product"
+        hideLabel
         value={productId}
-        onChange={(event) => {
-          setProductId(event.target.value as Id<"products">);
+        options={products.map((product) => ({ value: product._id, label: product.name }))}
+        onChange={(value) => {
+          setProductId(value as Id<"products">);
           setRepositoryId("");
         }}
-      >
-        {products.map((product) => (
-          <option key={product._id} value={product._id}>
-            {product.name}
-          </option>
-        ))}
-      </select>
+      />
     ) : null;
   const repositoryPicker =
     repositories && repositories.length > 1 ? (
-      <select
-        className="z-select"
-        aria-label="Repository"
+      <Picker
+        label="Repository"
+        hideLabel
         value={repositoryId}
-        onChange={(event) => setRepositoryId(event.target.value as Id<"repositories">)}
-      >
-        {repositories.map((repository) => (
-          <option key={repository._id} value={repository._id}>
-            {repository.name}
-          </option>
-        ))}
-      </select>
+        options={repositories.map((repository) => ({
+          value: repository._id,
+          label: repository.name,
+        }))}
+        onChange={(value) => setRepositoryId(value as Id<"repositories">)}
+      />
     ) : null;
   const repositoryName = repositories?.find((repository) => repository._id === repositoryId)?.name;
   return (

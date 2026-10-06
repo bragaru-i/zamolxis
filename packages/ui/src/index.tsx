@@ -83,6 +83,25 @@ export function StatusBadge({ status, label }: { status: string; label?: string 
   return <span className={`z-badge z-tone-${resolved.tone}`}>{label ?? resolved.label}</span>;
 }
 
+// A Session's status in owner words: "waiting" means nothing is running and Zamolxis is
+// waiting for the owner's next message, which is not a warning.
+const SESSION_STATUS: Record<string, { tone: Tone; label: string }> = {
+  planning: { tone: "info", label: "Thinking" },
+  running: { tone: "info", label: "Working" },
+  waiting: { tone: "neutral", label: "Idle" },
+  needs_input: { tone: "warning", label: "Needs you" },
+  completed: { tone: "success", label: "Done" },
+  failed: { tone: "danger", label: "Failed" },
+  cancelled: { tone: "neutral", label: "Stopped" },
+};
+export function sessionStatusLabel(status: string): { tone: Tone; label: string } {
+  return SESSION_STATUS[status] ?? statusLabel(status);
+}
+export function SessionStatusBadge({ status }: { status: string }) {
+  const resolved = sessionStatusLabel(status);
+  return <span className={`z-badge z-tone-${resolved.tone}`}>{resolved.label}</span>;
+}
+
 export function Notice({ tone = "info", children }: { tone?: Tone; children: ReactNode }) {
   return (
     <p className={`z-notice z-tone-${tone}`} role={tone === "danger" ? "alert" : "status"}>
@@ -354,5 +373,91 @@ export function Sheet({
       </div>
       <div className="z-sheet__body">{children}</div>
     </dialog>
+  );
+}
+
+export interface PickerOption {
+  readonly value: string;
+  readonly label: string;
+  readonly description?: string;
+}
+
+/**
+ * A choice control that looks the same on every platform: a field-styled button that opens a
+ * sheet of options with descriptions, instead of the native select wheel.
+ */
+export function Picker({
+  label,
+  value,
+  options,
+  onChange,
+  placeholder = "Choose…",
+  disabled = false,
+  hideLabel = false,
+}: {
+  label: string;
+  value: string;
+  options: readonly PickerOption[];
+  onChange: (value: string) => void;
+  placeholder?: string;
+  disabled?: boolean;
+  // The label still names the control and its sheet for assistive technology.
+  hideLabel?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = options.find((option) => option.value === value);
+  return (
+    <div className="z-field">
+      {!hideLabel && <span>{label}</span>}
+      <button
+        type="button"
+        className="z-picker"
+        aria-haspopup="listbox"
+        aria-label={hideLabel ? `${label}: ${selected?.label ?? placeholder}` : undefined}
+        disabled={disabled}
+        onClick={() => setOpen(true)}
+      >
+        <span className={selected ? "z-picker__value" : "z-picker__value z-muted"}>
+          {selected?.label ?? placeholder}
+        </span>
+        <svg className="z-picker__chevron" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.8" />
+        </svg>
+      </button>
+      <Sheet open={open} title={label} onClose={() => setOpen(false)}>
+        <div className="z-picker__list" role="listbox" aria-label={label}>
+          {options.map((option) => {
+            const active = option.value === value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                role="option"
+                aria-selected={active}
+                className={
+                  active ? "z-picker__option z-picker__option--active" : "z-picker__option"
+                }
+                onClick={() => {
+                  onChange(option.value);
+                  setOpen(false);
+                }}
+              >
+                <span className="z-picker__text">
+                  <span className="z-picker__label">{option.label}</span>
+                  {option.description && (
+                    <span className="z-picker__description">{option.description}</span>
+                  )}
+                </span>
+                {active && (
+                  <svg className="z-picker__check" viewBox="0 0 16 16" aria-hidden="true">
+                    <path d="M3 8.5l3.2 3L13 5" fill="none" stroke="currentColor" strokeWidth="2" />
+                  </svg>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </Sheet>
+    </div>
   );
 }

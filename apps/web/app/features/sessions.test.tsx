@@ -29,7 +29,7 @@ vi.mock("convex/react", () => ({
               targetType: "run",
               targetId: "run",
               workSessionId: "session",
-              label: "builder: Fix totals",
+              label: "Building: Fix totals",
               status: "running",
             },
             {
@@ -94,17 +94,19 @@ it("renders the global answer and its linked session separately from the session
   );
   expect(html).toContain("Orchestrator");
   expect(html).toContain("What is going on?");
-  expect(html).toContain("Answered without opening work");
-  expect(html).toContain("Alpha readiness · needs_input");
-  expect(html).toContain("builder: Fix totals · running");
+  expect(html).toContain(">Answer<");
+  expect(html).toContain("Alpha readiness · Needs you");
+  expect(html).not.toContain("needs_input");
+  expect(html).toContain("Building: Fix totals · Running");
   expect(html).toContain('href="https://github.com/acme/shop/pull/7"');
   expect(html).not.toContain("PR: Unsafe");
   expect(html).not.toContain("javascript:");
-  expect(html).toContain("Proposed work, nothing started · gpt-x · 1,234 tokens");
+  expect(html).toContain("Suggestion, nothing started yet · gpt-x");
+  expect(html).not.toContain("1,234 tokens");
   expect(html).toContain("Fix checkout totals rounding.");
   expect(html).toContain("Open this work");
   expect(html).toContain("Writing a reply…");
-  expect(html).toContain("the Orchestrator is writing a reply");
+  expect(html).toContain("a fuller answer is on its way");
   expect(html).toContain("No work sessions yet");
   expect(html).toContain("Ask Zamolxis, or tell it to start work");
 });

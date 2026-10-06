@@ -452,6 +452,102 @@ code,
   padding: 0 var(--z-space-3);
 }
 
+/* Picker: a field-styled button that opens a sheet of options. */
+.z-picker {
+  display: flex;
+  align-items: center;
+  gap: var(--z-space-2);
+  width: 100%;
+  min-width: 0;
+  min-height: var(--z-touch);
+  padding: 0 var(--z-space-3);
+  font: inherit;
+  font-size: var(--z-text-md);
+  font-weight: 400;
+  text-align: left;
+  color: var(--z-fg);
+  background: var(--z-surface);
+  border: 1px solid var(--z-input);
+  border-radius: var(--z-radius-md);
+  -webkit-tap-highlight-color: transparent;
+}
+.z-picker:disabled {
+  color: var(--z-disabled);
+  background: var(--z-surface-muted);
+}
+.z-picker:focus-visible {
+  outline: 3px solid var(--z-ring);
+  outline-offset: 2px;
+}
+.z-picker__value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.z-picker__chevron,
+.z-picker__check {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+.z-picker__chevron {
+  color: var(--z-muted);
+}
+.z-picker__list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--z-border);
+  border-radius: var(--z-radius-md);
+  overflow: hidden;
+}
+.z-picker__option {
+  display: flex;
+  align-items: center;
+  gap: var(--z-space-3);
+  min-height: var(--z-touch);
+  padding: var(--z-space-3) var(--z-space-4);
+  font: inherit;
+  text-align: left;
+  color: var(--z-fg);
+  background: var(--z-surface);
+  border: 0;
+  border-top: 1px solid var(--z-border);
+  -webkit-tap-highlight-color: transparent;
+}
+.z-picker__option:first-child {
+  border-top: 0;
+}
+.z-picker__option:active {
+  background: var(--z-surface-muted);
+}
+.z-picker__option--active {
+  background: var(--z-info-bg);
+}
+.z-picker__option:focus-visible {
+  outline: 3px solid var(--z-ring);
+  outline-offset: -3px;
+}
+.z-picker__text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.z-picker__label {
+  font-size: var(--z-text-md);
+  font-weight: 600;
+}
+.z-picker__description {
+  font-size: var(--z-text-sm);
+  color: var(--z-muted);
+}
+.z-picker__check {
+  color: var(--z-primary);
+}
+
 /* Composer */
 .z-composer {
   display: flex;

@@ -224,9 +224,9 @@ describe("AgentsSettings", () => {
     for (const label of ["Supervisor", "Builder", "Verifier", "Repair", "Integration"]) {
       expect(html).toContain(label);
     }
-    expect(html).toContain("codex · gpt-5-codex · high effort");
+    expect(html).toContain("Codex · gpt-5-codex · high effort");
     expect(html).toContain("Custom");
-    expect(html).toContain("codex · default model");
+    expect(html).toContain("Codex · default model");
     expect(html).toContain("Your All products profile is off.");
     expect(html).toContain("Orchestration");
     expect(html).toContain("without opening work");
@@ -252,7 +252,7 @@ describe("AgentsSettings", () => {
     };
     const html = renderToStaticMarkup(createElement(AgentsSettings, { active: true, devices: [] }));
     expect(html).toContain("Applies to");
-    expect(html).toContain(">App</option>");
+    expect(html).toMatch(/role="option" aria-selected="false"[^>]*>.*?App</);
   });
 });
 
@@ -271,9 +271,13 @@ describe("ProfileEditor", () => {
       }),
     );
     expect(html).toContain('value="gpt-5"');
-    expect(html).toContain('<option value="codex" selected="">codex</option>');
-    expect(html).toContain('<option value="minimal" selected="">Minimal</option>');
-    expect(html).toContain("Runtime default");
+    // Pickers show the chosen value and mark it in their option sheet.
+    expect(html).toMatch(/class="z-picker__value">Codex</);
+    expect(html).toMatch(/class="z-picker__value">Minimal</);
+    expect(html).toMatch(
+      /aria-selected="true"[^>]*><span class="z-picker__text"><span class="z-picker__label">Minimal</,
+    );
+    expect(html).toContain("Let the model decide.");
     expect(html).toContain("Turn off");
     expect(html).toContain("Use this profile for App");
     // A product override can be removed; its name and limit are editable.

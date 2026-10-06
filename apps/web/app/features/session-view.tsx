@@ -8,6 +8,7 @@ import {
   Markdown,
   Message,
   Notice,
+  SessionStatusBadge,
   StatusBadge,
   Thinking,
 } from "@zamolxis/ui";
@@ -93,6 +94,7 @@ export function SessionView({
   const runs = useQuery(api.runs.listBySession, args) as Run[] | undefined;
   const submit = useMutation(api.supervisor.submit);
   const cancel = useMutation(api.sessions.cancel);
+  const close = useMutation(api.sessions.close);
   const stopRun = useMutation(api.runs.stop);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -128,20 +130,37 @@ export function SessionView({
           title={session?.title ?? "Session"}
           subtitle={
             <>
-              {session && <StatusBadge status={session.status} />}
+              {session && <SessionStatusBadge status={session.status} />}
               {indicator}
             </>
           }
           trailing={
             session &&
-            // An idle session waiting for the user has nothing to stop.
             !ended &&
             (["planning", "running"].includes(session.status) ||
-              (session.activeRunCount ?? 0) > 0) && (
+            (session.activeRunCount ?? 0) > 0 ? (
               <Button variant="danger" size="small" onClick={() => setConfirmStop(true)}>
                 Stop
               </Button>
-            )
+            ) : (
+              // Nothing is running: the owner can mark the session done.
+              <Button
+                variant="secondary"
+                size="small"
+                onClick={async () => {
+                  try {
+                    await close({ workSessionId: sessionId });
+                  } catch (error) {
+                    setNotice({
+                      tone: "danger",
+                      text: explainError(error, "Could not close the session."),
+                    });
+                  }
+                }}
+              >
+                Close session
+              </Button>
+            ))
           }
         />
       }
@@ -318,12 +337,17 @@ export function SessionView({
                 : "Work paused and needs your attention."}
             </Notice>
           )}
-          {session.status === "completed" && (
-            <Notice tone="success">
-              Trusted changes are ready on integration branches on your Mac. Open a pull request
-              from each task when you want; merging stays with you.
-            </Notice>
-          )}
+          {session.status === "completed" &&
+            (sortedTasks.some((task) => task.phase === "completed") ? (
+              <Notice tone="success">
+                The checked changes are ready on your Mac. Open a pull request from each task when
+                you want; merging stays with you.
+              </Notice>
+            ) : (
+              <Notice tone="info">
+                This session is closed. Send a message to pick it up again.
+              </Notice>
+            ))}
           <SessionUsage sessionId={sessionId} ready={ready} />
         </div>
       )}
