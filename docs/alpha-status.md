@@ -46,7 +46,7 @@ planned capability as shipped.
   detail. The backend adds `trust` (eligible or not, evidence counts, reasons),
   `integration` (prepared at SHA, branch) and publish (PR, compare link or failure)
   steps to the candidate's trace (`backend:` step ids, which Nodes cannot write).
-  Not recorded: Supervisor steps.
+  Supervisor steps are recorded per message in `supervisorLogSteps` (see gap 1).
 - **Steering:** "Message agent" on an active run steers a streaming Codex turn
   (`turn/steer`) or continues a waiting run to completion with the normal
   completion handling.
@@ -80,7 +80,10 @@ planned capability as shipped.
    self-contained parallel tasks, or asks a clarifying question; unparseable output is
    treated as an answer and never starts builders. While it works the message shows
    its live activity, elapsed time and tokens (reported at most every 2 s), and it can
-   be stopped until it decides ("Stopped before answering"). Real Codex acceptance
+   be stopped until it decides ("Stopped before answering"). Each settled reply has "Show what I did": a
+   bounded, redacted log of its steps (discovery, tool calls with files read, notes,
+   refused approvals, decision), delivered when it settles (no live log; none if a Node
+   restart interrupted it). Real Codex acceptance
    (2026-10-06): a question is answered with no tasks or runs, and a long
    investigation is stopped mid-turn with the repository unchanged. Still missing: it
    is not a backend agent run and its full event stream is not shown;
@@ -88,9 +91,10 @@ planned capability as shipped.
    #73's reply redaction turned plan task keys into `***`, so every real plan was
    rejected for about 40 minutes until #74 (the Supervisor reply is now redacted per
    field after parsing).
-2. **Conversation, partially shipped.** Supervisor replies (Markdown, bounded to 8000)
-   and builder/verifier final replies (`agentRuns.resultSummary`) are shown. Not yet:
-   intermediate agent messages, verifier review text beyond its final message.
+2. **Conversation, shipped.** Supervisor replies (Markdown, bounded to 8000),
+   builder/verifier final replies (`agentRuns.resultSummary`) and intermediate agent
+   notes (`run.message`, redacted, ≤2000 chars, shown in Run detail Activity) are
+   shown. Whether a model writes commentary is up to the model.
 3. **Steering and approvals, shipped with limits.** Real Codex acceptance covers a
    command approval being rejected (HEAD unchanged) and approved (the command runs and
    the agent reports its result). File-change approvals, MCP elicitations, live
