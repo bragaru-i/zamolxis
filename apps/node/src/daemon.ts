@@ -10,6 +10,7 @@ import {
   RepositoryDiscovery,
   RepositoryRegistry,
   RuntimeManager,
+  RuntimeModelCatalog,
   WorkspaceManager,
 } from "@zamolxis/node-core";
 import {
@@ -57,6 +58,31 @@ try {
   const store = new LocalStateStore(statePath);
   const identity = store.getOrCreateIdentity();
   const client = new ConvexHttpClient(config.convexUrl);
+  const runtimes = new RuntimeRegistry();
+  runtimes.register(
+    new CodexRuntime({
+      connect: (cwd) =>
+        new AppServerClient({
+          cwd,
+          launch: (executable, assignedCwd) => {
+            const child = spawn(executable, ["app-server", "--listen", "stdio://"], {
+              cwd: assignedCwd,
+              env: { ...process.env, CODEX_HOME: profile },
+              shell: false,
+              stdio: ["pipe", "pipe", "ignore"],
+            });
+            children.add(child);
+            child.once("exit", () => children.delete(child));
+            return child;
+          },
+        }),
+    }),
+  );
+  // Models are fetched at startup and then at most every 30 minutes per runtime; a
+  // failure keeps the previous list and never fails the heartbeat.
+  const catalog = new RuntimeModelCatalog((id) =>
+    runtimes.ids().includes(id) ? runtimes.get(id) : undefined,
+  );
   let stopping = false;
   let heartbeatBusy = false;
   let heartbeats: ReturnType<typeof setInterval> | undefined;
@@ -72,7 +98,7 @@ try {
       await client.mutation(makeFunctionReference<"mutation">("node:heartbeat"), {
         workstationId: config.workstationId,
         instanceId: identity.instanceId,
-        runtimeCapabilities: [
+        runtimeCapabilities: await catalog.advertise([
           {
             runtime: "codex",
             version: execFileSync("codex", ["--version"], {
@@ -82,7 +108,7 @@ try {
             // "message": steering active runs; "approval": held operations wait for a human.
             capabilities: ["start", "stop", "message", "approval"],
           },
-        ],
+        ]),
       });
     } finally {
       heartbeatBusy = false;
@@ -129,26 +155,6 @@ try {
       join(root, "workspaces"),
       identity.instanceId,
       grant,
-    );
-    const runtimes = new RuntimeRegistry();
-    runtimes.register(
-      new CodexRuntime({
-        connect: (cwd) =>
-          new AppServerClient({
-            cwd,
-            launch: (executable, assignedCwd) => {
-              const child = spawn(executable, ["app-server", "--listen", "stdio://"], {
-                cwd: assignedCwd,
-                env: { ...process.env, CODEX_HOME: profile },
-                shell: false,
-                stdio: ["pipe", "pipe", "ignore"],
-              });
-              children.add(child);
-              child.once("exit", () => children.delete(child));
-              return child;
-            },
-          }),
-      }),
     );
     const manager = new RuntimeManager(
       store,
