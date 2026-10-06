@@ -83,14 +83,7 @@ export function Workspace() {
     <>
       {problem && <Notice tone="danger">{problem}</Notice>}
       <PairingApproval ready={ready} />
-      {devices !== undefined && !active.length && (
-        <Card label="Connect your Mac">
-          <h2 className="z-title">Connect your Mac</h2>
-          <p className="z-muted">
-            Run <code>pnpm zamolxis setup</code> on your Mac, then scan the QR code with this phone.
-          </p>
-        </Card>
-      )}
+      {/* Connecting a Mac is the onboarding checklist's first open step (sessions screen). */}
     </>
   );
   return (
