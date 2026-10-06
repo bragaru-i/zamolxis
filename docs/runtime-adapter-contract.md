@@ -4,11 +4,21 @@ Runtime selection is separate from model selection. An AgentRuntime advertises c
 
 RuntimeRegistry chooses only allowed adapters satisfying required capabilities. Forced selection never falls back; preferred selection may use another eligible adapter. Domain/application code does not branch on vendor names.
 
-FakeRuntime is an in-memory deterministic adapter with configurable activity, waiting, approval, success and failure steps. A waiting scenario continues on a message, an approval step holds the scenario until `resolveApproval` (a message does not settle it), and stop is idempotent. Repeated start for the same Run returns the same session; conflicting workspace assignment or instruction is rejected. Snapshots are defensive copies and replay uses stable ordered event IDs.
+FakeRuntime is an in-memory deterministic adapter with configurable activity, message, tool, waiting, approval, success and failure steps. A waiting scenario continues on a message, an approval step holds the scenario until `resolveApproval` (a message does not settle it), and stop is idempotent. Repeated start for the same Run returns the same session; conflicting workspace assignment or instruction is rejected. Snapshots are defensive copies and replay uses stable ordered event IDs.
 
 The fake does not execute shell commands or mutate files. Its assigned cwd is metadata validated by the Node's Workspace Manager before runtime launch. Fake sessions survive a simulated restart only through a shared `FakeNativeStore` (the stand-in for Codex rollouts); without it a new instance cannot resume them and the Node reports the run lost rather than starting it again.
 
 `@zamolxis/test-kit/runtime-contract` exports `defineRuntimeAdapterContract` for future Codex/Claude/Hermes adapters. Each adapter supplies a controlled factory and a workspace-bound input. The suite checks advertised identity, assignment preservation, idempotent starts, event provenance/replay and rejection of changed workspace assignment. Adapter-specific tests cover waiting/message/resume/stop semantics.
+
+## Agent messages and files read
+
+`run.message { text }` is a progress note the agent wrote during its turn: never its final reply (that is the `run.completed` summary) and never reasoning. Adapters redact it (`redactSecrets`, line breaks kept) and bound it to `RUN_MESSAGE_LIMIT` (2000) characters. It does not change the run state; the backend (`node:ingestBatch`) rejects an empty or longer text. Run detail shows notes in the Activity timeline as readable notes, not as conversation bubbles.
+
+`tool.started` / `tool.completed` may carry `reads`: files the call read, as the runtime parsed them (workspace-relative when inside the workspace), redacted, at most `TOOL_READS_LIMIT` (20) paths of at most 300 characters. Absent when unknown.
+
+## Supervisor log
+
+The Supervisor is a Node-local, read-only run: its events are not delivered as run events. The Node records a `SupervisorLogStepDto` log per message from them (see docs/codex-runtime.md, "Supervisor activity log") and delivers it through the durable outbox to `supervisor:appendLog`, which accepts steps only from the Node the message's plan command was sent to, validates the trace step bounds, keeps at most 300 steps per message (later ones are dropped, never blocking the outbox), treats a replayed step as a no-op and settles a `started` step once. Steps are stored in `supervisorLogSteps`, keyed by text command rather than in `traces` (which are bound to an `agentRuns` row the Supervisor does not have). `supervisor:log` returns them to the message's owner only. The web app shows them under "Show what I did" on each settled Zamolxis message.
 
 ## Approvals
 
