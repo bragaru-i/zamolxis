@@ -82,6 +82,10 @@ planned capability as shipped.
   runtime/model/effort, turn off), Settings → Usage (24h/7d/30d tokens by role and
   model, top sessions) and a Usage row per session. Cost appears only if a provider
   reports it (nothing does today).
+- **Runtime model catalog:** the Node asks Codex app-server for its models (`model/list`,
+  hidden excluded) at startup and at most every 30 minutes, and reports them with
+  reasoning efforts in the heartbeat; `agentProfiles:models` returns them per runtime for
+  the owner's Macs. Pending: the Settings → Agents dropdown is not wired to it yet.
 - **Run detail (#68):** tapping a run opens result, grouped live activity, changes
   (files, base → head, branch) and verification (evidence, trust decision, repairs).
 - **Setup repair (#69):** rerunning setup offers Check and repair, repositories,
