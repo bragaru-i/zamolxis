@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { bounded, fail, requireUser, ownerSubject } from "./lib/access";
+import { bounded, fail, ownerSubject, requireNode, requireUser } from "./lib/access";
 export const listMine = query({
   args: { limit: v.optional(v.number()) },
   returns: v.array(v.any()),
@@ -57,6 +57,65 @@ export const revoke = mutation({
     const device = await ctx.db.get("workstations", args.workstationId);
     if (!device || device.ownerId !== owner._id) fail("FORBIDDEN");
     await ctx.db.patch("workstations", device._id, { status: "revoked", revokedAt: Date.now() });
+    return null;
+  },
+});
+
+// A Mac's display name: trimmed, 1..64 characters, no control characters.
+export function workstationName(value: string) {
+  const name = value.trim();
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: rejecting control characters.
+  if (!name || name.length > 64 || /[\u0000-\u001f\u007f]/.test(name))
+    fail("INVALID_ARGUMENT", "Use a name of 1 to 64 characters");
+  return name;
+}
+
+// Owner renames one of their Macs from Settings.
+export const rename = mutation({
+  args: { workstationId: v.id("workstations"), name: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const owner = await requireUser(ctx);
+    const device = await ctx.db.get("workstations", args.workstationId);
+    if (!device || device.ownerId !== owner._id) fail("FORBIDDEN");
+    if (device.status === "revoked") fail("INVALID_STATE", "This Mac was removed");
+    await ctx.db.patch("workstations", device._id, { name: workstationName(args.name) });
+    return null;
+  },
+});
+
+// The Node renames its own workstation (`pnpm zamolxis setup` → Rename this Mac).
+export const renameSelf = mutation({
+  args: { workstationId: v.id("workstations"), name: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const device = await requireNode(ctx, args.workstationId);
+    await ctx.db.patch("workstations", device._id, { name: workstationName(args.name) });
+    return null;
+  },
+});
+
+// After a Mac pairs again from the same local config, setup proves the previous entry
+// with its still-valid credential and retires it in favour of the new one. The token of
+// the previous entry is required, so nobody can revoke a Mac they cannot authenticate as.
+export const retireReplaced = mutation({
+  args: { workstationId: v.id("workstations"), replacementId: v.id("workstations") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const previous = await requireNode(ctx, args.workstationId);
+    const replacement = await ctx.db.get("workstations", args.replacementId);
+    if (
+      !replacement ||
+      replacement._id === previous._id ||
+      replacement.ownerId !== previous.ownerId ||
+      replacement.status === "revoked"
+    )
+      fail("FORBIDDEN");
+    await ctx.db.patch("workstations", previous._id, {
+      status: "revoked",
+      revokedAt: Date.now(),
+      replacedBy: replacement._id,
+    });
     return null;
   },
 });
