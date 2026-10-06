@@ -50,8 +50,9 @@ planned capability as shipped.
 - **Steering:** "Message agent" on an active run steers a streaming Codex turn
   (`turn/steer`) or continues a waiting run to completion with the normal
   completion handling.
-- **Web app (#61):** conversation-first Home with a persistent desktop Work Sessions sidebar and
-  a mobile sessions drawer; open session kept in `?session=<id>`;
+- **Web app (#61):** conversation-first Home with a persistent desktop sidebar and a mobile
+  drawer listing **Chats** and **Work Sessions**, each grouped by day (Today, Yesterday, Previous 7
+  days, Previous 30 days, Older) and searchable; open session kept in `?session=<id>`;
   your messages with their planning outcome, task cards with runs (status, activity
   label, token totals), Stop per run and per session, pinned composer, Settings sheet
   (Macs, removal, sign-out), iOS safe areas. Shared tokens and components live in
@@ -62,8 +63,12 @@ planned capability as shipped.
   reviews inside a Session create no Tasks or Agent Runs. A requested plan is shown as a proposal
   with "Open this work"; only that owner action or explicit execution language delegates work to
   Builders.
-- **Global Orchestrator conversation:** the home screen has a durable owner-level conversation
-  outside Work Sessions. Questions and status requests answer from control-plane state without
+- **Global Orchestrator conversation:** the home screen has durable owner-level **chats**
+  outside Work Sessions. Home opens as a new, empty chat; the first message creates the chat
+  (`?chat=<id>`, titled after that message, at most 80 characters). Earlier chats are listed in
+  the sidebar and can be reopened, renamed or deleted (deleting hides the chat and closes it to
+  new messages; its history and any Work Session it opened are kept). Each chat has its own model
+  history; another owner's chat is never readable or continuable. Questions and status requests answer from control-plane state without
   creating hidden work. Answers persist their route and typed links: Sessions, pending approvals,
   pull requests, Tasks needing the owner with their trust decision, and active Runs (a Run link
   opens Run detail via `?run=`). Every Home message remains conversation: execution language,
@@ -180,7 +185,8 @@ module aliases exist only when the variable is set.
    rejected for about 40 minutes until #74 (the Supervisor reply is now redacted per
    field after parsing).
 2. **Global Orchestrator conversation, shipped with limits.** `orchestratorConversations`,
-   `orchestratorMessages` and `orchestratorMessageLinks` persist the owner-level chat, its routing
+   `orchestratorMessages` and `orchestratorMessageLinks` persist the owner-level chats (one row
+   per chat; `orchestrator.submit` without `conversationId` starts a new one), their routing
    decision (new messages use `answer` or `propose`; historical `create`/`continue` values remain)
    and typed navigation. The current backend answers
    architecture questions and deterministic status summaries directly, with typed links, and
