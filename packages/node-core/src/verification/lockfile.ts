@@ -49,12 +49,26 @@ export function changedManifests(porcelain: string): string[] {
 }
 
 /**
- * Updates the lockfile when the worktree changed a `package.json`; absent when nothing
- * needed it (no manifest change, no supported lockfile).
+ * Updates the lockfile when the worktree changed a `package.json`, uncommitted or since
+ * `base` (where the task started: a Repair after a Builder may change nothing itself);
+ * absent when nothing needed it (no manifest change, no supported lockfile).
  */
-export async function updateLockfile(cwd: string): Promise<LockfileUpdate | undefined> {
+export async function updateLockfile(
+  cwd: string,
+  base?: string,
+): Promise<LockfileUpdate | undefined> {
   const status = await run(cwd, "git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
-  if (!status.ok || !changedManifests(status.output).length) return undefined;
+  const committed =
+    base && /^[a-f0-9]{40,64}$/.test(base)
+      ? await run(cwd, "git", ["diff", "--name-only", "-z", base, "HEAD"])
+      : undefined;
+  const changed =
+    (status.ok && changedManifests(status.output).length > 0) ||
+    (committed?.ok === true &&
+      committed.output
+        .split("\0")
+        .some((path) => path === "package.json" || path.endsWith("/package.json")));
+  if (!changed) return undefined;
   let manager = "npm";
   try {
     const path = join(cwd, "package.json");

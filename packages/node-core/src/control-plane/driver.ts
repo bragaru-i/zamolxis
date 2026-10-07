@@ -1135,7 +1135,7 @@ export class ControlPlaneDriver {
         const at = Date.now();
         const before = workspace.headSha ?? workspace.baseSha;
         // A new dependency from an offline agent gets its lockfile entry before the commit.
-        const lockfile = await updateLockfile(workspace.path);
+        const lockfile = await updateLockfile(workspace.path, workspace.baseSha);
         if (lockfile) trace.record(checkStep(`${commandId}:lockfile`, 0, lockfile, before));
         try {
           commitCandidate(workspace.path);
