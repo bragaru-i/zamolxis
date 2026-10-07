@@ -264,28 +264,6 @@ export function SessionList({
           </Button>
         )}
       </div>
-      <div className="z-home-nav__links">
-        <button
-          type="button"
-          className="z-home-link"
-          onClick={() => {
-            setDrawerOpen(false);
-            onSettings("usage");
-          }}
-        >
-          Usage
-        </button>
-        <button
-          type="button"
-          className="z-home-link"
-          onClick={() => {
-            setDrawerOpen(false);
-            onSettings();
-          }}
-        >
-          Settings
-        </button>
-      </div>
     </div>
   );
   return (
