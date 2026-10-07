@@ -55,6 +55,11 @@ describe("Settings → Computers", () => {
       render({ device: device({ runtimes: [{ runtime: "claude", status: "available" }] }) }),
     ).toContain("Claude Code ready");
     expect(render({ device: device({ runtimes: [] }) })).toContain("No agent runtime");
+    // Which Node code the computer runs, next to its platform, when it has reported one.
+    expect(
+      render({ device: device({ platform: "darwin", nodeVersion: "1a2b3c4d5e6f+dirty" }) }),
+    ).toContain("macOS · Node 1a2b3c4d5e6f+dirty");
+    expect(render({ device: device({ platform: "linux" }) })).not.toContain("Node ");
   });
 
   it("offers nothing for a revoked computer", () => {

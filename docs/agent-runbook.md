@@ -73,6 +73,11 @@ code until it is restarted on the new checkout, so:
   boot.
 - Do it between Sessions: a Node restart resumes runs in flight (Codex `thread/resume`),
   but an approval held at that moment is withdrawn and asked again.
+- **Check it from anywhere:** Settings → Computers & repositories shows each computer's
+  card as "macOS · Node 1a2b3c4d5e6f" (the commit its Node process was started from,
+  "+dirty" when that checkout has uncommitted changes), reported with every heartbeat.
+  Compare with `git log -1 --format=%h origin/main`; an older commit means that
+  computer's Node was not restarted since that merge.
 
 On the Mac:
 

@@ -39,6 +39,7 @@ import {
   KeychainCredentialStore,
   loadDeviceCredential,
 } from "./credential-store";
+import { nodeVersion } from "./node-version";
 import { configDirectory, configPath, pause, readConfig } from "./setup";
 
 const pathIndex = process.argv.indexOf("--config");
@@ -53,6 +54,8 @@ config.credential = loadDeviceCredential(
     : new FileCredentialStore(join(localDirectory, "credentials.json")),
 );
 const root = realpathSync.native(config.managedRoot);
+// Reported with every heartbeat: the commit this Node process was started from.
+const version = nodeVersion();
 const canonical = config.repositories.map((repository) => realpathSync.native(repository.path));
 const grant = (path: string) => {
   const suffix = relative(root, path);
@@ -188,6 +191,7 @@ try {
       await client.mutation(makeFunctionReference<"mutation">("node:heartbeat"), {
         workstationId: config.workstationId,
         instanceId: identity.instanceId,
+        nodeVersion: version,
         platform: process.platform,
         architecture: process.arch,
         runtimeCapabilities: await catalog.advertise([

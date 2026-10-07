@@ -14,7 +14,14 @@ export interface Device {
   lastHeartbeatAt?: number;
   /** Node.js `process.platform` as the Node last reported it. */
   platform?: string;
+  /** The commit the Node runs from, as it last reported it ("<sha>" or "<sha>+dirty"). */
+  nodeVersion?: string;
   runtimes: Array<{ runtime: string; status: string }>;
+}
+/** "macOS · Node 1a2b3c4d5e6f": what kind of computer and which Node code it runs. */
+export function deviceDetail(device: Pick<Device, "platform" | "nodeVersion">): string | undefined {
+  const parts = [platformLabel(device.platform), device.nodeVersion && `Node ${device.nodeVersion}`];
+  return parts.filter(Boolean).join(" · ") || undefined;
 }
 
 const PLATFORM_LABELS: Record<string, string> = {
@@ -101,9 +108,7 @@ export function MacItem({
   return (
     <div className="z-list-item">
       <span className="z-list-item__title">{device.name}</span>
-      {platformLabel(device.platform) && (
-        <span className="z-xsmall z-muted">{platformLabel(device.platform)}</span>
-      )}
+      {deviceDetail(device) && <span className="z-xsmall z-muted">{deviceDetail(device)}</span>}
       <div className="z-row">
         <StatusBadge
           status={state === "online" ? "completed" : state === "revoked" ? "cancelled" : "waiting"}

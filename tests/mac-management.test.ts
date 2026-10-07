@@ -115,7 +115,7 @@ describe("pairing again", () => {
 
 describe("node health", () => {
   it("reports the exact heartbeat, process instance and platform", async () => {
-    const { t, node, workstationId } = await fixture();
+    const { t, user, node, workstationId } = await fixture();
     const health = await node.query(api.node.health, { workstationId });
     expect(health).toMatchObject({
       online: true,
@@ -126,6 +126,7 @@ describe("node health", () => {
     await node.mutation(api.node.heartbeat, {
       workstationId,
       instanceId: "instance-2",
+      nodeVersion: "1a2b3c4d5e6f+dirty",
       platform: "linux",
       architecture: "x64",
       runtimeCapabilities: [{ runtime: "claude", capabilities: ["start"] }],
@@ -135,9 +136,22 @@ describe("node health", () => {
       runtimeAvailable: true,
     });
     expect(await t.run((ctx) => ctx.db.get("workstations", workstationId))).toMatchObject({
+      nodeVersion: "1a2b3c4d5e6f+dirty",
       platform: "linux",
       architecture: "x64",
     });
+    // The owner sees the reported Node code on the computer's card.
+    expect(await user.query(api.workstations.listMine, {})).toEqual([
+      expect.objectContaining({ nodeVersion: "1a2b3c4d5e6f+dirty" }),
+    ]);
+    await expect(
+      node.mutation(api.node.heartbeat, {
+        workstationId,
+        instanceId: "instance-2",
+        nodeVersion: "x".repeat(65),
+        runtimeCapabilities: [],
+      }),
+    ).rejects.toThrow("INVALID_ARGUMENT");
     await expect(
       node.mutation(api.node.heartbeat, {
         workstationId,
