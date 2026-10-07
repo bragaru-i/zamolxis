@@ -107,6 +107,7 @@ function build(name: string) {
     : [
         {
           _id: "s1",
+          productId: "p1",
           title: "Fix checkout totals and invoice VAT",
           status: "running",
           lastActivityAt: now - 2 * MINUTE,
@@ -1279,6 +1280,14 @@ function build(name: string) {
           const row = sessions.find((candidate) => candidate._id === args.workSessionId);
           if (row) row.status = "cancelled";
           for (const run of runs[args.workSessionId as string] ?? []) run.status = "cancelled";
+          return null;
+        }
+        case "workflows:setForSession": {
+          const session = sessions.find((row) => row._id === args.workSessionId);
+          if (session) {
+            session.workflowId = args.workflowId;
+            session.workflowName = args.workflowId ? "Save tokens" : undefined;
+          }
           return null;
         }
         case "approvals:resolve":

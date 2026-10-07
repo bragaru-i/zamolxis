@@ -10,6 +10,7 @@ import {
   Markdown,
   Message,
   Notice,
+  Picker,
   SessionStatusBadge,
   StatusBadge,
   Thinking,
@@ -51,6 +52,8 @@ interface Session {
   workstationName?: string;
   /** The product workflow the Session uses, when not the Default. */
   workflowName?: string;
+  workflowId?: Id<"agentWorkflows">;
+  productId?: Id<"products">;
 }
 interface UserMessage extends ConversationMessage {
   _id: string;
@@ -226,6 +229,13 @@ export function SessionView({
       }
     >
       {notices}
+      {session?.productId && !ended && (
+        <SessionWorkflow
+          sessionId={sessionId}
+          productId={session.productId}
+          value={session.workflowId ?? ""}
+        />
+      )}
       <SessionApprovals sessionId={sessionId} ready={ready} />
       {confirmStop && (
         <div className="z-card z-stack" role="alertdialog" aria-label="Stop session">
@@ -544,5 +554,58 @@ function AssistantMessage({
         />
       )}
     </Message>
+  );
+}
+
+/**
+ * The workflow this Session's next agents use: Default or one of the product's workflows.
+ * Changing it does not touch agents already running or finished.
+ */
+function SessionWorkflow({
+  sessionId,
+  productId,
+  value,
+}: {
+  sessionId: Id<"workSessions">;
+  productId: Id<"products">;
+  value: string;
+}) {
+  const workflows = useQuery(api.workflows.list, { productId }) as
+    | Array<{ _id: Id<"agentWorkflows">; name: string; roles: number }>
+    | undefined;
+  const setWorkflow = useMutation(api.workflows.setForSession);
+  const [problem, setProblem] = useState("");
+  return (
+    <section className="z-stack" aria-label="Workflow">
+      <Picker
+        label="Workflow"
+        value={value}
+        options={[
+          { value: "", label: "Default", description: "The product's own agent settings." },
+          ...(workflows ?? []).map((item) => ({
+            value: item._id,
+            label: item.name,
+            description: `Its own agents for ${item.roles} ${item.roles === 1 ? "role" : "roles"}; the rest from the Default.`,
+          })),
+        ]}
+        onChange={async (next) => {
+          setProblem("");
+          try {
+            await setWorkflow({
+              workSessionId: sessionId,
+              ...(next ? { workflowId: next as Id<"agentWorkflows"> } : {}),
+            });
+          } catch (error) {
+            setProblem(explainError(error, "Could not change the workflow."));
+          }
+        }}
+      />
+      <span className="z-xsmall z-muted">
+        {workflows?.length
+          ? "Applies to the agents this session starts from now on."
+          : "Make workflows (for example Save tokens) in Settings → Agents → this product."}
+      </span>
+      {problem && <Notice tone="danger">{problem}</Notice>}
+    </section>
   );
 }

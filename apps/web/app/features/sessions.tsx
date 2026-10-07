@@ -652,7 +652,7 @@ function OpenProposal({
                 onChange={(value) => setWorkstationId(value as Id<"workstations"> | "")}
               />
             )}
-            {workflows && workflows.length > 0 && (
+            {workflows && (
               <Picker
                 label="Workflow"
                 value={workflowId}

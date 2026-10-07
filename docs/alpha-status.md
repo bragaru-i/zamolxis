@@ -490,6 +490,12 @@ module aliases exist only when the variable is set.
   Owner decision (2026-10-07): no automatic switch to a backup when a running agent fails;
   a failure will offer "Try again with [agent]" on the same computer (not built yet).
 
+- **Workflow presets (2026-10-07):** `workflows.create({ preset })` builds Save tokens,
+  Balanced, Max quality, Codex only or Local first from `convex/lib/workflowPresets.ts`: per
+  role a chain with model hints matched to models the owner's computers report; agents no
+  computer offers are dropped, and a role left empty uses the product's Default. An open
+  Session has a Workflow picker (`workflows.setForSession`, next agents only).
+
 ## Next steps, in order
 
 1. For #114, re-run a logo-redesign-sized task and compare the Builder's processed

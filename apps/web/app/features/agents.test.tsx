@@ -195,6 +195,11 @@ describe("profile resolution", () => {
         { _id: "w1" as Id<"agentWorkflows">, productId: "p2" as Id<"products">, name: "Cheap" },
       ]).map((option) => option.label),
     ).toEqual([
+      "Recommended · Save tokens",
+      "Recommended · Balanced",
+      "Recommended · Max quality",
+      "Recommended · Codex only",
+      "Recommended · Local first",
       "Empty (every role uses the Default)",
       "Shop · Default",
       "Blog · Default",

@@ -782,3 +782,101 @@ it("resolves a role from the Session's workflow, then the product's Default, the
   });
   expect(models).toEqual(["strict", "default", "global"]);
 });
+
+it("creates a recommended workflow matched to the agents and models the computers offer", async () => {
+  const f = await fixture();
+  const instanceId = (await f.t.run((ctx) => ctx.db.get("workstations", f.workstationId)))
+    ?.nodeInstanceId;
+  await f.node.mutation(api.node.heartbeat, {
+    workstationId: f.workstationId,
+    instanceId: instanceId ?? "instance",
+    runtimeCapabilities: [
+      { runtime: "codex", capabilities: ["start", "stop"] },
+      {
+        runtime: "claude",
+        capabilities: ["start", "stop"],
+        models: [
+          { id: "claude-opus-5-5", displayName: "Opus 5.5" },
+          { id: "claude-sonnet-5-5", displayName: "Sonnet 5.5" },
+          { id: "claude-haiku-4-5", displayName: "Haiku 4.5" },
+        ],
+      },
+      {
+        runtime: "local",
+        capabilities: ["start", "stop"],
+        models: [{ id: "qwen/qwen3-coder-30b", displayName: "qwen/qwen3-coder-30b" }],
+      },
+    ],
+  });
+  const workflowId = await f.user.mutation(api.workflows.create, {
+    productId: f.productId,
+    name: "Save tokens",
+    preset: "save_tokens",
+  });
+  const profiles = await f.user.query(api.agentProfiles.list, {
+    productId: f.productId,
+    workflowId,
+  });
+  const byRole = Object.fromEntries(
+    profiles.map((row) => [
+      row.role,
+      [row.runtime, row.model, row.backups ?? [], row.verification].filter(Boolean),
+    ]),
+  );
+  expect(byRole).toEqual({
+    orchestrator: ["local", "qwen/qwen3-coder-30b", [{ runtime: "codex" }]],
+    supervisor: ["claude", "claude-haiku-4-5", [{ runtime: "codex" }]],
+    builder: ["claude", "claude-sonnet-5-5", [{ runtime: "codex" }]],
+    verifier: ["codex", [], "checks_only"],
+    repair: ["claude", "claude-sonnet-5-5", [{ runtime: "codex" }]],
+  });
+  await expect(
+    f.user.mutation(api.workflows.create, {
+      productId: f.productId,
+      name: "Both",
+      preset: "balanced",
+      copyFrom: { productId: f.productId },
+    }),
+  ).rejects.toThrow("INVALID_ARGUMENT");
+});
+
+it("keeps only agents a computer offers and switches an open Session's workflow", async () => {
+  const f = await fixture();
+  // This computer only has Codex: Claude and the local model drop out of every chain.
+  const workflowId = await f.user.mutation(api.workflows.create, {
+    productId: f.productId,
+    name: "Balanced",
+    preset: "balanced",
+  });
+  const profiles = await f.user.query(api.agentProfiles.list, {
+    productId: f.productId,
+    workflowId,
+  });
+  expect(profiles.every((row) => row.runtime === "codex" && !row.backups)).toBe(true);
+  // Balanced's Orchestrator chain (local model, then Claude) has nothing this computer
+  // offers, so that role keeps the product's Default.
+  expect(profiles.map((row) => row.role).sort()).toEqual([
+    "builder",
+    "repair",
+    "supervisor",
+    "verifier",
+  ]);
+  const sessionId = await f.user.mutation(api.supervisor.submit, {
+    productId: f.productId,
+    repositoryId: f.repositoryId,
+    text: "Fix it",
+    idempotencyKey: "switch-1",
+  });
+  await f.user.mutation(api.workflows.setForSession, { workSessionId: sessionId, workflowId });
+  expect(await f.user.query(api.sessions.get, { workSessionId: sessionId })).toMatchObject({
+    workflowId,
+    workflowName: "Balanced",
+  });
+  await f.user.mutation(api.workflows.setForSession, { workSessionId: sessionId });
+  expect(
+    (await f.user.query(api.sessions.get, { workSessionId: sessionId })).workflowId,
+  ).toBeUndefined();
+  await expect(
+    f.other.mutation(api.workflows.setForSession, { workSessionId: sessionId, workflowId }),
+  ).rejects.toThrow();
+});

@@ -1047,12 +1047,46 @@ interface WorkflowSource {
   productId: Id<"products">;
   name: string;
 }
-/** "Start from" choices: empty, any product's Default, or any product's named workflow. */
+/** Recommended workflows (convex/lib/workflowPresets.ts), in the owner's words. */
+export const WORKFLOW_PRESETS: Array<{ value: string; name: string; description: string }> = [
+  {
+    value: "save_tokens",
+    name: "Save tokens",
+    description:
+      "Local model chats, Haiku plans, Sonnet builds, checks without AI; Codex as backup.",
+  },
+  {
+    value: "balanced",
+    name: "Balanced",
+    description: "Local model chats, Sonnet plans, Opus builds, Codex checks Claude's work.",
+  },
+  {
+    value: "max_quality",
+    name: "Max quality",
+    description: "Opus everywhere, Codex checks; Codex as backup.",
+  },
+  {
+    value: "codex_only",
+    name: "Codex only",
+    description: "Every role on Codex, e.g. while Claude is at its limit.",
+  },
+  {
+    value: "local_first",
+    name: "Local first",
+    description: "Local model chats, Codex does the work, checks without AI.",
+  },
+];
+/** "Start from" choices: a recommended preset, empty, any product's Default or workflow. */
 export function workflowSources(
   products: Product[],
   workflows: WorkflowSource[],
-): Array<{ value: string; label: string }> {
+): Array<{ value: string; label: string; description?: string }> {
   return [
+    ...WORKFLOW_PRESETS.map((preset) => ({
+      value: `preset:${preset.value}`,
+      label: `Recommended · ${preset.name}`,
+      description: preset.description,
+    })),
     { value: "", label: "Empty (every role uses the Default)" },
     ...products.flatMap((product) => [
       { value: `${product._id}:`, label: `${product.name} · Default` },
@@ -1138,8 +1172,8 @@ function WorkflowBar({
             variant="secondary"
             size="small"
             onClick={() => {
-              setName("");
-              setSource(`${productId}:`);
+              setName("Save tokens");
+              setSource("preset:save_tokens");
               setMode("new");
             }}
           >
@@ -1186,19 +1220,22 @@ function WorkflowBar({
                 return;
               }
               const [fromProduct, fromWorkflow] = source.split(":");
+              const preset = fromProduct === "preset" ? fromWorkflow : undefined;
               const id = await create({
                 productId,
                 name,
-                ...(source
-                  ? {
-                      copyFrom: {
-                        ...(fromProduct ? { productId: fromProduct as Id<"products"> } : {}),
-                        ...(fromWorkflow
-                          ? { workflowId: fromWorkflow as Id<"agentWorkflows"> }
-                          : {}),
-                      },
-                    }
-                  : {}),
+                ...(preset
+                  ? { preset: preset as "save_tokens" }
+                  : source
+                    ? {
+                        copyFrom: {
+                          ...(fromProduct ? { productId: fromProduct as Id<"products"> } : {}),
+                          ...(fromWorkflow
+                            ? { workflowId: fromWorkflow as Id<"agentWorkflows"> }
+                            : {}),
+                        },
+                      }
+                    : {}),
               });
               onChange(id);
             });
@@ -1219,7 +1256,13 @@ function WorkflowBar({
               label="Start from"
               value={source}
               options={workflowSources(products, all ?? [])}
-              onChange={setSource}
+              onChange={(next) => {
+                setSource(next);
+                // A recommended preset names the workflow unless the owner typed a name.
+                const preset = WORKFLOW_PRESETS.find((item) => next === `preset:${item.value}`);
+                if (preset && (!name.trim() || WORKFLOW_PRESETS.some((item) => item.name === name)))
+                  setName(preset.name);
+              }}
             />
           )}
           <div className="z-row">
