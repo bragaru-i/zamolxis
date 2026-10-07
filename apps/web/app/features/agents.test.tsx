@@ -1,6 +1,7 @@
+import { Picker } from "@zamolxis/ui";
 import { getFunctionName } from "convex/server";
 import { ConvexError } from "convex/values";
-import { createElement } from "react";
+import { createElement, isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Id } from "../../../../convex/_generated/dataModel";
@@ -8,15 +9,42 @@ import type { Id } from "../../../../convex/_generated/dataModel";
 const state = vi.hoisted(() => ({
   data: {} as Record<string, unknown>,
   calls: [] as Array<{ name: string; args: unknown }>,
+  mutations: {} as Record<string, ReturnType<typeof vi.fn>>,
+  // Set while `mount` calls a component directly, so its state survives re-renders.
+  hooks: undefined as { values: unknown[]; index: number } | undefined,
 }));
 vi.mock("convex/react", () => ({
-  useMutation: () => vi.fn(),
+  useMutation: (reference: Parameters<typeof getFunctionName>[0]) => {
+    const name = getFunctionName(reference);
+    state.mutations[name] ??= vi.fn(async () => undefined);
+    return state.mutations[name];
+  },
   useQuery: (reference: Parameters<typeof getFunctionName>[0], args: unknown) => {
     const name = getFunctionName(reference);
     state.calls.push({ name, args });
     return args === "skip" ? undefined : state.data[name];
   },
 }));
+vi.mock("react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react")>();
+  // Renamed so the delegation is not read as a conditional hook call.
+  const { useState: reactState, useId: reactId } = actual;
+  return {
+    ...actual,
+    useState: (initial: unknown) => {
+      const hooks = state.hooks;
+      if (!hooks) return reactState(initial);
+      const index = hooks.index++;
+      if (!(index in hooks.values))
+        hooks.values[index] = typeof initial === "function" ? initial() : initial;
+      const set = (next: unknown) => {
+        hooks.values[index] = typeof next === "function" ? next(hooks.values[index]) : next;
+      };
+      return [hooks.values[index], set];
+    },
+    useId: () => (state.hooks ? `id${state.hooks.index}` : reactId()),
+  };
+});
 
 import {
   AgentsSettings,
@@ -30,6 +58,8 @@ import {
   type Profile,
   ProfileEditor,
   profileNameProblem,
+  type RuntimeModels,
+  reconcileSelection,
   runtimeChoices,
   runtimeLabel,
   scopeProfile,
@@ -53,7 +83,55 @@ function profile(overrides: Partial<Profile>): Profile {
 beforeEach(() => {
   state.data = {};
   state.calls = [];
+  state.mutations = {};
 });
+
+/** Calls a component as a function so its handlers can be driven without a DOM. */
+function mount<P>(component: (props: P) => ReactNode, props: P) {
+  const hooks = { values: [] as unknown[], index: 0 };
+  const render = () => {
+    state.hooks = hooks;
+    hooks.index = 0;
+    try {
+      return component(props);
+    } finally {
+      state.hooks = undefined;
+    }
+  };
+  const find = (match: (element: ReactElement<Record<string, unknown>>) => boolean) => {
+    const walk = (node: unknown): ReactElement<Record<string, unknown>> | undefined => {
+      if (Array.isArray(node)) {
+        for (const child of node) {
+          const found = walk(child);
+          if (found) return found;
+        }
+        return undefined;
+      }
+      if (!isValidElement<Record<string, unknown>>(node)) return undefined;
+      if (match(node)) return node;
+      return walk(node.props.children);
+    };
+    const found = walk(render());
+    if (!found) throw new Error("element not found");
+    return found;
+  };
+  const picker = (label: string) =>
+    find((element) => element.type === Picker && element.props.label === label);
+  return {
+    picker,
+    pick: (label: string, value: string) =>
+      (picker(label).props.onChange as (value: string) => void)(value),
+    shown: (label: string) =>
+      renderToStaticMarkup(picker(label)).match(/class="z-picker__value">([^<]*)</)?.[1],
+    click: (label: string) =>
+      (find((element) => element.props.children === label).props.onClick as () => void)(),
+    text: () => renderToStaticMarkup(render() as ReactElement),
+    submit: () =>
+      (find((element) => element.type === "form").props.onSubmit as (event: unknown) => void)({
+        preventDefault: () => {},
+      }),
+  };
+}
 
 describe("profile resolution", () => {
   it("prefers the enabled product profile, then global, then the default", () => {
@@ -472,5 +550,190 @@ describe("ProfileEditor", () => {
     expect(html).toContain('value="Verifier · App"');
     expect(html).toContain('placeholder="No limit"');
     expect(html).not.toContain("Remove override");
+  });
+
+  it("clears a model only the previous agent offers when the agent changes, then saves that", async () => {
+    state.data = { "agentProfiles:models": TWO_AGENTS };
+    const existing = profile({ model: "gpt-6-astra", reasoningEffort: "max" });
+    const form = mount(ProfileEditor, {
+      role: "builder",
+      label: "Builder",
+      scopeName: "All products",
+      productId: undefined,
+      existing,
+      prefill: existing,
+      runtimes: ["claude", "codex"],
+      onDone: () => {},
+    });
+    expect(form.shown("Model")).toBe("GPT-6-Astra");
+    form.pick("Agent", "claude");
+    expect(form.shown("Agent")).toBe("Claude");
+    expect(form.shown("Model")).toBe("Default (Claude Sonnet)");
+    expect(form.shown("Thinking effort")).toBe("Default");
+    expect(form.text()).toContain("Saves as: Claude · default model");
+    form.submit();
+    const upsert = state.mutations["agentProfiles:upsert"];
+    await vi.waitFor(() => expect(upsert).toHaveBeenCalledTimes(1));
+    const args = upsert?.mock.calls[0]?.[0];
+    expect(args).toMatchObject({ profileId: existing._id, runtime: "claude" });
+    expect(args).not.toHaveProperty("model");
+    expect(args).not.toHaveProperty("reasoningEffort");
+    expect(describeProfile(args)).toBe("Claude · default model");
+  });
+
+  it("resets an effort the newly picked model lacks and saves what is shown", async () => {
+    state.data = { "agentProfiles:models": TWO_AGENTS };
+    const existing = profile({ model: "gpt-6.1-sol", reasoningEffort: "xhigh" });
+    const form = mount(ProfileEditor, {
+      role: "builder",
+      label: "Builder",
+      scopeName: "All products",
+      productId: undefined,
+      existing,
+      prefill: existing,
+      runtimes: ["claude", "codex"],
+      onDone: () => {},
+    });
+    expect(form.shown("Thinking effort")).toBe("Extra high");
+    form.pick("Model", "gpt-6-astra");
+    expect(form.shown("Agent")).toBe("Codex");
+    expect(form.shown("Model")).toBe("GPT-6-Astra");
+    expect(form.shown("Thinking effort")).toBe("Default");
+    form.pick("Thinking effort", "max");
+    expect(form.text()).toContain("Saves as: Codex · gpt-6-astra · max effort");
+    form.submit();
+    const upsert = state.mutations["agentProfiles:upsert"];
+    await vi.waitFor(() => expect(upsert).toHaveBeenCalledTimes(1));
+    const args = upsert?.mock.calls[0]?.[0];
+    expect(args).toMatchObject({ runtime: "codex", model: "gpt-6-astra", reasoningEffort: "max" });
+    expect(describeProfile(args)).toBe("Codex · gpt-6-astra · max effort");
+  });
+
+  it("offers a way back to the default model when typing one", () => {
+    const form = mount(ProfileEditor, {
+      role: "builder",
+      label: "Builder",
+      scopeName: "All products",
+      productId: undefined,
+      existing: undefined,
+      prefill: profile({ model: "gpt-5" }),
+      runtimes: ["codex"],
+      onDone: () => {},
+    });
+    expect(form.text()).toContain('value="gpt-5"');
+    form.click("Use default");
+    expect(form.text()).not.toContain('value="gpt-5"');
+    expect(form.text()).toContain("Saves as: Codex · default model");
+  });
+
+  it("names the default model the computer reports", () => {
+    state.data = { "agentProfiles:models": TWO_AGENTS };
+    const form = mount(ProfileEditor, {
+      role: "builder",
+      label: "Builder",
+      scopeName: "All products",
+      productId: undefined,
+      existing: undefined,
+      prefill: undefined,
+      runtimes: ["claude", "codex"],
+      onDone: () => {},
+    });
+    expect(form.shown("Agent")).toBe("Codex");
+    expect(form.shown("Model")).toBe("Default (GPT-6.1-Sol)");
+    // Default stays first and selectable after picking another model.
+    form.pick("Model", "gpt-6-astra");
+    expect((form.picker("Model").props.options as Array<{ value: string }>)[0]?.value).toBe("");
+    form.pick("Model", "");
+    expect(form.shown("Model")).toBe("Default (GPT-6.1-Sol)");
+  });
+});
+
+const TWO_AGENTS: RuntimeModels[] = [
+  {
+    runtime: "codex",
+    models: [
+      {
+        id: "gpt-6.1-sol",
+        displayName: "GPT-6.1-Sol",
+        isDefault: true,
+        efforts: ["low", "medium", "high", "xhigh"],
+      },
+      { id: "gpt-6-astra", displayName: "GPT-6-Astra", efforts: ["low", "max"] },
+    ],
+  },
+  {
+    runtime: "claude",
+    models: [
+      {
+        id: "claude-sonnet",
+        displayName: "Claude Sonnet",
+        isDefault: true,
+        efforts: ["low", "medium", "high"],
+      },
+      { id: "claude-opus", displayName: "Claude Opus", efforts: ["low", "medium", "high", "max"] },
+    ],
+  },
+];
+
+describe("reconcileSelection", () => {
+  it("keeps a model the new agent also offers", () => {
+    const catalogs: RuntimeModels[] = [
+      ...TWO_AGENTS,
+      { runtime: "hermes", models: [{ id: "gpt-6-astra", displayName: "Astra", efforts: [] }] },
+    ];
+    expect(
+      reconcileSelection({ runtime: "hermes", model: "gpt-6-astra", effort: "max" }, catalogs, {
+        runtimeChanged: true,
+      }),
+    ).toEqual({ model: "gpt-6-astra", effort: "" });
+    expect(
+      reconcileSelection({ runtime: "claude", model: "claude-opus", effort: "max" }, TWO_AGENTS, {
+        runtimeChanged: true,
+      }),
+    ).toEqual({ model: "claude-opus", effort: "max" });
+  });
+
+  it("clears a model the new agent does not offer", () => {
+    expect(
+      reconcileSelection({ runtime: "claude", model: "gpt-6-astra", effort: "low" }, TWO_AGENTS, {
+        runtimeChanged: true,
+      }),
+    ).toEqual({ model: "", effort: "low" });
+  });
+
+  it("resets an effort the resulting model does not offer", () => {
+    // The default model decides when no model is chosen.
+    expect(
+      reconcileSelection({ runtime: "claude", model: "gpt-6-astra", effort: "max" }, TWO_AGENTS, {
+        runtimeChanged: true,
+      }),
+    ).toEqual({ model: "", effort: "" });
+    expect(
+      reconcileSelection({ runtime: "codex", model: "gpt-6-astra", effort: "high" }, TWO_AGENTS),
+    ).toEqual({ model: "gpt-6-astra", effort: "" });
+    expect(reconcileSelection({ runtime: "codex", model: "", effort: "max" }, TWO_AGENTS)).toEqual({
+      model: "",
+      effort: "",
+    });
+  });
+
+  it("clears a typed model when the agent changes and nothing is reported", () => {
+    for (const catalogs of [undefined, [], [{ runtime: "claude", models: [] }]])
+      expect(
+        reconcileSelection({ runtime: "claude", model: "gpt-5", effort: "high" }, catalogs, {
+          runtimeChanged: true,
+        }),
+      ).toEqual({ model: "", effort: "high" });
+    expect(
+      reconcileSelection({ runtime: "claude", model: "gpt-5", effort: "max" }, undefined, {
+        runtimeChanged: true,
+      }),
+    ).toEqual({ model: "", effort: "" });
+  });
+
+  it("keeps a saved model the computer does not report unless the agent changes", () => {
+    expect(
+      reconcileSelection({ runtime: "codex", model: "gpt-5", effort: "minimal" }, TWO_AGENTS),
+    ).toEqual({ model: "gpt-5", effort: "minimal" });
   });
 });

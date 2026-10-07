@@ -63,7 +63,7 @@ interface Product {
   _id: Id<"products">;
   name: string;
 }
-interface RuntimeModels {
+export interface RuntimeModels {
   runtime: string;
   models: Array<{
     id: string;
@@ -193,6 +193,28 @@ export function describeProfile(profile: Pick<Profile, "runtime" | "model" | "re
   ]
     .filter(Boolean)
     .join(" · ");
+}
+
+/**
+ * Keeps the model and effort only where the selected runtime supports them. After an agent
+ * switch (`runtimeChanged`) a model the new runtime does not report is cleared to its default,
+ * including a typed one; otherwise an unreported model stays as saved. The effort resets when
+ * the resulting model (or the runtime's default model) does not offer it.
+ */
+export function reconcileSelection(
+  selection: { runtime: string; model: string; effort: string },
+  catalogs: RuntimeModels[] | undefined,
+  { runtimeChanged = false }: { runtimeChanged?: boolean } = {},
+): { model: string; effort: string } {
+  const catalog = catalogs?.find((item) => item.runtime === selection.runtime)?.models ?? [];
+  const known = catalog.find((item) => item.id === selection.model);
+  const model = selection.model && !known && runtimeChanged ? "" : selection.model;
+  const offered = (model ? known : catalog.find((item) => item.isDefault))?.efforts;
+  // Without a reported list the picker offers the generic efforts; only an agent switch checks them.
+  const supported = offered?.length ? offered : runtimeChanged ? EFFORTS : undefined;
+  const effort =
+    selection.effort && supported && !supported.includes(selection.effort) ? "" : selection.effort;
+  return { model, effort };
 }
 
 /** Mirrors the backend bound on owner instructions (#48). */
@@ -577,7 +599,7 @@ export function ProfileEditor({
   const modelOptions = [
     {
       value: "",
-      label: "Default",
+      label: defaultModel ? `Default (${defaultModel.displayName})` : "Default",
       description: defaultModel ? `Currently ${defaultModel.displayName}.` : "The agent's default.",
     },
     ...catalog.map((item) => ({
@@ -593,6 +615,23 @@ export function ProfileEditor({
   const offered = (chosen ?? (model ? undefined : defaultModel))?.efforts;
   const baseEfforts = offered?.length ? offered : EFFORTS;
   const efforts = effort && !baseEfforts.includes(effort) ? [...baseEfforts, effort] : baseEfforts;
+  const select = (next: { runtime?: string; model?: string }) => {
+    const nextRuntime = next.runtime ?? runtime;
+    const reconciled = reconcileSelection(
+      { runtime: nextRuntime, model: next.model ?? model, effort },
+      catalogs,
+      { runtimeChanged: nextRuntime !== runtime },
+    );
+    setRuntime(nextRuntime);
+    setModel(reconciled.model);
+    setEffort(reconciled.effort);
+  };
+  // What Save stores, in the same words as the profile summary shows afterwards.
+  const selection = describeProfile({
+    runtime,
+    ...(model.trim() ? { model: model.trim() } : {}),
+    ...(effort ? { reasoningEffort: effort } : {}),
+  });
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true);
     setProblem("");
@@ -651,36 +690,42 @@ export function ProfileEditor({
         label="Agent"
         value={runtime}
         options={runtimes.map((choice) => ({ value: choice, label: runtimeLabel(choice) }))}
-        onChange={setRuntime}
+        onChange={(next) => select({ runtime: next })}
       />
       {catalog.length ? (
         <Picker
           label="Model"
           value={model}
           options={modelOptions}
-          onChange={(next) => {
-            setModel(next);
-            const supported = catalog.find((item) => item.id === next)?.efforts;
-            if (effort && supported && !supported.includes(effort)) setEffort("");
-          }}
+          onChange={(next) => select({ model: next })}
         />
       ) : (
-        <label className="z-field" htmlFor={modelId}>
-          Model
-          <TextInput
-            id={modelId}
-            value={model}
-            maxLength={128}
-            autoCapitalize="off"
-            autoCorrect="off"
-            spellCheck={false}
-            placeholder="Default model"
-            onChange={(event) => setModel(event.target.value)}
-          />
+        <div className="z-field">
+          <label htmlFor={modelId}>Model</label>
+          <div className="z-row" style={{ flexWrap: "nowrap" }}>
+            <TextInput
+              id={modelId}
+              value={model}
+              maxLength={128}
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+              placeholder="Default model"
+              onChange={(event) => setModel(event.target.value)}
+            />
+            <Button
+              variant="secondary"
+              size="small"
+              disabled={!model}
+              onClick={() => select({ model: "" })}
+            >
+              Use default
+            </Button>
+          </div>
           <span className="z-xsmall z-muted">
             Your computer lists the available models once it is online with the latest Zamolxis.
           </span>
-        </label>
+        </div>
       )}
       <Picker
         label="Thinking effort"
@@ -695,6 +740,9 @@ export function ProfileEditor({
         ]}
         onChange={setEffort}
       />
+      <p className="z-xsmall z-muted" aria-live="polite">
+        Saves as: {selection}
+      </p>
       {RUN_ROLES.includes(role) && (
         <label className="z-field" htmlFor={concurrencyId}>
           Max concurrent runs
