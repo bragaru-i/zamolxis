@@ -32,6 +32,9 @@ export interface Profile {
   verification?: Verification;
   /** Backup agents in order, used when the ones before cannot run on that computer. */
   backups?: Backup[];
+  /** The saved agent (My agents) this job's settings come from. */
+  agentId?: Id<"agentDefinitions">;
+  workflowId?: Id<"agentWorkflows">;
   updatedAt: number;
 }
 export interface Backup {
@@ -299,8 +302,7 @@ const PROFILE_ERRORS: Record<string, string> = {
     "Check the profile: a name of 1 to 64 characters, a runtime, at most 32 concurrent runs and at most 4000 characters of instructions.",
   AGENT_PROFILE_IN_USE:
     "Runs started with this override are still active. Remove it once they have finished.",
-  INVALID_STATE:
-    "Only a product override can be removed; turn the All products profile off instead.",
+  INVALID_STATE: "Only a product override can be removed; turn the Default profile off instead.",
   PRODUCT_MISMATCH: "This product no longer exists or was archived.",
   LIMIT_EXCEEDED: "You have reached the limit of 100 agent profiles.",
   NOT_FOUND: "This profile no longer exists. Close Settings and try again.",
@@ -402,9 +404,9 @@ export function AgentsSettings({
   /** Only the editor for `initialRole`, for a surface that already describes the role. */
   compact?: boolean;
 }) {
-  const [scope, setScope] = useState(initialScope);
-  // "" is the product's Default; otherwise one of its named workflows.
-  const [workflow, setWorkflow] = useState(initialWorkflow);
+  const scope = initialScope;
+  // "" is the Default; otherwise one of the owner's workflows.
+  const workflow = initialWorkflow;
   const [editing, setEditing] = useState<Role | undefined>(initialRole);
   const [saved, setSaved] = useState(false);
   const [switching, setSwitching] = useState(false);
@@ -419,25 +421,19 @@ export function AgentsSettings({
   const scoped = useQuery(api.agentProfiles.list, active && productId ? { productId } : "skip") as
     | Profile[]
     | undefined;
-  const workflows = useQuery(api.workflows.list, active && productId ? { productId } : "skip") as
-    | WorkflowRow[]
-    | undefined;
+  const workflows = useQuery(api.workflows.list, active ? {} : "skip") as WorkflowRow[] | undefined;
   const workflowId =
-    productId && workflow && workflows?.some((item) => item._id === workflow)
+    workflow && workflows?.some((item) => item._id === workflow)
       ? (workflow as Id<"agentWorkflows">)
       : undefined;
   const workflowRows = useQuery(
     api.agentProfiles.list,
-    active && productId && workflowId ? { productId, workflowId } : "skip",
+    active && workflowId ? { workflowId } : "skip",
   ) as Profile[] | undefined;
   const scopeRows = workflowId ? workflowRows : productId ? scoped : global;
   const productName = products?.find((product) => product._id === productId)?.name;
   const workflowName = workflows?.find((item) => item._id === workflowId)?.name;
-  const scopeName = productName
-    ? workflowName
-      ? `${productName} · ${workflowName}`
-      : productName
-    : "All products";
+  const scopeName = workflowName ?? productName ?? "Default";
   const roleState = (role: Role) => {
     const rows = scopeRows ?? [];
     const effective = effectiveProfile(
@@ -491,9 +487,9 @@ export function AgentsSettings({
       return (
         <section className="z-stack" aria-label={`Change the ${open.label} agent`}>
           <p className="z-xsmall z-muted">
-            {productId
-              ? `Saved for ${scopeName} only. Settings → Agents changes it for all products.`
-              : "Saved for all products."}
+            {workflowId || productId
+              ? `Saved for ${scopeName} only.`
+              : "Saved for the Default (used where no workflow sets this job)."}
           </p>
           {saved && <Notice tone="success">Saved. The next {open.label} run uses it.</Notice>}
           {editor}
@@ -539,39 +535,9 @@ export function AgentsSettings({
         Each job is done by its own agent. Tap one to change its agent or model. Changes apply to
         new runs. Running and past runs keep the settings they started with.
       </p>
-      {products && products.length > 0 && (
-        <Picker
-          label="Applies to"
-          value={scope}
-          options={[
-            { value: "", label: "All products" },
-            ...products.map((product) => ({ value: product._id, label: product.name })),
-          ]}
-          onChange={(value) => {
-            setScope(value);
-            setWorkflow("");
-            setEditing(undefined);
-          }}
-        />
-      )}
-      {productId && productName && (
-        <WorkflowBar
-          productId={productId}
-          productName={productName}
-          products={products ?? []}
-          workflows={workflows}
-          value={workflowId ?? ""}
-          onChange={(value) => {
-            setWorkflow(value);
-            setEditing(undefined);
-          }}
-        />
-      )}
-      {productId && (
+      {workflowId && (
         <p className="z-xsmall z-muted">
-          {workflowId
-            ? `Roles you set here apply to sessions that use ${scopeName}; the others come from ${productName}'s Default.`
-            : `Roles you set here override All products for ${scopeName} only. Remove an override to go back to All products.`}
+          Jobs you set here apply to work that uses {scopeName}; the others come from the Default.
         </p>
       )}
       {!loading && (
@@ -664,7 +630,7 @@ function ProfileNotes({
   const off = own && !own.enabled ? `Your ${scopeName} profile is off. ` : "";
   const using =
     source === "global" && productId
-      ? "Using All products."
+      ? "Using the Default."
       : source === "default"
         ? "Using the built-in default."
         : "";
@@ -1052,11 +1018,8 @@ export interface WorkflowRow {
   name: string;
   roles: number;
   activeSessions: number;
-}
-interface WorkflowSource {
-  _id: Id<"agentWorkflows">;
-  productId: Id<"products">;
-  name: string;
+  /** The computers whose new work starts with it. */
+  computers: string[];
 }
 /** Recommended workflows (convex/lib/workflowPresets.ts), in the owner's words. */
 export const WORKFLOW_PRESETS: Array<{ value: string; name: string; description: string }> = [
@@ -1087,206 +1050,3 @@ export const WORKFLOW_PRESETS: Array<{ value: string; name: string; description:
     description: "Local model chats, Codex does the work, checks without AI.",
   },
 ];
-/** "Start from" choices: a recommended preset, empty, any product's Default or workflow. */
-export function workflowSources(
-  products: Product[],
-  workflows: WorkflowSource[],
-): Array<{ value: string; label: string; description?: string }> {
-  return [
-    ...WORKFLOW_PRESETS.map((preset) => ({
-      value: `preset:${preset.value}`,
-      label: `Recommended · ${preset.name}`,
-      description: preset.description,
-    })),
-    { value: "", label: "Empty (every role uses the Default)" },
-    ...products.flatMap((product) => [
-      { value: `${product._id}:`, label: `${product.name} · Default` },
-      ...workflows
-        .filter((workflow) => workflow.productId === product._id)
-        .map((workflow) => ({
-          value: `${product._id}:${workflow._id}`,
-          label: `${product.name} · ${workflow.name}`,
-        })),
-    ]),
-  ];
-}
-
-/**
- * A product's workflows: its Default (the product's own settings) and named ones, each a
- * full set of agents per role. Sessions choose one when they open.
- */
-function WorkflowBar({
-  productId,
-  productName,
-  products,
-  workflows,
-  value,
-  onChange,
-}: {
-  productId: Id<"products">;
-  productName: string;
-  products: Product[];
-  workflows: WorkflowRow[] | undefined;
-  value: string;
-  onChange: (workflowId: string) => void;
-}) {
-  const create = useMutation(api.workflows.create);
-  const rename = useMutation(api.workflows.rename);
-  const remove = useMutation(api.workflows.remove);
-  const all = useQuery(api.workflows.listAll, {}) as WorkflowSource[] | undefined;
-  const [mode, setMode] = useState<"idle" | "new" | "rename">("idle");
-  const [name, setName] = useState("");
-  const [source, setSource] = useState(`${productId}:`);
-  const [busy, setBusy] = useState(false);
-  const [problem, setProblem] = useState("");
-  const nameId = useId();
-  const current = workflows?.find((item) => item._id === value);
-  const run = async (action: () => Promise<unknown>) => {
-    setBusy(true);
-    setProblem("");
-    try {
-      await action();
-      setMode("idle");
-    } catch (error) {
-      const code = errorCode(error);
-      setProblem(
-        code === "WORKFLOW_NAME_TAKEN"
-          ? "This product already has a workflow with that name."
-          : code === "WORKFLOW_IN_USE"
-            ? "A session that is not finished uses this workflow. Finish or close it first."
-            : explainError(error, "That didn't work. Try again."),
-      );
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <section className="z-stack" aria-label="Workflow">
-      <Picker
-        label="Workflow"
-        value={value}
-        options={[
-          { value: "", label: "Default", description: `${productName}'s own settings.` },
-          ...(workflows ?? []).map((item) => ({
-            value: item._id,
-            label: item.name,
-            description: `${item.roles} of ${ROLES.length} roles set${
-              item.activeSessions ? ` · used by ${item.activeSessions} open sessions` : ""
-            }`,
-          })),
-        ]}
-        onChange={onChange}
-      />
-      {mode === "idle" ? (
-        <div className="z-row">
-          <Button
-            variant="secondary"
-            size="small"
-            onClick={() => {
-              setName("Save tokens");
-              setSource("preset:save_tokens");
-              setMode("new");
-            }}
-          >
-            New workflow
-          </Button>
-          {current && (
-            <>
-              <Button
-                variant="ghost"
-                size="small"
-                onClick={() => {
-                  setName(current.name);
-                  setMode("rename");
-                }}
-              >
-                Rename
-              </Button>
-              <Button
-                variant="ghost"
-                size="small"
-                disabled={busy}
-                onClick={() =>
-                  run(async () => {
-                    await remove({ workflowId: current._id });
-                    onChange("");
-                  })
-                }
-              >
-                Delete
-              </Button>
-            </>
-          )}
-        </div>
-      ) : (
-        <form
-          className="z-stack"
-          aria-label={mode === "new" ? "New workflow" : "Rename workflow"}
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (!name.trim()) return setProblem("Give the workflow a name.");
-            void run(async () => {
-              if (mode === "rename" && current) {
-                await rename({ workflowId: current._id, name });
-                return;
-              }
-              const [fromProduct, fromWorkflow] = source.split(":");
-              const preset = fromProduct === "preset" ? fromWorkflow : undefined;
-              const id = await create({
-                productId,
-                name,
-                ...(preset
-                  ? { preset: preset as "save_tokens" }
-                  : source
-                    ? {
-                        copyFrom: {
-                          ...(fromProduct ? { productId: fromProduct as Id<"products"> } : {}),
-                          ...(fromWorkflow
-                            ? { workflowId: fromWorkflow as Id<"agentWorkflows"> }
-                            : {}),
-                        },
-                      }
-                    : {}),
-              });
-              onChange(id);
-            });
-          }}
-        >
-          <label className="z-field" htmlFor={nameId}>
-            Name
-            <TextInput
-              id={nameId}
-              value={name}
-              maxLength={64}
-              placeholder="e.g. Save tokens"
-              onChange={(event) => setName(event.target.value)}
-            />
-          </label>
-          {mode === "new" && (
-            <Picker
-              label="Start from"
-              value={source}
-              options={workflowSources(products, all ?? [])}
-              onChange={(next) => {
-                setSource(next);
-                // A recommended preset names the workflow unless the owner typed a name.
-                const preset = WORKFLOW_PRESETS.find((item) => next === `preset:${item.value}`);
-                if (preset && (!name.trim() || WORKFLOW_PRESETS.some((item) => item.name === name)))
-                  setName(preset.name);
-              }}
-            />
-          )}
-          <div className="z-row">
-            <Button type="submit" size="small" disabled={busy}>
-              {mode === "new" ? "Create" : "Save"}
-            </Button>
-            <Button variant="ghost" size="small" onClick={() => setMode("idle")}>
-              Cancel
-            </Button>
-          </div>
-        </form>
-      )}
-      {problem && <Notice tone="danger">{problem}</Notice>}
-    </section>
-  );
-}

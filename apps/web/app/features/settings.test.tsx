@@ -11,7 +11,6 @@ vi.mock("convex/react", () => ({
 }));
 vi.mock("@convex-dev/auth/react", () => ({ useAuthActions: () => ({ signOut: vi.fn() }) }));
 
-import type { Profile } from "./agents";
 import type { Device } from "./macs";
 import { pageSummary, SETTINGS_PAGES, Settings } from "./settings";
 
@@ -24,15 +23,6 @@ const mac = (overrides: Partial<Device> = {}): Device => ({
   runtimes: [{ runtime: "codex", status: "available" }],
   ...overrides,
 });
-const profile = (overrides: Partial<Profile>): Profile => ({
-  _id: "p1" as Profile["_id"],
-  name: "Builder",
-  role: "builder",
-  runtime: "codex",
-  enabled: true,
-  updatedAt: 1,
-  ...overrides,
-});
 
 beforeEach(() => {
   state.data = {};
@@ -40,8 +30,9 @@ beforeEach(() => {
 
 it("orders pages by how often the owner needs them", () => {
   expect(SETTINGS_PAGES.map((page) => page.title)).toEqual([
-    "Agents",
-    "Computers & repositories",
+    "Workflows",
+    "My agents",
+    "Computers & projects",
     "Usage",
     "Storage",
     "People & devices",
@@ -49,18 +40,25 @@ it("orders pages by how often the owner needs them", () => {
 });
 
 it("summarizes each page's current state in one line", () => {
-  expect(pageSummary("agents", { now: NOW, profiles: [] })).toBe(
-    "Builder: Codex · default model · all on defaults",
+  expect(pageSummary("workflows", { now: NOW, workflows: [], devices: [mac()] })).toBe(
+    "Only the Default so far · Studio uses Default",
   );
+  expect(
+    pageSummary("workflows", {
+      now: NOW,
+      workflows: [{ _id: "f1" as never, name: "Save tokens" }],
+      devices: [mac({ defaultWorkflowId: "f1" as never })],
+    }),
+  ).toBe("1 workflow · Studio uses Save tokens");
   expect(
     pageSummary("agents", {
       now: NOW,
-      profiles: [
-        profile({ model: "gpt-5.1-codex" }),
-        profile({ role: "verifier", enabled: false }),
+      agents: [
+        { chain: [{ runtime: "local" }], checksOnly: false },
+        { chain: [{ runtime: "claude" }], checksOnly: false },
       ],
     }),
-  ).toBe("Builder: Codex · gpt-5.1-codex · 1 of 6 customized");
+  ).toBe("2 agents · 1 run free");
   expect(pageSummary("macs", { now: NOW, devices: [] })).toBe("No computer paired yet");
   expect(pageSummary("macs", { now: NOW, devices: [mac()] })).toBe("Studio · online");
   expect(pageSummary("macs", { now: NOW, devices: [mac({ lastHeartbeatAt: 0 })] })).toBe(
@@ -107,11 +105,11 @@ const render = (page: Parameters<typeof Settings>[0]["page"]) =>
   );
 
 it("shows the menu on a phone, with live summaries and sign out last", () => {
-  state.data = { "agentProfiles:list": [] };
+  state.data = { "workflows:list": [] };
   const html = render("");
   expect(html).toContain('aria-label="Settings sections"');
   expect(html).toContain("Studio · online");
-  expect(html).toContain("Builder: Codex · default model · all on defaults");
+  expect(html).toContain("Only the Default so far · Studio uses Default");
   expect(html).toContain("Who can use Zamolxis");
   expect(html.indexOf("People &amp; devices")).toBeLessThan(html.indexOf("Sign out"));
   // Only the menu: no page is open yet.
@@ -121,7 +119,7 @@ it("shows the menu on a phone, with live summaries and sign out last", () => {
 it("shows one page with a way back to the menu", () => {
   const html = render("macs");
   expect(html).toContain("Back to Settings");
-  expect(html).toContain("Computers &amp; repositories");
+  expect(html).toContain("Computers &amp; projects");
   expect(html).toContain("Remove this computer…");
   expect(html).not.toContain('aria-label="Settings sections"');
 });

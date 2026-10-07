@@ -618,8 +618,8 @@ function OpenProposal({
     repositoryId ? { repositoryId } : "skip",
   ) as Computer[] | undefined;
   const [workstationId, setWorkstationId] = useState<Id<"workstations"> | "">("");
-  // The product's workflows; "" is its Default.
-  const workflows = useQuery(api.workflows.list, productId ? { productId } : "skip") as
+  // The owner's workflows; "" is the Default.
+  const workflows = useQuery(api.workflows.list, productId ? {} : "skip") as
     | Array<{ _id: Id<"agentWorkflows">; name: string; roles: number }>
     | undefined;
   // undefined until the owner picks one: then each computer's saved workflow applies.
@@ -687,14 +687,15 @@ function OpenProposal({
                         {
                           value: "auto",
                           label: "The computer's own",
-                          description: "Each computer's saved workflow (Settings → Computers).",
+                          description:
+                            "Each computer's own workflow (Settings → Computers & projects).",
                         },
                       ]
                     : []),
                   {
                     value: "",
                     label: "Default",
-                    description: "The product's own agent settings.",
+                    description: "Your Default agents (Settings → Workflows).",
                   },
                   ...workflows.map((item) => ({
                     value: item._id,

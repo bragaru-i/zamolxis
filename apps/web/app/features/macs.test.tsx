@@ -46,11 +46,10 @@ describe("Settings → Computers", () => {
     expect(html).toContain("Rename");
     expect(html).toContain("Repositories");
     expect(html).toContain("Remove this computer…");
-    // Only the computer's repositories are read, for their workflows.
-    expect(state.calls.map((call) => call.name)).toEqual(["repositories:listLocations"]);
+    expect(html).toContain("Workflow on this computer");
   });
 
-  it("shows the workflow each repository starts new work with on this computer", () => {
+  it("shows a project's own workflow on this computer when it has one", () => {
     state.data["repositories:listLocations"] = [
       {
         repositoryLocationId: "l1",
@@ -63,8 +62,41 @@ describe("Settings → Computers", () => {
     ];
     state.data["workflows:list"] = [{ _id: "wf1", name: "Save tokens", roles: 5 }];
     const html = render();
-    expect(html).toContain("zamolxis: workflow for new work here");
+    expect(html).toContain("A project here can use its own workflow instead.");
+    expect(html).toContain("Same as the computer");
     expect(html).toContain("Save tokens");
+  });
+
+  it("offers a project exception only when asked, and says what runs here", () => {
+    state.data["repositories:listLocations"] = [
+      {
+        repositoryLocationId: "l1",
+        repositoryName: "zamolxis",
+        canonicalPath: "/repo",
+        status: "available",
+        productId: "p1",
+      },
+    ];
+    state.data["workflows:list"] = [];
+    // Chat on the local model with Codex as backup; this computer has only Codex.
+    state.data["agentProfiles:list"] = [
+      {
+        _id: "a1",
+        name: "Local chat",
+        role: "orchestrator",
+        runtime: "local",
+        model: "qwen/qwen3-coder-30b",
+        backups: [{ runtime: "codex" }],
+        enabled: true,
+        updatedAt: 1,
+      },
+    ];
+    state.data["agentProfiles:defaultRuntime"] = "codex";
+    const html = render();
+    expect(html).toContain("All projects here use it: zamolxis.");
+    expect(html).toContain("Different workflow for one project…");
+    expect(html).toContain("What runs here");
+    expect(html).toContain("Codex — backup, no Qwen3 Coder 30B here");
   });
 
   it("reports any available agent runtime", () => {

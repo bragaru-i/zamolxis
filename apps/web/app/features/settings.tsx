@@ -5,31 +5,25 @@ import { useQuery } from "convex/react";
 import { useState } from "react";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
-import {
-  AgentsSettings,
-  DEFAULT_RUNTIME,
-  describeProfile,
-  effectiveProfile,
-  type Profile,
-  ROLES,
-  runtimeLabel,
-} from "./agents";
+import type { WorkflowRow } from "./agents";
 import { DevicesSection } from "./devices";
 import { type Device, deviceState, MacItem } from "./macs";
 import { PeopleSection } from "./people";
 import { ProductsSection } from "./products";
 import { plural, StorageSettings, type StorageSummary } from "./storage";
 import { UsageSettings, type UsageSummary } from "./usage";
+import { costOf, MyAgentsSettings, type SavedAgent, WorkflowsSettings } from "./workflow-settings";
 
-export type SettingsPage = "agents" | "macs" | "usage" | "storage" | "access";
+export type SettingsPage = "workflows" | "agents" | "macs" | "usage" | "storage" | "access";
 
 /** Settings in the order the owner needs them most. */
 export const SETTINGS_PAGES: Array<{ page: SettingsPage; title: string; help: string }> = [
-  { page: "agents", title: "Agents", help: "Which agent and model does each job." },
+  { page: "workflows", title: "Workflows", help: "Which agent does each job." },
+  { page: "agents", title: "My agents", help: "Your agents: one to three models each." },
   {
     page: "macs",
-    title: "Computers & repositories",
-    help: "Where work runs and which code it can change.",
+    title: "Computers & projects",
+    help: "Where work runs and which workflow each computer uses.",
   },
   { page: "usage", title: "Usage", help: "Tokens your agents used." },
   { page: "storage", title: "Storage", help: "How long finished work stays on your computer." },
@@ -41,9 +35,8 @@ export const SETTINGS_PAGES: Array<{ page: SettingsPage; title: string; help: st
 ];
 
 export interface SummaryInputs {
-  profiles?: Profile[];
-  /** From `agentProfiles.defaultRuntime`; the last-resort constant until it loads. */
-  defaultRuntime?: string;
+  workflows?: Pick<WorkflowRow, "_id" | "name">[];
+  agents?: Pick<SavedAgent, "chain" | "checksOnly">[];
   devices?: Device[];
   usage?: UsageSummary;
   storage?: StorageSummary;
@@ -53,17 +46,24 @@ export interface SummaryInputs {
 /** One line of current state per page, so the menu says what is set before it is opened. */
 export function pageSummary(page: SettingsPage, data: SummaryInputs): string | undefined {
   switch (page) {
+    case "workflows": {
+      if (!data.workflows || !data.devices) return undefined;
+      const count = data.workflows.length
+        ? plural(data.workflows.length, "workflow")
+        : "Only the Default so far";
+      const [first] = data.devices.filter((device) => device.status !== "revoked");
+      if (!first) return count;
+      const used =
+        data.workflows.find((workflow) => workflow._id === first.defaultWorkflowId)?.name ??
+        "Default";
+      return `${count} · ${first.name} uses ${used}`;
+    }
     case "agents": {
-      if (!data.profiles) return undefined;
-      const profiles = data.profiles;
-      const custom = ROLES.filter(
-        ({ role }) => effectiveProfile(role, undefined, profiles).profile,
-      );
-      const builder = effectiveProfile("builder", undefined, profiles).profile;
-      const doing = `Builder: ${builder ? describeProfile(builder) : `${runtimeLabel(data.defaultRuntime ?? DEFAULT_RUNTIME)} · default model`}`;
-      return custom.length
-        ? `${doing} · ${custom.length} of ${ROLES.length} customized`
-        : `${doing} · all on defaults`;
+      if (!data.agents) return undefined;
+      const free = data.agents.filter(
+        (agent) => costOf(agent.chain, agent.checksOnly) === "free",
+      ).length;
+      return `${plural(data.agents.length, "agent")}${free ? ` · ${free} run free` : ""}`;
     }
     case "macs": {
       if (!data.devices) return undefined;
@@ -102,7 +102,7 @@ export function Settings({
   onOpenSession,
 }: {
   open: boolean;
-  /** Empty shows the menu on phones; wide screens then show Agents next to the menu. */
+  /** Empty shows the menu on phones; wide screens then show Workflows next to the menu. */
   page: SettingsPage | "";
   onPage: (page: SettingsPage | "") => void;
   onClose: () => void;
@@ -111,7 +111,7 @@ export function Settings({
   onOpenSession: (id: Id<"workSessions">) => void;
 }) {
   const wide = useWide();
-  const shown: SettingsPage | "" = page || (wide ? "agents" : "");
+  const shown: SettingsPage | "" = page || (wide ? "workflows" : "");
   const menuVisible = wide || !page;
   const title = SETTINGS_PAGES.find((item) => item.page === shown)?.title;
   return (
@@ -164,10 +164,8 @@ function SettingsMenu({
 }) {
   const { signOut } = useAuthActions();
   const [problem, setProblem] = useState("");
-  const profiles = useQuery(api.agentProfiles.list, active ? {} : "skip") as Profile[] | undefined;
-  const defaultRuntime = useQuery(api.agentProfiles.defaultRuntime, active ? {} : "skip") as
-    | string
-    | undefined;
+  const workflows = useQuery(api.workflows.list, active ? {} : "skip") as WorkflowRow[] | undefined;
+  const agents = useQuery(api.agents.list, active ? {} : "skip") as SavedAgent[] | undefined;
   const usage = useQuery(api.usage.summary, active ? { period: "7d" } : "skip") as
     | UsageSummary
     | undefined;
@@ -176,15 +174,16 @@ function SettingsMenu({
     | undefined;
   const data = {
     now,
-    ...(profiles ? { profiles } : {}),
-    ...(defaultRuntime ? { defaultRuntime } : {}),
+    ...(workflows ? { workflows } : {}),
+    ...(agents ? { agents } : {}),
     ...(devices ? { devices } : {}),
     ...(usage ? { usage } : {}),
     ...(storage ? { storage } : {}),
   };
   return (
     <nav className="z-settings__menu" aria-label="Settings sections">
-      {SETTINGS_PAGES.map((item) => (
+      <div className="z-settings__sections">
+        {SETTINGS_PAGES.map((item) => (
         <button
           type="button"
           key={item.page}
@@ -202,7 +201,8 @@ function SettingsMenu({
             ›
           </span>
         </button>
-      ))}
+        ))}
+      </div>
       <Button
         variant="ghost"
         block
@@ -230,8 +230,10 @@ function SettingsContent({
   onOpenSession: (id: Id<"workSessions">) => void;
 }) {
   switch (page) {
+    case "workflows":
+      return <WorkflowsSettings active={active} devices={devices} />;
     case "agents":
-      return <AgentsSettings active={active} devices={devices} />;
+      return <MyAgentsSettings active={active} devices={devices} />;
     case "macs":
       return <MacsSettings devices={devices} now={now} />;
     case "usage":
@@ -252,8 +254,9 @@ function MacsSettings({ devices, now }: { devices: Device[] | undefined; now: nu
   const [message, setMessage] = useState("");
   return (
     <section className="z-stack" aria-label="Computers">
-      <p className="z-xsmall z-muted">
-        Agents work on your computers, only in the repositories listed here.
+      <p className="z-small z-muted">
+        Where work runs. Each computer uses one workflow for all its projects; work started on a
+        computer stays there.
       </p>
       {devices === undefined ? (
         <p className="z-muted z-small" role="status">

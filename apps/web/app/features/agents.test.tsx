@@ -66,8 +66,8 @@ import {
   scopeProfile,
   sharedRuntime,
   upsertArgs,
-  workflowSources,
 } from "./agents";
+import { workflowSources } from "./workflow-settings";
 
 const product = "p1" as Id<"products">;
 function profile(overrides: Partial<Profile>): Profile {
@@ -185,25 +185,20 @@ describe("profile resolution", () => {
     expect(effectiveProfile("supervisor", [product], [global], [flow]).source).toBe("default");
   });
 
-  it("offers every product's Default and workflows to start from, and saves into a workflow", () => {
-    const products = [
-      { _id: "p1" as Id<"products">, name: "Shop" },
-      { _id: "p2" as Id<"products">, name: "Blog" },
-    ] as never[];
+  it("offers recommended workflows and copies of yours to start from, and saves into a workflow", () => {
     expect(
-      workflowSources(products, [
-        { _id: "w1" as Id<"agentWorkflows">, productId: "p2" as Id<"products">, name: "Cheap" },
-      ]).map((option) => option.label),
+      workflowSources([{ _id: "w1" as Id<"agentWorkflows">, name: "Cheap" }]).map(
+        (option) => option.label,
+      ),
     ).toEqual([
       "Recommended · Save tokens",
       "Recommended · Balanced",
       "Recommended · Max quality",
       "Recommended · Codex only",
       "Recommended · Local first",
-      "Empty (every role uses the Default)",
-      "Shop · Default",
-      "Blog · Default",
-      "Blog · Cheap",
+      "Copy of Default",
+      "Copy of Cheap",
+      "Empty",
     ]);
     const args = upsertArgs({
       role: "builder",
@@ -488,7 +483,7 @@ describe("AgentsSettings", () => {
     expect(html).toContain("Codex · gpt-5-codex · high effort");
     expect(html).toContain("Custom");
     expect(html).toContain("Codex · default model");
-    expect(html).toContain("Your All products profile is off.");
+    expect(html).toContain("Your Default profile is off.");
     expect(html).toContain("Writes the code");
     expect(html).toContain("Tap one to change its agent or model.");
     expect(html).toContain("Changes apply to new runs.");
@@ -513,14 +508,13 @@ describe("AgentsSettings", () => {
     expect(html).toContain("Thinking effort");
   });
 
-  it("offers a product scope when products exist", () => {
+  it("has no product scope: workflows choose the agents", () => {
     state.data = {
       "supervisor:products": [{ _id: product, name: "App" }],
       "agentProfiles:list": [],
     };
     const html = renderToStaticMarkup(createElement(AgentsSettings, { active: true, devices: [] }));
-    expect(html).toContain("Applies to");
-    expect(html).toMatch(/role="option" aria-selected="false"[^>]*>.*?App</);
+    expect(html).not.toContain("Applies to");
   });
 });
 
