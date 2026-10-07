@@ -50,6 +50,13 @@ shipped or a tested implementation as proven in production.
   roles always wait for the owner. This is how Codex's "contains brace with quotes,
   character expansion, obfuscated" requests stop interrupting: they are medium risk when
   they stay in the workspace without network.
+  **Run sandbox (2026-10-07):** Builders and Repairs get a private TMPDIR (a writable
+  sandbox root, removed with the run's connection), so `python3`, Node and test tools no
+  longer fail with "Operation not permitted" and ask to leave the sandbox; the shared temp
+  folders, home and network stay blocked. Builder and Supervisor instructions say not to
+  request escalation (the Supervisor's requests are always refused, so retries only cost
+  tokens). Verified with `codex sandbox` and the real-Codex acceptance; not yet measured
+  on a real owner task (prompt count and tokens before/after).
 - **Activity summaries:** the Codex adapter reports the real command line (wrapper
   removed, exit code or failure reason on completion), MCP `server/tool`, web
   searches and sub-agent labels; agent text, tool output and reasoning are never

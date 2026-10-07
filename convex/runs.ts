@@ -10,6 +10,10 @@ import { enqueue, stopRun } from "./lib/commands";
 // a Verifier may write and nothing in it is ever committed.
 const PROOF_INSTRUCTION =
   "Proof for the owner: when the result can be seen (a screen, image, logo or document), save up to 8 screenshots or previews (PNG, JPEG, WebP, GIF or SVG, each under 5 MB) in the folder .zamolxis-proof at the repository root. Zamolxis shows them to the owner and never commits that folder; writing there is allowed even when other files must not change.";
+// Builders and Repairs run in a workspace-write sandbox (worktree and a private TMPDIR,
+// no network). Every request to leave it waits for the owner, so ordinary work stays inside.
+const SANDBOX_INSTRUCTION =
+  "Commands run in a sandbox: your worktree and $TMPDIR are writable, the network is off. Run scripts, builds and tests there directly; never ask to run outside the sandbox for work inside your worktree, because each such request waits for the owner. Ask only when the task truly needs the network, other folders or system settings. If a command fails because of the sandbox, do not retry variations of it: say what is blocked in your summary.";
 export async function queueRun(
   ctx: MutationCtx,
   input: {
@@ -164,7 +168,7 @@ export async function queueRun(
         (role === "verifier"
           ? `Independently review exact SHA ${workspace.baseSha}. Do not modify files or Git state. Acceptance: ${task.description}. Provide a concise review; deterministic Node checks establish trust.\n${PROOF_INSTRUCTION}`
           : `${task.description}
-Start from the files the task names and read only what you need to change them; search the repository only when they are not enough. Leave all intended implementation edits in your assigned worktree. Zamolxis captures the candidate commit. Do not publish, merge, or modify other checkouts.\n${PROOF_INSTRUCTION}`) +
+Start from the files the task names and read only what you need to change them; search the repository only when they are not enough. Leave all intended implementation edits in your assigned worktree. Zamolxis captures the candidate commit. Do not publish, merge, or modify other checkouts.\n${SANDBOX_INSTRUCTION}\n${PROOF_INSTRUCTION}`) +
         // Owner text is appended last and labelled; it cannot change trust or approval.
         ownerInstructionsSection(profile?.instructions),
       ...(role === "verifier"
