@@ -20,7 +20,9 @@ const SHA = "c0ffee1".padEnd(40, "0");
 
 // A Builder candidate at SHA and a completed independent Verifier with evidence, just
 // before the backend decides trust (what node:complete leaves for decideVerification).
-async function fixture(evidence: Array<["static" | "behavioral" | "test", "passed" | "failed"]>) {
+async function fixture(
+  evidence: Array<["static" | "behavioral" | "test" | "acceptance", "passed" | "failed"]>,
+) {
   const t = convexTest(schema, modules);
   const alice = await seedHuman(t, "alice");
   const bob = await seedHuman(t, "bob");
@@ -290,6 +292,18 @@ describe("trust and integration trace steps", () => {
       "Independent evidence: 1 passed, 1 failed (static passed, behavioral failed).\nRequired: static, behavioral.\nReasons: Independent verification failed; Missing independent behavioral evidence",
     );
     expect((await f.task()).phase).toBe("repairing");
+  });
+
+  it("sends a candidate whose acceptance point is not met to Repair, even when the checks pass", async () => {
+    const f = await fixture([
+      ["static", "passed"],
+      ["behavioral", "passed"],
+      ["acceptance", "failed"],
+    ]);
+    await f.decide();
+    const task = await f.task();
+    expect(task.phase).toBe("repairing");
+    expect(task.description).toMatch(/Verification failure:\n[\s\S]*acceptance: failed/);
   });
 
   it("records a failed publish and a separate step for the retry", async () => {

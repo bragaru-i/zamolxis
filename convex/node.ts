@@ -637,6 +637,7 @@ export const completeRun = mutation({
         "interaction",
         "mutation",
         "security",
+        "acceptance",
       ] as const;
       for (const record of args.evidence ?? []) {
         const modality = modalities.find((value) => value === record.modality);
