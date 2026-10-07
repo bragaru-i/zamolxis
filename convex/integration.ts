@@ -59,6 +59,7 @@ const CHECK_NAMES: Record<string, string> = {
   static: "Code hygiene",
   test: "Tests",
   behavioral: "Behaviour",
+  acceptance: "Request",
 };
 // Commit ids are shown short: the Node's secret filter hides any 32+ hex run (a full SHA).
 const shortSha = (sha: string) => sha.slice(0, 12);

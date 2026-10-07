@@ -865,6 +865,8 @@ export default defineSchema({
       v.literal("interaction"),
       v.literal("mutation"),
       v.literal("security"),
+      // A reviewer model's verdict per acceptance point (#162): it can only block trust.
+      v.literal("acceptance"),
     ),
     result: v.union(v.literal("passed"), v.literal("failed")),
     summary: v.string(),

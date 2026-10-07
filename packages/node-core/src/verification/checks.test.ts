@@ -33,6 +33,10 @@ it("does not hide a failed explicit check behind a static-only policy", async ()
         ["static"],
       ).eligible,
     ).toBe(false);
+    // The failing script's output is kept, bounded, for Repair.
+    expect(evidence.find((item) => item.modality === "test")?.summary).toContain(
+      "Failure output:\n$ npm run test",
+    );
     const missing = await runVerificationChecks(f.path, [], ["test"]);
     expect(missing.find((item) => item.modality === "test")?.result).toBe("failed");
   } finally {
@@ -142,6 +146,10 @@ it("does not run the scripts when the lockfile install fails", async () => {
       ["pnpm run test", "failed"],
     ]);
     expect(observed[2]?.output).toContain("could not be installed");
+    // The real error reaches the evidence a Repair gets (#163).
+    expect(evidence.find((item) => item.modality === "test")?.summary).toMatch(
+      /Failure output:\n\$ pnpm install --frozen-lockfile --prefer-offline\n[\s\S]*ERR_PNPM/,
+    );
   } finally {
     rmSync(f.root, { recursive: true, force: true });
   }

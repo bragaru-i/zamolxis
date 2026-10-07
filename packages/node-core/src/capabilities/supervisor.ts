@@ -67,6 +67,8 @@ export function supervisorInstruction(input: {
   readonly conversation: readonly ConversationMessage[];
   readonly context: RepositoryContext;
   readonly checks: RepositoryChecks;
+  // The repository's own map of where things live (.zamolxis/code-map.md), if any.
+  readonly codeMap?: string | undefined;
   // Owner instructions from the Supervisor profile (#48); prompt text only.
   readonly instructions?: string;
 }): string {
@@ -88,6 +90,13 @@ export function supervisorInstruction(input: {
       packageScripts: input.checks.scripts,
     }),
     "",
+    ...(input.codeMap
+      ? [
+          "Repository map (.zamolxis/code-map.md): read it before exploring. Name the files it points to in task descriptions; search only for areas it does not cover.",
+          input.codeMap,
+          "",
+        ]
+      : []),
     // --- Owner instructions block (#48): additive, absent without instructions. ---
     ...ownerInstructionsBlock(input.instructions),
     // --- End owner instructions block. ---

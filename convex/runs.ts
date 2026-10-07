@@ -20,6 +20,30 @@ const PROOF_INSTRUCTION =
 // no network). Every request to leave it waits for the owner, so ordinary work stays inside.
 const SANDBOX_INSTRUCTION =
   "Commands run in a sandbox: your worktree and $TMPDIR are writable, the network is off. Run scripts, builds and tests there directly; never ask to run outside the sandbox for work inside your worktree, because each such request waits for the owner. Ask only when the task truly needs the network, other folders or system settings. If a command fails because of the sandbox, do not retry variations of it: say what is blocked in your summary. To add a dependency, add it to the right package.json only and do not try to install it: Zamolxis updates the lockfile when you finish.";
+/**
+ * The independent reviewer: it checks the candidate against each acceptance point and
+ * ends with a verdict the Node turns into evidence (#162). A point not met blocks trust;
+ * the deterministic checks still decide everything else.
+ */
+export function verifierInstruction(sha: string | undefined, description: string): string {
+  // Earlier verification failures appended for Repair are history, not the request.
+  const request = description.split("\n\nVerification failure:")[0]?.trim() ?? description;
+  return `Independently review exact SHA ${sha}. Do not modify files or Git state.
+The task, with its acceptance criteria:
+${request}
+Check the change against each acceptance point of the task: each result the owner asked for that can be seen in the repository at this SHA (behaviour, files, UI), in your own short words. Instructions about how to work (which tools to use, what not to run, what to read first) are not acceptance points: leave them out. Read the changed files and anything they rely on. A point is met only when the code at this SHA actually does it; a placeholder, a partial change or a different behaviour is not met. Use null only when a result truly cannot be judged from the repository. Deterministic Node checks still run after you.
+End your reply with ONE JSON object (optionally in a \`\`\`json fence): {"acceptance":[{"point":"<the result>","met":true|false|null,"where":"<file and what you saw, or what is missing>"}]}
+${PROOF_INSTRUCTION}`;
+}
+
+// The repository's own checks, so a Builder or Repair runs them before finishing (#163).
+function verifyHere(scripts: readonly string[] | undefined): string {
+  const list = (scripts ?? []).filter((script) => /^[a-zA-Z0-9:_-]{1,64}$/.test(script));
+  return list.length
+    ? ` Before you finish, run the package scripts the Verifier will run (${list.map((script) => `\`${script}\``).join(", ")}, with the repository's package manager) and fix what fails; if one cannot run here, say why in your summary.`
+    : "";
+}
+
 export async function queueRun(
   ctx: MutationCtx,
   input: {
@@ -192,9 +216,9 @@ export async function queueRun(
       ...(agent.reasoningEffort ? { reasoningEffort: agent.reasoningEffort } : {}),
       instruction:
         (role === "verifier"
-          ? `Independently review exact SHA ${workspace.baseSha}. Do not modify files or Git state. Acceptance: ${task.description}. Provide a concise review; deterministic Node checks establish trust.\n${PROOF_INSTRUCTION}`
+          ? verifierInstruction(workspace.baseSha, task.description)
           : `${task.description}
-Start from the files the task names and read only what you need to change them; search the repository only when they are not enough. Leave all intended implementation edits in your assigned worktree. Zamolxis captures the candidate commit. Do not publish, merge, or modify other checkouts. End with a short summary for the pull request: what you changed and why, in two to five plain sentences for a reviewer.\n${SANDBOX_INSTRUCTION}\n${PROOF_INSTRUCTION}`) +
+Start from the files the task names and read only what you need to change them; search the repository only when they are not enough. Leave all intended implementation edits in your assigned worktree. Zamolxis captures the candidate commit. Do not publish, merge, or modify other checkouts.${verifyHere(task.verificationScripts)} End with a short summary for the pull request: what you changed and why, in two to five plain sentences for a reviewer.\n${SANDBOX_INSTRUCTION}\n${PROOF_INSTRUCTION}`) +
         // Owner text is appended last and labelled; it cannot change trust or approval.
         ownerInstructionsSection(profile?.instructions),
       ...(role === "verifier"

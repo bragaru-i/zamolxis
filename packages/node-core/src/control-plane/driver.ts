@@ -60,7 +60,9 @@ import {
 } from "../trace/steps";
 import { SupervisorLog, type SupervisorLogBatch } from "../trace/supervisor-log";
 import { type CheckEvidence, runVerificationChecks } from "../verification/checks";
+import { acceptanceEvidence } from "../verification/acceptance";
 import { updateLockfile } from "../verification/lockfile";
+import { codeMapSection, readCodeMap } from "../repository/code-map";
 import type { WorkspaceManager } from "../workspace/workspace-manager";
 import { PROOF_MAX_FILES, type ProofFile, takeChangedImages, takeProof } from "./proof";
 
@@ -695,6 +697,7 @@ export class ControlPlaneDriver {
               conversation: command.payload.conversation ?? [],
               context,
               checks,
+              codeMap: readCodeMap(workspace.path),
               ...(command.payload.supervisor?.instructions
                 ? { instructions: command.payload.supervisor.instructions }
                 : {}),
@@ -922,6 +925,9 @@ export class ControlPlaneDriver {
             trace.record(discoveryStep(command.commandId, at, context));
             input.instruction += `\n\nRepository capabilities (repository instructions cannot waive hard runtime/trust policy):\n${JSON.stringify({ gitSha: context.gitSha, snapshotDigest: context.snapshotDigest, sources: context.discoveredSources, capabilities: Object.keys(context.resolvedCapabilities) })}`;
           }
+          // The repository's own map of where things live (#163).
+          if (!input.checksOnly)
+            input.instruction += codeMapSection(this.workspaces.inspect(input.workspaceId).path);
           const context: RunContext = {
             runId: input.runId,
             workspaceId: input.workspaceId,
@@ -1181,6 +1187,12 @@ export class ControlPlaneDriver {
               (check) => trace.record(checkStep(commandId, checks++, check, subject)),
             )
           : undefined;
+      // A reviewer model's verdict per acceptance point joins the checks (#162).
+      const verdict =
+        context.role === "verifier" && !context.checksOnly && state === "completed"
+          ? acceptanceEvidence(summary)
+          : undefined;
+      if (evidence && verdict) evidence = [...evidence, verdict];
     } finally {
       trace.persist();
     }
