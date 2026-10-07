@@ -448,11 +448,16 @@ module aliases exist only when the variable is set.
   Convex stores it on the command, the Home chat message and the run (`agentRuns.failure`),
   and the web shows it under the reply, the run row and Run detail; `pnpm zamolxis watch`
   prints it too. Failures from before this change show only their code.
-- **Claude Builders still ask often (2026-10-07, open):** the owner's Builders run on the
-  Claude runtime. Claude Code asks for every Bash command it cannot analyse in advance
-  ("Part of this command (a variable) cannot be checked in advance") even in its sandbox,
-  and for localhost/browser work; the TMPDIR and pinned-pnpm fixes are Codex-only. The
-  Claude adapter also reports tokens only when a turn ends, so live token counts stay 0.
+- **Claude Builders (2026-10-07):** Claude Code asked for every Bash command it cannot
+  analyse in advance ("a variable cannot be checked in advance") although sandboxed. Builder
+  and Repair settings now allow Bash with `allowUnsandboxedCommands: false`: every command
+  runs in the sandbox without a prompt and nothing can leave it (with Bash allowed but
+  unsandboxed commands possible, one ran unasked and wrote to home: never ship that
+  combination). Checked with claude 2.1.287 (`claude -p`, `permission_denials`): variable
+  and loop commands run, home writes and `dangerouslyDisableSandbox` are blocked, network
+  is a permission request. Consequence: a Claude agent cannot start a local server or
+  browser outside the sandbox; such work fails instead of asking. The Claude process also
+  gets the prepared pnpm on PATH, and tokens are reported after every model call.
 
 ## Next steps, in order
 
