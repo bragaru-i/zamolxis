@@ -172,10 +172,32 @@ export class LocalChatRuntime implements AgentRuntime {
     if (!response.ok) throw new Error("LOCAL_MODEL_UNAVAILABLE");
     const body = (await response.json()) as { data?: { id?: unknown }[] };
     // Embedding models cannot chat.
-    return (body.data ?? [])
+    const ids = (body.data ?? [])
       .map((model) => (typeof model.id === "string" ? model.id : ""))
       .filter((id) => id && !/embed/i.test(id))
       .slice(0, 100);
+    // LM Studio lists every downloaded model; the loaded ones come first, so the default is
+    // one that answers now (an unloaded one would load with a small context, or not at all).
+    const loaded = await this.#loaded(baseUrl, timeoutMs);
+    return [...ids.filter((id) => loaded.has(id)), ...ids.filter((id) => !loaded.has(id))];
+  }
+
+  // LM Studio's own list says which models are loaded; other servers have none (empty set).
+  async #loaded(baseUrl: string, timeoutMs: number): Promise<Set<string>> {
+    try {
+      const response = await this.#fetch(`${baseUrl.replace(/\/v1\/?$/, "")}/api/v0/models`, {
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (!response.ok) return new Set();
+      const body = (await response.json()) as { data?: { id?: unknown; state?: unknown }[] };
+      return new Set(
+        (body.data ?? [])
+          .filter((model) => model.state === "loaded" && typeof model.id === "string")
+          .map((model) => model.id as string),
+      );
+    } catch {
+      return new Set();
+    }
   }
 
   async #turn(session: Session): Promise<void> {

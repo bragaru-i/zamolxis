@@ -406,6 +406,29 @@ describe("Codex native lifecycle", () => {
     });
     await runtime.stop({ nativeSessionId: "native" });
   });
+  it("uses the local server's model when the profile names none", async () => {
+    const connection = new ControlledConnection();
+    const runtime = new CodexRuntime({
+      connect: () => connection,
+      stopTimeoutMs: 5,
+      now: () => 0,
+      local: {
+        id: "codex-local",
+        modelProvider: () => "lmstudio",
+        models: async () => [
+          { id: "qwen/qwen3-coder-30b", displayName: "qwen", isDefault: true },
+          { id: "other", displayName: "other" },
+        ],
+      },
+    });
+    // Without a model Codex would send its own cloud default to LM Studio, which refuses it.
+    await runtime.start({ ...input(), role: "supervisor" });
+    expect(connection.request.mock.calls[0]?.[1]).toMatchObject({
+      modelProvider: "lmstudio",
+      model: "qwen/qwen3-coder-30b",
+    });
+    await runtime.stop({ nativeSessionId: "native" });
+  });
   it("reports the provider's reason when a turn fails", async () => {
     const h = harness();
     await h.runtime.start(input());

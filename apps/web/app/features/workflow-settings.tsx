@@ -674,8 +674,10 @@ function AgentEditor({
   const jobs = agentJobs(chain, checksOnly);
   const modelOptions = (entry: ChainEntry) => {
     const models = catalogs?.find((item) => item.runtime === entry.runtime)?.models ?? [];
+    // A local model is always named: the local server has no "default" Codex could send.
+    const local = LOCAL_RUNTIMES.includes(entry.runtime) && models.length > 0;
     return [
-      { value: "", label: "Its default model" },
+      ...(local ? [] : [{ value: "", label: "Its default model" }]),
       ...models.map((model) => ({ value: model.id, label: modelName(entry.runtime, model.id) })),
       ...(entry.model && !models.some((model) => model.id === entry.model)
         ? [{ value: entry.model, label: modelName(entry.runtime, entry.model) }]
@@ -746,7 +748,14 @@ function AgentEditor({
                 hideLabel
                 value={entry.runtime}
                 options={runtimes}
-                onChange={(runtime) => update(index, { runtime })}
+                onChange={(runtime) => {
+                  const models = catalogs?.find((item) => item.runtime === runtime)?.models ?? [];
+                  const first = models.find((model) => model.isDefault) ?? models[0];
+                  update(index, {
+                    runtime,
+                    ...(LOCAL_RUNTIMES.includes(runtime) && first ? { model: first.id } : {}),
+                  });
+                }}
               />
               <Picker
                 label={`Model ${index + 1}: model`}
