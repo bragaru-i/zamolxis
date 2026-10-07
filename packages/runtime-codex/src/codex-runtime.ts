@@ -183,6 +183,18 @@ export class CodexRuntime implements AgentRuntime {
   get #provider(): Record<string, string> {
     return this.options.local ? { modelProvider: this.options.local.modelProvider() } : {};
   }
+  /**
+   * The model a thread uses. Without one, Codex would send its own default (a cloud model)
+   * to the local server, which refuses it; a local runtime then uses the server's default.
+   */
+  async #model(input: StartRunInput): Promise<Record<string, string>> {
+    const chosen = input.model ?? this.options.model;
+    if (chosen) return { model: chosen };
+    if (!this.options.local) return {};
+    const models = await this.options.local.models().catch(() => []);
+    const fallback = models.find((model) => model.isDefault) ?? models[0];
+    return fallback ? { model: fallback.id } : {};
+  }
   capabilities(): RuntimeCapabilitiesDto {
     return {
       runtime: this.id,
@@ -350,9 +362,7 @@ export class CodexRuntime implements AgentRuntime {
           sandbox: readOnly(input) ? "read-only" : "workspace-write",
           ...this.#provider,
           approvalPolicy: "on-request",
-          ...((input.model ?? this.options.model)
-            ? { model: input.model ?? this.options.model }
-            : {}),
+          ...(await this.#model(input)),
         }),
       );
       const thread = record(response.thread);
@@ -436,9 +446,7 @@ export class CodexRuntime implements AgentRuntime {
           approvalPolicy: "on-request",
           sandbox: readOnly(input) ? "read-only" : "workspace-write",
           ...this.#provider,
-          ...((input.model ?? this.options.model)
-            ? { model: input.model ?? this.options.model }
-            : {}),
+          ...(await this.#model(input)),
           // Turns are paged below: a long run's full history could exceed a frame.
           excludeTurns: true,
         }),

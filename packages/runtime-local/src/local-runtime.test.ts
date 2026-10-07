@@ -81,6 +81,25 @@ describe("LocalChatRuntime", () => {
     ])
       await expect(runtime.start(bad)).rejects.toThrow("LOCAL_RUNTIME_ORCHESTRATOR_ONLY");
   });
+  it("lists LM Studio's loaded model first, so it is the default", async () => {
+    const runtime = new LocalChatRuntime({
+      baseUrls: ["http://127.0.0.1:1234/v1"],
+      fetch: vi.fn(async (url: string | URL | Request) =>
+        String(url).endsWith("/api/v0/models")
+          ? json({
+              data: [
+                { id: "google/gemma-4-e4b", state: "not-loaded" },
+                { id: "qwen/qwen3-coder-30b", state: "loaded" },
+              ],
+            })
+          : json({ data: [{ id: "google/gemma-4-e4b" }, { id: "qwen/qwen3-coder-30b" }] }),
+      ),
+    });
+    expect((await runtime.listModels()).map((model) => [model.id, model.isDefault])).toEqual([
+      ["qwen/qwen3-coder-30b", true],
+      ["google/gemma-4-e4b", undefined],
+    ]);
+  });
   it("lists chat models only and reports whether the server answers", async () => {
     const runtime = new LocalChatRuntime({
       baseUrls: ["http://x/v1"],
