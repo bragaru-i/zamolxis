@@ -63,12 +63,16 @@ export const WRITE_TOOLS = [
   "NotebookEdit",
 ] as const;
 /**
- * Builder/Repair settings: commands run in Claude Code's OS sandbox (writes confined to the
- * workspace, network asks) without a prompt each; anything that leaves it (network, writes
- * outside the workspace, unsandboxed commands) is a permission request to the human.
+ * Builder/Repair settings: every Bash command runs in Claude Code's OS sandbox (writes
+ * confined to the workspace and temporary folders, no network) without a prompt, including
+ * commands with variables or loops that Claude Code cannot analyse in advance (it asked for
+ * each of those). Leaving the sandbox is impossible (`allowUnsandboxedCommands: false`):
+ * with Bash allowed, an unsandboxed command would otherwise run without asking (checked
+ * with claude 2.1.287). Network access is still a permission request to the human.
  */
 export const WRITE_SETTINGS = JSON.stringify({
-  sandbox: { enabled: true, autoAllowBashIfSandboxed: true },
+  sandbox: { enabled: true, autoAllowBashIfSandboxed: true, allowUnsandboxedCommands: false },
+  permissions: { allow: ["Bash"] },
 });
 
 export interface ClaudeArgsInput {

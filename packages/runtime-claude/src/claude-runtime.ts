@@ -18,7 +18,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { delimiter, isAbsolute, join } from "node:path";
 import type {
   ApprovalDecision,
   ApprovalResolutionReason,
@@ -102,6 +102,10 @@ interface Session {
   model?: string;
   // Ids of the assistant messages this process received: one per model call.
   calls: Set<string>;
+  // Each model call's usage (by message id) for live totals while the turn runs.
+  liveUsage: Map<string, NonNullable<ReturnType<typeof turnUsage>>>;
+  // The counters last reported: the turn's final usage never reports less.
+  reported: Partial<Record<UsageCounter, number>>;
   // The latest assistant text: the final reply unless anything follows it, in which case
   // it was a progress note and is reported as `run.message`.
   held?: string | undefined;
@@ -257,6 +261,8 @@ export class ClaudeRuntime implements AgentRuntime {
       ready: undefined,
       stopping: false,
       calls: new Set(),
+      liveUsage: new Map(),
+      reported: {},
       tools: new Map(),
       approvals: new Map(),
     };
@@ -264,7 +270,20 @@ export class ClaudeRuntime implements AgentRuntime {
   // Launches the session's process and sends its turn; resolves once the CLI reported
   // the expected session in the assigned workspace.
   async #run(session: Session, args: string[], instruction: string): Promise<void> {
-    const process = this.#launch({ cwd: session.input.workspace.cwd, args });
+    // The Node-prepared tools (e.g. the repository's pinned pnpm) come first on PATH.
+    const tools = session.input.workspace.toolPaths ?? [];
+    const process = this.#launch({
+      cwd: session.input.workspace.cwd,
+      args,
+      ...(tools.length
+        ? {
+            env: {
+              ...globalThis.process.env,
+              PATH: [...tools, globalThis.process.env.PATH ?? ""].join(delimiter),
+            },
+          }
+        : {}),
+    });
     session.process = process;
     const ready = new Promise<void>((resolve, reject) => {
       session.ready = { resolve, reject };
@@ -551,6 +570,35 @@ export class ClaudeRuntime implements AgentRuntime {
     session.ready?.resolve();
     session.ready = undefined;
   }
+  /**
+   * Reports this process's usage on top of what earlier processes of the run reported.
+   * Counters never go down: the live sum and the turn's final usage may differ slightly,
+   * and the control plane refuses a counter that decreases.
+   */
+  #reportUsage(session: Session, usage: NonNullable<ReturnType<typeof turnUsage>>): void {
+    const floor = session.usageFloor;
+    const inputTokens = (floor.inputTokens ?? 0) + usage.inputTokens;
+    const outputTokens = (floor.outputTokens ?? 0) + usage.outputTokens;
+    // Model calls are the distinct assistant messages of this process plus earlier ones.
+    const calls = (floor.modelCalls ?? 0) + session.calls.size;
+    const next: Partial<Record<UsageCounter, number>> = {
+      inputTokens,
+      cachedInputTokens: (floor.cachedInputTokens ?? 0) + usage.cachedInputTokens,
+      cacheWriteInputTokens: (floor.cacheWriteInputTokens ?? 0) + usage.cacheWriteInputTokens,
+      outputTokens,
+      totalTokens: Math.max(inputTokens + outputTokens, floor.totalTokens ?? 0),
+      ...(calls > 0 ? { modelCalls: calls } : {}),
+    };
+    let changed = false;
+    for (const [field, value] of Object.entries(next) as [UsageCounter, number][]) {
+      const kept = Math.max(value, session.reported[field] ?? 0);
+      if (kept !== session.reported[field]) changed = true;
+      next[field] = kept;
+    }
+    if (!changed) return;
+    session.reported = { ...next };
+    this.#emit(session, "run.usage", next);
+  }
   #assistant(session: Session, frame: Record<string, unknown>): void {
     // Sub-agent output (the Task tool is not offered) is not the run's own.
     if (frame.parent_tool_use_id) return;
@@ -563,6 +611,20 @@ export class ClaudeRuntime implements AgentRuntime {
     // One model response arrives as several frames sharing the message id.
     const messageId = str(message.id);
     if (messageId && session.calls.size < 10_000) session.calls.add(messageId);
+    // Live totals: each call's usage (the latest frame of a message wins), summed.
+    const usage = turnUsage(message.usage);
+    if (messageId && usage && session.liveUsage.size < 10_000) {
+      session.liveUsage.set(messageId, usage);
+      const sum = {
+        inputTokens: 0,
+        cachedInputTokens: 0,
+        cacheWriteInputTokens: 0,
+        outputTokens: 0,
+      };
+      for (const call of session.liveUsage.values())
+        for (const field of Object.keys(sum) as (keyof typeof sum)[]) sum[field] += call[field];
+      this.#reportUsage(session, sum);
+    }
     if (!Array.isArray(message.content)) return;
     for (const value of message.content) {
       const block = optionalRecord(value);
@@ -627,21 +689,7 @@ export class ClaudeRuntime implements AgentRuntime {
       return;
     }
     const usage = turnUsage(frame.usage);
-    if (usage) {
-      const floor = session.usageFloor;
-      const inputTokens = (floor.inputTokens ?? 0) + usage.inputTokens;
-      const outputTokens = (floor.outputTokens ?? 0) + usage.outputTokens;
-      // Model calls are the distinct assistant messages of this process plus earlier ones.
-      const calls = (floor.modelCalls ?? 0) + session.calls.size;
-      this.#emit(session, "run.usage", {
-        inputTokens,
-        cachedInputTokens: (floor.cachedInputTokens ?? 0) + usage.cachedInputTokens,
-        cacheWriteInputTokens: (floor.cacheWriteInputTokens ?? 0) + usage.cacheWriteInputTokens,
-        outputTokens,
-        totalTokens: Math.max(inputTokens + outputTokens, floor.totalTokens ?? 0),
-        ...(calls > 0 ? { modelCalls: calls } : {}),
-      });
-    }
+    if (usage) this.#reportUsage(session, usage);
     const succeeded = frame.subtype === "success" && frame.is_error !== true;
     if (succeeded) {
       const reply = str(frame.result) ?? session.held;
