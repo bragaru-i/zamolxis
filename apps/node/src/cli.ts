@@ -1,3 +1,4 @@
+import { localModelStatus } from "./local-model";
 import { githubTokenCli, prerequisites, setup } from "./setup";
 import { update } from "./update";
 import { watch } from "./watch";
@@ -11,8 +12,10 @@ try {
   else if (command === "update" && !flags.length) await update();
   else if (command === "watch" && flags.every((flag) => flag === "--once"))
     await watch({ once: flags.includes("--once") });
-  else if (command === "doctor" && !flags.length) prerequisites();
-  else if (command === "github-token") {
+  else if (command === "doctor" && !flags.length) {
+    prerequisites();
+    console.log(await localModelStatus());
+  } else if (command === "github-token") {
     const remove = flags.includes("--remove");
     const names = flags.filter((flag) => flag !== "--remove");
     if (names.length > 1 || names.some((name) => name.startsWith("-"))) throw new Error(USAGE);

@@ -6,7 +6,10 @@ import { expect, it } from "vitest";
 import { nodeVersion } from "./node-version";
 
 const git = (cwd: string, args: string[]) =>
-  execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  execFileSync("git", ["-C", cwd, ...args], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  }).trim();
 
 it("reports the checkout's short commit, marks uncommitted changes, and never throws", () => {
   const dir = mkdtempSync(join(tmpdir(), "zamolxis-node-version-"));

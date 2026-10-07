@@ -151,7 +151,13 @@ const RUN_ROLES: readonly Role[] = ["builder", "verifier", "repair"];
 // Only roles that run commands ask for approvals (the Verifier's requests are always refused).
 const APPROVAL_ROLES: readonly Role[] = ["builder", "repair"];
 const VERIFICATION_ROLES: readonly Role[] = ["verifier"];
-const RUNTIME_LABELS: Record<string, string> = { codex: "Codex", claude: "Claude" };
+const RUNTIME_LABELS: Record<string, string> = {
+  codex: "Codex",
+  claude: "Claude",
+  local: "Local model",
+};
+/** Runtimes that only write text (a model on the owner's computer): Orchestrator only. */
+export const TEXT_ONLY_RUNTIMES: readonly string[] = ["local"];
 export function runtimeLabel(runtime: string | undefined): string {
   if (!runtime) return "Agent";
   return RUNTIME_LABELS[runtime] ?? runtime[0]?.toUpperCase() + runtime.slice(1);
@@ -192,12 +198,21 @@ export function effectiveProfile(
   return { source: "default" };
 }
 
-/** Runtimes reported by the user's computers, plus the current value so it stays selectable. */
-export function runtimeChoices(devices: DeviceRuntimes[] | undefined, current?: string) {
+/**
+ * Runtimes reported by the user's computers, plus the current value so it stays selectable.
+ * A text-only runtime is offered only for the Orchestrator (`role`), never for all roles.
+ */
+export function runtimeChoices(
+  devices: DeviceRuntimes[] | undefined,
+  current?: string,
+  role?: Role,
+) {
   const choices = new Set<string>();
   for (const device of devices ?? []) {
     if (device.status === "revoked") continue;
-    for (const runtime of device.runtimes) choices.add(runtime.runtime);
+    for (const runtime of device.runtimes)
+      if (role === "orchestrator" || !TEXT_ONLY_RUNTIMES.includes(runtime.runtime))
+        choices.add(runtime.runtime);
   }
   if (current) choices.add(current);
   if (!choices.size) choices.add(DEFAULT_RUNTIME);
@@ -396,7 +411,7 @@ export function AgentsSettings({
         productId={productId}
         existing={own}
         prefill={own ?? shown}
-        runtimes={runtimeChoices(devices, (own ?? shown)?.runtime)}
+        runtimes={runtimeChoices(devices, (own ?? shown)?.runtime, open.role)}
         fallback={fallback}
         onDone={() => (compact ? setSaved(true) : setEditing(undefined))}
       />
@@ -614,9 +629,7 @@ export function ProfileEditor({
   const [approvalPolicy, setApprovalPolicy] = useState<ApprovalPolicy>(
     prefill?.approvalPolicy ?? "ask",
   );
-  const [verification, setVerification] = useState<Verification>(
-    prefill?.verification ?? "review",
-  );
+  const [verification, setVerification] = useState<Verification>(prefill?.verification ?? "review");
   const [enabled, setEnabled] = useState(existing?.enabled ?? true);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState("");

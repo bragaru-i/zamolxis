@@ -1,7 +1,5 @@
 import { type Infer, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { approvalPolicy } from "./lib/approvalPolicy";
-import { verification } from "./lib/verification";
 import { fail, requireUser } from "./lib/access";
 import {
   AGENT_ROLES,
@@ -9,7 +7,11 @@ import {
   normalizeInstructions,
   ROLE_LABELS,
   defaultRuntime as resolveDefaultRuntime,
+  runtimeAllowedFor,
+  TEXT_ONLY_RUNTIMES,
 } from "./lib/agentProfiles";
+import { approvalPolicy } from "./lib/approvalPolicy";
+import { verification } from "./lib/verification";
 import { runtimeModel } from "./schema";
 
 const role = v.union(
@@ -106,6 +108,8 @@ export const setRuntimeForAllRoles = mutation({
     const owner = await requireUser(ctx);
     const runtime = args.runtime.trim();
     if (!runtime || runtime.length > 64) fail("INVALID_ARGUMENT");
+    // A text-only runtime can only be the Orchestrator's: never set it for every role.
+    if (TEXT_ONLY_RUNTIMES.includes(runtime)) fail("INVALID_ARGUMENT");
     let scopeName = "All products";
     if (args.productId) {
       const product = await ctx.db.get(args.productId);
@@ -190,6 +194,7 @@ export const upsert = mutation({
     const mode =
       args.verification && args.verification !== "review" ? args.verification : undefined;
     if (mode && args.role !== "verifier") fail("INVALID_ARGUMENT");
+    if (!runtimeAllowedFor(args.role, args.runtime.trim())) fail("INVALID_ARGUMENT");
     const digest = instructions ? await instructionsDigest(instructions) : undefined;
     if (args.productId) {
       const product = await ctx.db.get(args.productId);

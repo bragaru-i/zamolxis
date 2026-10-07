@@ -11,7 +11,7 @@ const rules = {
   "packages/application/src": [
     /from ["']next(?:\/|["'])/,
     /from ["']node:child_process["']/,
-    /from ["']@zamolxis\/runtime-(?:codex|claude|hermes)/,
+    /from ["']@zamolxis\/runtime-(?:codex|claude|hermes|local)/,
   ],
 };
 

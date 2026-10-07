@@ -35,6 +35,15 @@ const ONLINE_WINDOW_MS = 45_000;
  * Codex so the failure names something. Online computers decide while there are any, so a
  * computer with only Claude Code gets work when it is the one that is on.
  */
+/**
+ * Runtimes that only write text (a model served on the owner's computer, e.g. LM Studio):
+ * the Orchestrator may use them; roles that read or change a repository never.
+ */
+export const TEXT_ONLY_RUNTIMES: readonly string[] = ["local"];
+export function runtimeAllowedFor(role: string, runtime: string): boolean {
+  return role === "orchestrator" || !TEXT_ONLY_RUNTIMES.includes(runtime);
+}
+
 export async function defaultRuntime(ctx: QueryCtx, ownerId: Id<"users">): Promise<string> {
   const workstations = await ctx.db
     .query("workstations")
@@ -54,7 +63,11 @@ export async function defaultRuntime(ctx: QueryCtx, ownerId: Id<"users">): Promi
       workstation.status === "online" &&
       (workstation.lastHeartbeatAt ?? 0) > now - ONLINE_WINDOW_MS;
     for (const installation of installations) {
-      if (installation.status !== "available" || !installation.capabilities.includes("start"))
+      if (
+        installation.status !== "available" ||
+        !installation.capabilities.includes("start") ||
+        TEXT_ONLY_RUNTIMES.includes(installation.runtime)
+      )
         continue;
       anywhere.add(installation.runtime);
       if (fresh) online.add(installation.runtime);

@@ -349,6 +349,23 @@ it("links approvals, pull requests, attention Tasks, trust and active Runs in a 
   expect(counts).toEqual({ sessions: 1, runs: 2, commands: 0 });
 });
 
+it("allows a local model for the Orchestrator only", async () => {
+  const f = await fixture();
+  const local = { runtime: "local", model: "qwen/qwen3-coder-30b", enabled: true };
+  for (const role of ["supervisor", "builder", "verifier", "repair"] as const)
+    await expect(
+      f.user.mutation(api.agentProfiles.upsert, { name: role, role, ...local }),
+    ).rejects.toThrow("INVALID_ARGUMENT");
+  await expect(
+    f.user.mutation(api.agentProfiles.setRuntimeForAllRoles, { runtime: "local" }),
+  ).rejects.toThrow("INVALID_ARGUMENT");
+  await f.user.mutation(api.agentProfiles.upsert, {
+    name: "Orchestrator",
+    role: "orchestrator",
+    ...local,
+  });
+});
+
 it("hands a question to the Orchestrator model on an online Node and settles only its reply", async () => {
   const f = await fixture();
   await f.user.mutation(api.agentProfiles.upsert, {
