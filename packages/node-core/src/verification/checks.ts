@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { withoutGitHubTokens } from "@zamolxis/runtime-core";
+import { redactSecrets, withoutGitHubTokens } from "@zamolxis/runtime-core";
 export interface CheckEvidence {
   modality: string;
   result: "passed" | "failed";
@@ -20,6 +20,9 @@ export interface CheckObservation {
   readonly output: string;
 }
 const OBSERVED_OUTPUT = 8000;
+// Failure output kept in evidence (the backend bounds a summary at 8192 characters).
+const FAILURE_TAIL = 1500;
+const FAILURE_LIMIT = 6000;
 const SCRIPT_TIMEOUT = 120_000;
 // A lockfile-exact install of a fresh worktree; the Builder's own install took longer.
 const INSTALL_TIMEOUT = 600_000;
@@ -43,7 +46,7 @@ export async function runVerificationChecks(
     timeout = SCRIPT_TIMEOUT,
   ) => {
     const startedAt = Date.now();
-    return new Promise<boolean>((resolve) =>
+    return new Promise<{ ok: boolean; output: string }>((resolve) =>
       execFile(
         executable,
         args,
@@ -61,17 +64,25 @@ export async function runVerificationChecks(
             finishedAt: Date.now(),
             output: output.slice(-OBSERVED_OUTPUT),
           });
-          resolve(!error);
+          resolve({ ok: !error, output });
         },
       ),
     );
   };
-  const staticPass = await execute("git", ["diff", "--check", "HEAD^", "HEAD"]);
+  // The last lines of each failed command, so a Repair sees the real error (#163).
+  const failures: string[] = [];
+  const failure = (command: string, output: string) =>
+    failures.push(`$ ${command}\n${redactSecrets(output).trim().slice(-FAILURE_TAIL)}`);
+  const staticRun = await execute("git", ["diff", "--check", "HEAD^", "HEAD"]);
+  const staticPass = staticRun.ok;
+  if (!staticPass) failure("git diff --check HEAD^ HEAD", staticRun.output);
   const evidence: CheckEvidence[] = [
     {
       modality: "static",
       result: staticPass ? "passed" : "failed",
-      summary: "git diff --check HEAD^ HEAD",
+      summary: `git diff --check HEAD^ HEAD${
+        staticPass ? "" : `\n\n${redactSecrets(staticRun.output).trim().slice(-FAILURE_TAIL)}`
+      }`,
     },
   ];
   let configured: Record<string, unknown> = {};
@@ -95,13 +106,15 @@ export async function runVerificationChecks(
   const installed =
     !scripts.length || !install || !existsSync(join(cwd, install.lockfile))
       ? true
-      : await execute(manager, install.args, undefined, INSTALL_TIMEOUT);
+      : await (async () => {
+          const run = await execute(manager, install.args, undefined, INSTALL_TIMEOUT);
+          if (!run.ok) failure([manager, ...install.args].join(" "), run.output);
+          return run.ok;
+        })();
   const summaries: string[] = [];
   for (const script of scripts) {
     const runnable =
-      installed &&
-      /^[a-zA-Z0-9:_-]{1,64}$/.test(script) &&
-      typeof configured[script] === "string";
+      installed && /^[a-zA-Z0-9:_-]{1,64}$/.test(script) && typeof configured[script] === "string";
     if (!runnable) {
       const at = Date.now();
       observe?.({
@@ -115,12 +128,21 @@ export async function runVerificationChecks(
           : "Not run: the dependencies could not be installed from the lockfile.",
       });
     }
-    const ok = runnable && (await execute(manager, ["run", script], script));
+    const run = runnable ? await execute(manager, ["run", script], script) : undefined;
+    const ok = run?.ok === true;
+    if (run && !run.ok) failure(`${manager} run ${script}`, run.output);
     passed = passed && ok;
     summaries.push(`${manager} run ${script}: ${ok ? "passed" : "failed"}`);
   }
+  const details = failures.length
+    ? `\n\nFailure output:\n${failures.join("\n\n")}`.slice(0, FAILURE_LIMIT)
+    : "";
   if (scripts.length && !passed && !required.includes("test"))
-    evidence.push({ modality: "test", result: "failed", summary: summaries.join("; ") });
+    evidence.push({
+      modality: "test",
+      result: "failed",
+      summary: summaries.join("; ") + details,
+    });
   for (const modality of required.filter((value) => value !== "static"))
     evidence.push({
       modality,
@@ -130,7 +152,7 @@ export async function runVerificationChecks(
           ? "passed"
           : "failed",
       summary: summaries.length
-        ? summaries.join("; ")
+        ? summaries.join("; ") + (passed ? "" : details)
         : "No executable acceptance checks configured",
     });
   return evidence;
