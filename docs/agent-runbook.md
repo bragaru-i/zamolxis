@@ -53,7 +53,28 @@ reply). For automated checks install Playwright in a scratch directory
 `document.documentElement.scrollWidth <= clientWidth` on every screen (iOS zooms the whole
 layout out when anything overflows horizontally) and that the console stays free of errors.
 
-## Updating the Node on the owner's Mac
+## Updating the Node on the owner's computers
+
+Every push to main that passes CI deploys the backend (Convex) and the web app (Vercel)
+by itself. The Node on each computer is a separate program that keeps running its old
+code until it is restarted on the new checkout, so:
+
+- **A change under `apps/web/`, `convex/` or `docs/` needs nothing on the computers.**
+  The browser gets it on reload; the running Nodes keep working against the new backend.
+- **A change under `apps/node/` or `packages/`** (runtimes, node-core, contracts, git,
+  domain, application) needs the Node **service** restarted on each computer that should
+  run it, after fast-forwarding that computer's checkout. Until then that computer runs
+  the previous Node; it still heartbeats, but new Node behaviour (for example checks-only
+  verification or the lockfile install) is missing there.
+- **Never a machine reboot.** Restarting the service is enough: `launchctl kickstart -k`
+  on the Mac, `systemctl --user restart` on Linux. The one root-level setting on Linux
+  (`kernel.apparmor_restrict_unprivileged_userns`, see "Pitfalls") also takes effect
+  at once with `sysctl -w`; its file under `/etc/sysctl.d/` only makes it survive the next
+  boot.
+- Do it between Sessions: a Node restart resumes runs in flight (Codex `thread/resume`),
+  but an approval held at that moment is withdrawn and asked again.
+
+On the Mac:
 
 ```bash
 cd /Users/Shared/projects/zamolxis
@@ -72,6 +93,17 @@ minute. A few `NODE_CONTROL_FAILED` / `HEARTBEAT_FAILED` /
 are expected; lines that keep appearing are not. Runs in flight resume after a
 restart (Codex `thread/resume`), but avoid restarting during active work anyway.
 `pnpm zamolxis setup --repair` is the non-interactive health check and repair.
+
+On the Linux computer (user service, canonical checkout under `~/projects/zamolxis`):
+
+```bash
+cd ~/projects/zamolxis
+git fetch origin main && git merge --ff-only origin/main
+pnpm install --frozen-lockfile --offline || pnpm install --frozen-lockfile
+systemctl --user restart app.zamolxis.node
+systemctl --user is-active app.zamolxis.node                                   # active
+journalctl --user -u app.zamolxis.node --since "1 minute ago" --no-pager       # no repeating errors
+```
 
 ## GitHub access for publishing (per repository, on the Mac)
 
