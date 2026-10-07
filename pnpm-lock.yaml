@@ -71,6 +71,9 @@ importers:
       '@zamolxis/runtime-core':
         specifier: workspace:*
         version: link:../../packages/runtime-core
+      '@zamolxis/runtime-local':
+        specifier: workspace:*
+        version: link:../../packages/runtime-local
       convex:
         specifier: ^1.46.0
         version: 1.46.0(react@19.3.0)
@@ -301,6 +304,25 @@ importers:
 
   packages/runtime-hermes:
     dependencies:
+      '@zamolxis/runtime-core':
+        specifier: workspace:*
+        version: link:../runtime-core
+    devDependencies:
+      '@biomejs/biome':
+        specifier: ^2.2.4
+        version: 2.5.15
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.7(@types/node@22.20.5)(happy-dom@20.14.5)(tsx@4.23.15)
+
+  packages/runtime-local:
+    dependencies:
+      '@zamolxis/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@zamolxis/runtime-core':
         specifier: workspace:*
         version: link:../runtime-core

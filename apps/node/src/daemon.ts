@@ -18,6 +18,7 @@ import {
   RestGitHubClient,
   RuntimeManager,
   RuntimeModelCatalog,
+  TEXT_ONLY_RUNTIMES,
   WorkspaceManager,
   WorkspaceToolchain,
 } from "@zamolxis/node-core";
@@ -30,6 +31,7 @@ import {
   releaseCodexHome,
 } from "@zamolxis/runtime-codex";
 import { RuntimeRegistry } from "@zamolxis/runtime-core";
+import { LOCAL_RUNTIME_ID } from "@zamolxis/runtime-local";
 import { ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
 import { claudeSignedIn, findClaude } from "./claude";
@@ -40,6 +42,7 @@ import {
   KeychainCredentialStore,
   loadDeviceCredential,
 } from "./credential-store";
+import { localModelRuntime } from "./local-model";
 import { nodeVersion } from "./node-version";
 import { configDirectory, configPath, pause, readConfig } from "./setup";
 
@@ -86,6 +89,10 @@ try {
   const identity = store.getOrCreateIdentity();
   const client = new ConvexHttpClient(config.convexUrl);
   const runtimes = new RuntimeRegistry();
+  // A model served on this computer (LM Studio, Ollama, mlx_lm.server) for the
+  // Orchestrator only; advertised while a server answers, so starting one is enough.
+  const local = localModelRuntime();
+  runtimes.register(local);
   if (codex)
     runtimes.register(
       new CodexRuntime({
@@ -215,6 +222,15 @@ try {
                 },
               ]
             : []),
+          ...((await local.reachable())
+            ? [
+                {
+                  runtime: LOCAL_RUNTIME_ID,
+                  version: "openai-compatible",
+                  capabilities: ["start", "stop"],
+                },
+              ]
+            : []),
         ]),
       });
       // After the heartbeat, so the client is authenticated; never fails it.
@@ -270,7 +286,8 @@ try {
       workspaces,
       runtimes,
       config.workstationId as WorkstationId,
-      (runtime) => runtimes.ids().includes(runtime),
+      // Repository runs never use a text-only runtime.
+      (runtime) => runtimes.ids().includes(runtime) && !TEXT_ONLY_RUNTIMES.includes(runtime),
       new WorkspaceToolchain(join(root, "tools")),
     );
     const driver = new ControlPlaneDriver(

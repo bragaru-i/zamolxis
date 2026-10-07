@@ -170,6 +170,21 @@ describe("profile resolution", () => {
     ).toEqual(["claude", "codex"]);
   });
 
+  it("offers a local model for the Orchestrator only", () => {
+    const devices = [
+      {
+        status: "online",
+        runtimes: [
+          { runtime: "codex", status: "available" },
+          { runtime: "local", status: "available" },
+        ],
+      },
+    ];
+    expect(runtimeChoices(devices, undefined, "orchestrator")).toEqual(["codex", "local"]);
+    expect(runtimeChoices(devices, undefined, "builder")).toEqual(["codex"]);
+    expect(runtimeChoices(devices)).toEqual(["codex"]);
+  });
+
   it("offers Claude when a computer reports it, labelled Claude", () => {
     const choices = runtimeChoices([
       {

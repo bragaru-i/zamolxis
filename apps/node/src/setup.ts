@@ -52,6 +52,7 @@ import {
   manageGitHubTokens,
   openInBrowser,
 } from "./github-token";
+import { localModelStatus } from "./local-model";
 export interface NodeConfig {
   version: 1;
   appUrl: string;
@@ -1491,6 +1492,7 @@ export async function runSetup(options: { repair?: boolean }, env: SetupEnvironm
 }
 export async function setup(options: { repair?: boolean } = {}) {
   prerequisites();
+  console.log(await localModelStatus());
   await runSetup(options, defaultEnvironment());
 }
 export async function githubTokenCli(options: { repository?: string; remove?: boolean }) {

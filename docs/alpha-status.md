@@ -459,6 +459,17 @@ module aliases exist only when the variable is set.
   browser outside the sandbox; such work fails instead of asking. The Claude process also
   gets the prepared pnpm on PATH, and tokens are reported after every model call.
 
+- **Local model as Orchestrator (2026-10-07):** runtime `local` (`packages/runtime-local`)
+  sends the Orchestrator's prompt to an OpenAI-compatible server on the computer's
+  loopback (LM Studio :1234, Ollama :11434, mlx_lm.server :8080, or
+  `ZAMOLXIS_LOCAL_MODEL_URL`) and returns its reply; no tools, no repository. The Node
+  advertises it with its chat models while a server answers; `setup` and `doctor` report
+  it. Choose it in Settings → Agents → Orchestrator → Local model. It is Orchestrator-only
+  in the adapter, the Node (`TEXT_ONLY_RUNTIMES`), the backend (`runtimeAllowedFor`,
+  never the default) and Settings. Verified against the owner's LM Studio
+  (qwen/qwen3-coder-30b, MLX 4-bit): the real Orchestrator prompt gave valid answer/ask/
+  propose decisions in 0.8-3.2 s; not yet exercised through the deployed backend.
+
 ## Next steps, in order
 
 1. For #114, re-run a logo-redesign-sized task and compare the Builder's processed

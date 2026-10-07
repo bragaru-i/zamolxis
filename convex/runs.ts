@@ -3,7 +3,11 @@ import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { internalMutation, type MutationCtx, mutation, query } from "./_generated/server";
 import { bounded, fail, load, ownRun, ownSession, requireUser } from "./lib/access";
-import { ownerInstructionsSection, resolveAgentProfile } from "./lib/agentProfiles";
+import {
+  ownerInstructionsSection,
+  resolveAgentProfile,
+  runtimeAllowedFor,
+} from "./lib/agentProfiles";
 import { enqueue, stopRun } from "./lib/commands";
 
 // The proof folder is moved out by the Node before commit and checks, so it is the one place
@@ -53,6 +57,7 @@ export async function queueRun(
     input.runtime,
   );
   if (input.runtime && input.runtime !== runtime) fail("AGENT_PROFILE_RUNTIME_MISMATCH");
+  if (!runtimeAllowedFor(role, runtime)) fail("RUNTIME_UNAVAILABLE");
   assertCanQueueRun(
     role === "verifier" && task.status === "waiting" ? "ready" : task.status,
     workspace.status,

@@ -382,6 +382,8 @@ function failureReason(event: NormalizedRunEventDto): string | undefined {
     ? message.trim().slice(0, FAILURE_REASON_LIMIT)
     : undefined;
 }
+/** Runtimes that only write text (no tools): allowed for the Orchestrator alone. */
+export const TEXT_ONLY_RUNTIMES: readonly string[] = ["local"];
 /** The control plane's view of a run, returned by reconcile when it is known. */
 export interface RunReconciliation {
   readonly status?: string;
@@ -1180,11 +1182,13 @@ export class ControlPlaneDriver {
   // The backend may name a Supervisor runtime this Node does not run (it falls back to
   // "codex" without knowing what is installed). Use the requested runtime when registered,
   // otherwise "codex" when registered, otherwise the first registered runtime.
-  #supervisorRuntime(requested: string | undefined): string {
-    const ids = this.runtimes.ids();
+  // A text-only runtime (a local model) answers in Home chat only: it can never be the
+  // repository Supervisor, requested or as the fallback.
+  #supervisorRuntime(requested: string | undefined, textOnly = false): string {
+    const ids = this.runtimes.ids().filter((id) => textOnly || !TEXT_ONLY_RUNTIMES.includes(id));
     if (requested && ids.includes(requested)) return requested;
     if (ids.includes("codex")) return "codex";
-    const first = ids[0];
+    const first = ids.find((id) => !TEXT_ONLY_RUNTIMES.includes(id));
     if (!first) throw new Error("RUNTIME_UNAVAILABLE");
     return first;
   }
@@ -1314,7 +1318,7 @@ export class ControlPlaneDriver {
     orchestrator?: SupervisorSelection;
   }): Promise<{ summary?: string; usage: SupervisorUsage }> {
     const runId = orchestratorRunId(payload.orchestratorMessageId);
-    const runtimeId = this.#supervisorRuntime(payload.orchestrator?.runtime);
+    const runtimeId = this.#supervisorRuntime(payload.orchestrator?.runtime, true);
     const runtime = this.runtimes.get(runtimeId);
     const cwd = realpathSync(mkdtempSync(join(tmpdir(), "zamolxis-orchestrator-")));
     let nativeSessionId: string | undefined;
