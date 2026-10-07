@@ -17,6 +17,8 @@ import {
   statusLabel,
   TextInput,
   Thinking,
+  useScrollLock,
+  useWide,
 } from "@zamolxis/ui";
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
@@ -65,7 +67,22 @@ export function SessionList({
   onSettings: (page?: SettingsPage) => void;
 }) {
   const now = useNow(30000);
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  // The drawer belongs to the chat it was opened over, so switching chats always closes it.
+  const [drawerChat, setDrawerChat] = useState<string>();
+  const drawerOpen = drawerChat === chatId;
+  const setDrawerOpen = (open: boolean) => setDrawerChat(open ? chatId : undefined);
+  // From 1024px the sidebar sits beside the page instead of over it.
+  const desktop = useWide(1024);
+  useScrollLock(drawerOpen && !desktop);
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !document.querySelector("dialog[open]"))
+        setDrawerChat(undefined);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [drawerOpen]);
   const [filter, setFilter] = useState<"all" | "active" | "waiting" | "completed">("all");
   const [search, setSearch] = useState("");
   const [chatMenu, setChatMenu] = useState<ChatRow>();
