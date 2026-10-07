@@ -66,6 +66,12 @@ code until it is restarted on the new checkout, so:
   run it, after fast-forwarding that computer's checkout. Until then that computer runs
   the previous Node; it still heartbeats, but new Node behaviour (for example checks-only
   verification or the lockfile install) is missing there.
+- **Order: backend first, Nodes second.** Restart a Node only after the deploy run for
+  that commit has finished (`gh run list --workflow deploy.yml --branch main`, or the
+  Actions tab). A Node started on code the backend does not know yet exits on its first
+  heartbeat with a redacted `Server Error` (2026-10-07: #128 added a heartbeat argument;
+  the Linux Node restarted before the deploy and crash-looped every 15 s until it landed;
+  systemd/launchd recover it by themselves, but the computer is offline meanwhile).
 - **Never a machine reboot.** Restarting the service is enough: `launchctl kickstart -k`
   on the Mac, `systemctl --user restart` on Linux. The one root-level setting on Linux
   (`kernel.apparmor_restrict_unprivileged_userns`, see "Pitfalls") also takes effect
