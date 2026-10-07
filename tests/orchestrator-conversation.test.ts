@@ -1,6 +1,7 @@
 import { convexTest } from "convex-test";
 import { expect, it } from "vitest";
 import { api } from "../convex/_generated/api";
+import { starterChains } from "../convex/agents";
 import type { Id } from "../convex/_generated/dataModel";
 import schema from "../convex/schema";
 import { seedHuman } from "./fixtures/auth";
@@ -983,6 +984,69 @@ it("lets Codex + local model plan and check, never build or repair", async () =>
   await expect(
     f.user.mutation(api.agentProfiles.setRuntimeForAllRoles, { runtime: "codex-local" }),
   ).rejects.toThrow("INVALID_ARGUMENT");
+});
+
+it("names Codex's affordable model instead of its default, for starters and in one tap", async () => {
+  const f = await fixture();
+  const instanceId = (await f.t.run((ctx) => ctx.db.get("workstations", f.workstationId)))
+    ?.nodeInstanceId;
+  await f.node.mutation(api.node.heartbeat, {
+    workstationId: f.workstationId,
+    instanceId: instanceId ?? "instance",
+    runtimeCapabilities: [
+      {
+        runtime: "codex",
+        capabilities: ["start", "stop"],
+        models: [
+          { id: "gpt-6.1-sol", displayName: "GPT-6.1-Sol", isDefault: true },
+          { id: "gpt-6-luna", displayName: "GPT-6-Luna" },
+        ],
+      },
+    ],
+  });
+  // An agent and a job made before: Codex without a model (its default, Sol).
+  const old = await f.user.mutation(api.agents.save, {
+    name: "Old Codex",
+    chain: [{ runtime: "codex" }],
+  });
+  await f.user.mutation(api.agents.assign, { role: "builder", agentId: old });
+  await f.user.mutation(api.agents.ensureStarter, {});
+  const starters = await f.user.query(api.agents.list, {});
+  // ensureStarter only runs for an owner without agents; starters are checked separately.
+  expect(starters.map((agent) => agent.name)).toEqual(["Old Codex"]);
+
+  await expect(
+    f.user.mutation(api.agents.setUnnamedModel, { runtime: "codex", model: "gpt-9" }),
+  ).rejects.toThrow("INVALID_ARGUMENT");
+  expect(
+    await f.user.mutation(api.agents.setUnnamedModel, { runtime: "codex", model: "gpt-6-luna" }),
+  ).toBe(2);
+  expect((await f.user.query(api.agents.list, {}))[0]?.chain).toEqual([
+    { runtime: "codex", model: "gpt-6-luna" },
+  ]);
+  const builder = (await f.user.query(api.agentProfiles.list, {})).find(
+    (row: { role: string }) => row.role === "builder",
+  );
+  expect(builder).toMatchObject({ runtime: "codex", model: "gpt-6-luna" });
+  // Nothing left without a model: a second tap changes nothing.
+  expect(
+    await f.user.mutation(api.agents.setUnnamedModel, { runtime: "codex", model: "gpt-6-luna" }),
+  ).toBe(0);
+});
+
+it("starts new owners with Codex's affordable model", () => {
+  const offered = new Map([
+    ["codex", ["gpt-6.1-sol", "gpt-6-luna"]],
+    ["claude", ["claude-haiku-4-5"]],
+  ]);
+  const starters = Object.fromEntries(
+    starterChains(offered).map((starter) => [starter.name, starter.chain]),
+  );
+  expect(starters.Codex).toEqual([{ runtime: "codex", model: "gpt-6-luna" }]);
+  expect(starters["Claude Haiku"]).toEqual([
+    { runtime: "claude", model: "claude-haiku-4-5" },
+    { runtime: "codex", model: "gpt-6-luna" },
+  ]);
 });
 
 it("keeps my agents: a starter set, jobs they may do, edits that reach every job", async () => {

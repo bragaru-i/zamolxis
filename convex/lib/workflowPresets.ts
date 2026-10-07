@@ -30,7 +30,8 @@ interface PresetRoleSettings {
   checksOnly?: true;
 }
 
-const CODEX: PresetAgent = { runtime: "codex" };
+// Codex's own default (GPT-6.1-Sol) uses the plan fastest; Luna is its affordable model.
+const CODEX: PresetAgent = { runtime: "codex", model: "luna" };
 const LOCAL: PresetAgent = { runtime: "local", model: "qwen" };
 // The local model with Codex's tools: it can read the repository to plan or check.
 const CODEX_LOCAL: PresetAgent = { runtime: "codex-local", model: "qwen" };
