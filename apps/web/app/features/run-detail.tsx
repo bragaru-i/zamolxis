@@ -18,6 +18,7 @@ import { useEffect, useState } from "react";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
 import { likelyLongSummary } from "./conversation";
+import { RunFailure } from "./failure";
 import {
   ACTIVE_RUN,
   clockTime,
@@ -95,6 +96,7 @@ export interface RunDetailData {
     activityLabel?: string;
     resultSummary?: string;
     exitReason?: string;
+    failure?: { code?: string; reason?: string; at: number };
     startedAt?: number;
     completedAt?: number;
     lastActivityAt: number;
@@ -199,18 +201,21 @@ export function RunDetailBody({
         />
       </section>
 
-      {(run.resultSummary?.trim() || run.exitReason) && (
+      {(run.resultSummary?.trim() ||
+        run.exitReason ||
+        (run.status === "failed" && run.failure)) && (
         <section className="z-stack" aria-label="Result">
           <h3 className="z-section-title">Result</h3>
+          <RunFailure run={run} />
           {run.resultSummary?.trim() ? (
             <div className="z-small">
               <Collapsible likelyLong={likelyLongSummary(run.resultSummary)}>
                 <Markdown>{run.resultSummary}</Markdown>
               </Collapsible>
             </div>
-          ) : (
-            <p className="z-small z-muted">{failureText(run.exitReason ?? "")}</p>
-          )}
+          ) : run.exitReason ? (
+            <p className="z-small z-muted">{failureText(run.exitReason)}</p>
+          ) : null}
         </section>
       )}
 

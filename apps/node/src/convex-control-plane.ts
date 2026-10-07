@@ -387,6 +387,7 @@ export class ConvexControlPlaneTransport implements ControlPlaneTransport {
         commandId: delivery.commandId,
         code: delivery.code,
         instanceId: this.instanceId,
+        ...(delivery.failure ? { failure: delivery.failure } : {}),
       });
     } else if (delivery.kind === "repository.plan") {
       const { kind: _, usage, ...args } = delivery;

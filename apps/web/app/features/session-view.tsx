@@ -29,6 +29,7 @@ import {
   usageLine,
 } from "./conversation";
 import { explainError, explainFailure } from "./errors";
+import { FailureDetails, RunFailure } from "./failure";
 import { type ProofImage, ProofImages } from "./proof-images";
 import { PublishTask } from "./publish";
 import { RunDetail } from "./run-detail";
@@ -349,6 +350,7 @@ export function SessionView({
                             role={ROLE[run.role ?? "builder"] ?? "agent"}
                           />
                           {STEERABLE.includes(run.status) && <SteerRun runId={run._id} />}
+                          <RunFailure run={run} />
                           {run.resultSummary?.trim() && (
                             <div className="z-small">
                               <Collapsible likelyLong={likelyLongSummary(run.resultSummary)}>
@@ -424,7 +426,10 @@ function AssistantMessage({
   return (
     <Message author="assistant" label="Zamolxis" meta={meta}>
       {state.kind === "error" ? (
-        state.text
+        <div className="z-stack">
+          <span>{state.text}</span>
+          {state.failure && <FailureDetails failure={state.failure} />}
+        </div>
       ) : state.kind === "stopped" ? (
         <div className="z-row z-small z-muted">
           <StatusBadge status="stopped" />

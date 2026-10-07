@@ -1,4 +1,5 @@
 import { failedReplyText } from "./errors";
+import { agentName, type FailureInfo } from "./failure";
 
 export type Decision = "answer" | "plan" | "propose" | "delegate" | "ask";
 
@@ -8,6 +9,15 @@ export interface ConversationMessage {
   planTaskCount: number;
   planStatus: string;
   planError?: string;
+  /** Who failed and why, when the computer reported it. */
+  planFailure?: {
+    agent: string;
+    runtime: string;
+    model?: string;
+    modelActual?: string;
+    reason?: string;
+    at: number;
+  };
   decision?: Decision;
   reply?: string;
   proposedTasks?: Array<{ key: string; title: string; description: string }>;
@@ -36,7 +46,7 @@ export type AssistantReply =
   | { kind: "proposal"; reply?: string; taskCount: number }
   | { kind: "delegated"; reply?: string; taskCount: number }
   | { kind: "stopped" }
-  | { kind: "error"; text: string };
+  | { kind: "error"; text: string; failure?: FailureInfo };
 
 const IN_FLIGHT = ["pending", "claimed", "acknowledged"];
 
@@ -50,9 +60,13 @@ export function assistantReply(message: ConversationMessage): AssistantReply {
     return { kind: "stopped" };
   }
   if (message.planStatus === "failed") {
+    const failure = message.planFailure;
     return {
       kind: "error",
       text: failedReplyText(message.planError ?? "LOCAL_OPERATION_FAILED"),
+      ...(failure
+        ? { failure: { ...failure, who: agentName(failure.agent) } satisfies FailureInfo }
+        : {}),
     };
   }
   if (message.planStatus === "expired") {

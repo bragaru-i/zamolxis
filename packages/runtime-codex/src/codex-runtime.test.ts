@@ -378,6 +378,37 @@ describe("Codex native lifecycle", () => {
     h.connection.close();
     expect(existsSync(tmp)).toBe(false);
   });
+  it("reports the provider's reason when a turn fails", async () => {
+    const h = harness();
+    await h.runtime.start(input());
+    h.connection.emit("turn/completed", {
+      turn: {
+        id: "turn",
+        status: "failed",
+        error: { message: "You've hit your usage limit. Try again at 12:20 (token=abc123)" },
+      },
+    });
+    const failed = (await events(h.runtime)).at(-1);
+    expect(failed?.type).toBe("run.failed");
+    expect(failed?.payload).toEqual({
+      code: "CODEX_TURN_FAILED",
+      message: expect.stringMatching(/^Codex turn failed: You've hit your usage limit/),
+    });
+    // Provider text is redacted like every other summary.
+    expect(JSON.stringify(failed?.payload)).not.toContain("abc123");
+  });
+  it("falls back to the last non-retried error notification", async () => {
+    const h = harness();
+    await h.runtime.start(input());
+    h.connection.emit("error", { error: { message: "retrying" }, willRetry: true });
+    h.connection.emit("error", { error: { message: "Quota exceeded" }, willRetry: false });
+    h.connection.emit("turn/completed", { turn: { id: "turn", status: "failed" } });
+    const failed = (await events(h.runtime)).at(-1);
+    expect(failed?.payload).toEqual({
+      code: "CODEX_TURN_FAILED",
+      message: "Codex turn failed: Quota exceeded",
+    });
+  });
   it("puts the Node-prepared tool directories first on the agent's PATH", async () => {
     const h = harness();
     const base = input();

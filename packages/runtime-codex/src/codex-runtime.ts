@@ -27,6 +27,7 @@ import {
   type RuntimeSessionSnapshot,
   redactSecrets,
   type StartRunInput,
+  safeSummary,
   type UsageCounter,
 } from "@zamolxis/runtime-core";
 import { knownCommit } from "@zamolxis/runtime-core/known-commits";
@@ -80,6 +81,8 @@ interface Session {
   seen: Set<string>;
   uncertain: boolean;
   waiters: Set<() => void>;
+  // The provider's last non-retried error, used when a failed turn carries none.
+  lastError?: string;
   // Text of the last completed agent message: the agent's final reply for this turn.
   reply?: string;
   // A completed agent message without a phase: the final reply unless anything follows
@@ -312,8 +315,7 @@ export class CodexRuntime implements AgentRuntime {
     const id = text(turn.id);
     if (session.turnId && session.turnId !== id) throw new Error("CODEX_TURN_MISMATCH");
     session.turnId = id;
-    if (!terminal(session) && turn.status !== "inProgress")
-      this.#turnFinished(session, turn.status);
+    if (!terminal(session) && turn.status !== "inProgress") this.#turnFinished(session, turn);
   }
   async #start(input: StartRunInput): Promise<RuntimeSessionSnapshot> {
     const session = this.#open(input);
@@ -476,7 +478,7 @@ export class CodexRuntime implements AgentRuntime {
             session.input.role === "supervisor"
               ? boundText(reply, REPLY_LIMIT)
               : redactedText(reply, REPLY_LIMIT, { keep: session.commits });
-        this.#turnFinished(session, turn.status);
+        this.#turnFinished(session, turn);
       }
       return this.#snapshot(session);
     } catch (error) {
@@ -625,7 +627,13 @@ export class CodexRuntime implements AgentRuntime {
         return;
       }
       if (event.method === "turn/completed") {
-        this.#turnFinished(session, record(params.turn).status);
+        this.#turnFinished(session, record(params.turn));
+        return;
+      }
+      if (event.method === "error") {
+        const error = params.error && typeof params.error === "object" ? record(params.error) : {};
+        const message = optionalText(error.message, 2000);
+        if (message && params.willRetry !== true) session.lastError = message;
         return;
       }
       if (event.method !== "item/started" && event.method !== "item/completed") return;
@@ -697,12 +705,22 @@ export class CodexRuntime implements AgentRuntime {
       session.client.close();
     }
   }
-  #turnFinished(session: Session, status: unknown): void {
+  #turnFinished(session: Session, turn: Record<string, unknown>): void {
+    const status = turn.status;
     if (status === "completed")
       this.#finish(session, "completed", session.reply ?? "Codex turn completed");
     else if (status === "interrupted") this.#finish(session, "stopped", "Codex turn interrupted");
-    else if (status === "failed") this.#finish(session, "failed", "Codex turn failed");
-    else throw new Error("CODEX_INVALID_TURN_STATUS");
+    else if (status === "failed") {
+      // The provider's reason (e.g. a usage limit), redacted, so the owner sees why.
+      const error = turn.error && typeof turn.error === "object" ? record(turn.error) : {};
+      const reason = optionalText(error.message, 2000) ?? session.lastError;
+      this.#finish(
+        session,
+        "failed",
+        reason ? `Codex turn failed: ${safeSummary(reason, 400)}` : "Codex turn failed",
+        reason ? "CODEX_TURN_FAILED" : undefined,
+      );
+    } else throw new Error("CODEX_INVALID_TURN_STATUS");
   }
   #finish(
     session: Session,

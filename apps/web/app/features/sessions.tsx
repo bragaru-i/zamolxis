@@ -23,7 +23,8 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
 import { ApprovalsInbox } from "./approvals";
-import { explainError } from "./errors";
+import { explainError, explainFailure } from "./errors";
+import { agentName, FailureDetails } from "./failure";
 import { LiveAgents } from "./live-agents";
 import { OnboardingChecklist } from "./onboarding";
 import type { SettingsPage } from "./settings";
@@ -509,6 +510,16 @@ interface OrchestratorMessage {
   runtime?: string;
   modelActual?: string;
   totalTokens?: number;
+  /** The model's reply failed and the quick summary stands in; `failure` says why. */
+  modelError?: string;
+  failure?: {
+    agent: string;
+    runtime: string;
+    model?: string;
+    modelActual?: string;
+    reason?: string;
+    at: number;
+  };
   createdAt: number;
   links: OrchestratorLink[];
 }
@@ -536,6 +547,7 @@ const THINKING_SHOWN_MS = 10 * 60_000;
 function routeMeta(message: OrchestratorMessage, thinking: boolean) {
   if (thinking) return "Quick summary · a fuller answer is on its way";
   if (message.route === "create" || message.route === "continue") return "Legacy work request";
+  if (message.modelError) return "Quick summary · the AI model failed";
   const by =
     message.answeredBy === "model" && message.modelActual ? ` · ${message.modelActual}` : "";
   if (message.route === "ask") return `Question for you${by}`;
@@ -709,6 +721,19 @@ function OrchestratorConversation({
                 >
                   {thinking(message) && <Thinking label="Writing a reply…" />}
                   <Markdown>{message.reply}</Markdown>
+                  {message.modelError && (
+                    <div className="z-stack">
+                      <span className="z-small">
+                        The AI model couldn't answer ({explainFailure(message.modelError)}), so this
+                        is only a quick summary. Send your message again to retry.
+                      </span>
+                      {message.failure && (
+                        <FailureDetails
+                          failure={{ ...message.failure, who: agentName(message.failure.agent) }}
+                        />
+                      )}
+                    </div>
+                  )}
                   {message.route === "propose" && message.proposal && (
                     <div className="z-stack">
                       <Markdown>{message.proposal}</Markdown>

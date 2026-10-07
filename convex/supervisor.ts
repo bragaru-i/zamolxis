@@ -62,6 +62,7 @@ export const messages = query({
             : {}),
           planStatus: plan?.status ?? "pending",
           ...(plan?.error ? { planError: plan.error } : {}),
+          ...(plan?.failure ? { planFailure: plan.failure } : {}),
           ...(row.decision ? { decision: row.decision } : {}),
           ...(row.reply !== undefined ? { reply: row.reply } : {}),
           ...(row.modelActual !== undefined || row.totalTokens !== undefined

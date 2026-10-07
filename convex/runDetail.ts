@@ -104,6 +104,7 @@ export const get = query({
         activityLabel: run.activityLabel,
         resultSummary: run.resultSummary,
         exitReason: run.exitReason,
+        failure: run.failure,
         startedAt: run.startedAt,
         completedAt: run.completedAt,
         lastActivityAt: run.lastActivityAt,

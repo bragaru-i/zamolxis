@@ -37,6 +37,10 @@ const FAILURES: Record<string, string> = {
   SUPERVISOR_FAILED: "the AI model stopped with an error (it may be out of credits)",
   SUPERVISOR_INCOMPLETE: "the AI model didn't finish",
   SUPERVISOR_INTERRUPTED: "your computer restarted while I was working",
+  ORCHESTRATOR_FAILED: "the AI model stopped with an error",
+  ORCHESTRATOR_TIMEOUT: "the AI model took too long",
+  ORCHESTRATOR_INCOMPLETE: "the AI model didn't finish",
+  ORCHESTRATOR_INTERRUPTED: "your computer restarted while it was answering",
 };
 
 /** A full sentence for a failed reply, with what the owner can do next. */
