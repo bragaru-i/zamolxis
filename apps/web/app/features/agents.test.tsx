@@ -49,6 +49,7 @@ vi.mock("react", async (importOriginal) => {
 import {
   AgentsSettings,
   concurrencyProblem,
+  describeChain,
   describeProfile,
   effectiveProfile,
   explainProfileError,
@@ -168,6 +169,38 @@ describe("profile resolution", () => {
         "claude",
       ),
     ).toEqual(["claude", "codex"]);
+  });
+
+  it("describes a role's chain and saves its backups", () => {
+    expect(
+      describeChain({
+        runtime: "claude",
+        model: "claude-opus-5-5",
+        backups: [{ runtime: "codex", model: "gpt-6.1-sol" }, { runtime: "local" }],
+      }),
+    ).toBe("Claude · claude-opus-5-5 → Codex · gpt-6.1-sol → Local model · default model");
+    const base = {
+      role: "builder" as const,
+      name: "Builder",
+      productId: undefined,
+      existing: undefined,
+      runtime: "claude",
+      model: "",
+      effort: "",
+      enabled: true,
+      maxConcurrency: "",
+    };
+    expect(
+      upsertArgs({
+        ...base,
+        backups: [
+          { runtime: "codex", model: " gpt " },
+          { runtime: "fake", model: "" },
+        ],
+      }).backups,
+    ).toEqual([{ runtime: "codex", model: "gpt" }, { runtime: "fake" }]);
+    expect(upsertArgs(base)).not.toHaveProperty("backups");
+    expect(upsertArgs({ ...base, backups: [] }).backups).toEqual([]);
   });
 
   it("offers a local model for the Orchestrator only", () => {

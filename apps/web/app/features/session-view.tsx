@@ -73,6 +73,8 @@ interface Run {
   taskId: Id<"tasks">;
   role?: string;
   runtime: string;
+  /** Which backup of the role's chain ran (absent: the profile's own agent). */
+  backup?: number;
   status: string;
   modelRequested?: string;
   modelActual?: string;
@@ -309,7 +311,9 @@ export function SessionView({
                         <div className="z-stack" key={run._id}>
                           <AgentRow
                             role={ROLE[run.role ?? "builder"] ?? "Agent"}
-                            runtime={runtimeLabel({ runtime: run.runtime })}
+                            runtime={`${runtimeLabel({ runtime: run.runtime })}${
+                              run.backup ? ` · backup ${run.backup}` : ""
+                            }`}
                             model={run.modelActual ?? run.modelRequested}
                             status={run.status}
                             activity={run.activityLabel}

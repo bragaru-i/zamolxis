@@ -1,5 +1,5 @@
 import { redactSecrets } from "@zamolxis/runtime-core";
-import type { Id } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
 import { fail } from "./access";
 export type AgentRole =
@@ -101,6 +101,56 @@ export async function resolveAgentProfile(
   const profile = product[0] ?? global[0];
   const runtime = profile?.runtime ?? fallback ?? (await defaultRuntime(ctx, ownerId));
   return { runtime, profile };
+}
+
+export { agentBackup, MAX_BACKUPS } from "./agentBackup";
+/** One agent of a role's chain: the profile's own (`backup` absent) or backup N. */
+export interface AgentChoice {
+  runtime: string;
+  model?: string;
+  reasoningEffort?: string;
+  backup?: number;
+}
+/** The role's agents in order: the profile's own (or the default runtime), then its backups. */
+export function agentChain(
+  profile: Doc<"agentProfiles"> | undefined,
+  runtime: string,
+): AgentChoice[] {
+  return [
+    {
+      runtime,
+      ...(profile?.model ? { model: profile.model } : {}),
+      ...(profile?.reasoningEffort ? { reasoningEffort: profile.reasoningEffort } : {}),
+    },
+    ...(profile?.backups ?? []).map((backup, index) => ({
+      runtime: backup.runtime,
+      ...(backup.model ? { model: backup.model } : {}),
+      ...(backup.reasoningEffort ? { reasoningEffort: backup.reasoningEffort } : {}),
+      backup: index + 1,
+    })),
+  ];
+}
+/**
+ * The first agent of the chain this computer can start now (its runtime is installed,
+ * available and can start), else undefined. Backups cover a computer without the
+ * profile's runtime, e.g. a local model on another machine.
+ */
+export async function firstAvailable(
+  ctx: QueryCtx,
+  workstationId: Id<"workstations">,
+  chain: readonly AgentChoice[],
+): Promise<AgentChoice | undefined> {
+  for (const choice of chain) {
+    const installation = await ctx.db
+      .query("runtimeInstallations")
+      .withIndex("by_workstation_runtime", (q) =>
+        q.eq("workstationId", workstationId).eq("runtime", choice.runtime),
+      )
+      .unique();
+    if (installation?.status === "available" && installation.capabilities.includes("start"))
+      return choice;
+  }
+  return undefined;
 }
 
 // Owner instructions on a profile (#48) are plain prompt text: bounded, secret-redacted

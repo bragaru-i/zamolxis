@@ -366,6 +366,30 @@ it("allows a local model for the Orchestrator only", async () => {
   });
 });
 
+it("answers with the Orchestrator's backup when no computer offers its own agent", async () => {
+  const f = await fixture();
+  // A local model first (no computer offers it here), Codex as the backup.
+  await f.user.mutation(api.agentProfiles.upsert, {
+    name: "Orchestrator",
+    role: "orchestrator",
+    runtime: "local",
+    model: "qwen/qwen3-coder-30b",
+    backups: [{ runtime: "codex", model: "gpt-x" }],
+    enabled: true,
+  });
+  const { messageId } = await f.user.mutation(api.orchestrator.submit, {
+    text: "What is going on?",
+    idempotencyKey: "q-backup",
+    productId: f.productId,
+  });
+  const command = await f.t.run(async (ctx) =>
+    (await ctx.db.query("commands").collect()).find((row) => row.targetId === messageId),
+  );
+  expect(command?.payload).toMatchObject({ orchestrator: { runtime: "codex", model: "gpt-x" } });
+  const [message] = await f.user.query(api.orchestrator.messages, {});
+  expect(message).toMatchObject({ runtime: "codex", modelRequested: "gpt-x" });
+});
+
 it("hands a question to the Orchestrator model on an online Node and settles only its reply", async () => {
   const f = await fixture();
   await f.user.mutation(api.agentProfiles.upsert, {

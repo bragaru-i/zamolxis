@@ -30,7 +30,21 @@ export interface Profile {
   approvalPolicy?: ApprovalPolicy;
   /** Verifier only: absent means a reviewer model runs before the checks. */
   verification?: Verification;
+  /** Backup agents in order, used when the ones before cannot run on that computer. */
+  backups?: Backup[];
   updatedAt: number;
+}
+export interface Backup {
+  runtime: string;
+  model?: string;
+  reasoningEffort?: string;
+}
+export const MAX_BACKUPS = 2;
+/** "Claude · opus → Codex · gpt-6.1-sol": the agent, then its backups in order. */
+export function describeChain(
+  profile: Pick<Profile, "runtime" | "model" | "reasoningEffort" | "backups">,
+) {
+  return [profile, ...(profile.backups ?? [])].map((agent) => describeProfile(agent)).join(" → ");
 }
 export type Verification = "review" | "checks_only";
 export const VERIFICATION_OPTIONS: Array<{
@@ -322,6 +336,8 @@ export function upsertArgs(input: {
   approvalPolicy?: ApprovalPolicy;
   /** Sent for the Verifier; "review" clears a stored mode. */
   verification?: Verification;
+  /** Backup agents in order; an empty list clears them. */
+  backups?: Backup[];
 }) {
   const { existing } = input;
   const concurrency = input.maxConcurrency.trim();
@@ -341,6 +357,15 @@ export function upsertArgs(input: {
       : {}),
     ...(input.verification !== undefined && VERIFICATION_ROLES.includes(input.role)
       ? { verification: input.verification }
+      : {}),
+    ...(input.backups !== undefined
+      ? {
+          backups: input.backups.map((backup) => ({
+            runtime: backup.runtime,
+            ...(backup.model?.trim() ? { model: backup.model.trim() } : {}),
+            ...(backup.reasoningEffort ? { reasoningEffort: backup.reasoningEffort } : {}),
+          })),
+        }
       : {}),
   };
 }
@@ -391,7 +416,7 @@ export function AgentsSettings({
       <StatusBadge status="completed" label="Custom" />
     );
   const summary = (shown: Profile | undefined) =>
-    `${shown ? describeProfile(shown) : `${runtimeLabel(fallback)} · default model`}${
+    `${shown ? describeChain(shown) : `${runtimeLabel(fallback)} · default model`}${
       shown?.maxConcurrency ? ` · up to ${shown.maxConcurrency} at once` : ""
     }${
       shown?.approvalPolicy && shown.approvalPolicy !== "ask"
@@ -630,6 +655,7 @@ export function ProfileEditor({
     prefill?.approvalPolicy ?? "ask",
   );
   const [verification, setVerification] = useState<Verification>(prefill?.verification ?? "review");
+  const [backups, setBackups] = useState<Backup[]>(prefill?.backups ?? []);
   const [enabled, setEnabled] = useState(existing?.enabled ?? true);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState("");
@@ -707,6 +733,7 @@ export function ProfileEditor({
           instructions,
           approvalPolicy,
           verification,
+          backups,
         }),
       ),
     );
@@ -786,6 +813,13 @@ export function ProfileEditor({
       <p className="z-xsmall z-muted" aria-live="polite">
         Saves as: {selection}
       </p>
+      <BackupsEditor
+        label={label}
+        runtimes={runtimes}
+        catalogs={catalogs}
+        value={backups}
+        onChange={setBackups}
+      />
       {RUN_ROLES.includes(role) && (
         <label className="z-field" htmlFor={concurrencyId}>
           Max concurrent runs
@@ -867,5 +901,80 @@ export function ProfileEditor({
         </Button>
       </div>
     </form>
+  );
+}
+
+/**
+ * Backup agents for a role, in order: when the agent above cannot run on the computer a
+ * Session uses (not installed there, or a local model server is off), the next one is used.
+ */
+function BackupsEditor({
+  label,
+  runtimes,
+  catalogs,
+  value,
+  onChange,
+}: {
+  label: string;
+  runtimes: string[];
+  catalogs: RuntimeModels[] | undefined;
+  value: Backup[];
+  onChange: (next: Backup[]) => void;
+}) {
+  const update = (index: number, next: Backup) =>
+    onChange(value.map((item, at) => (at === index ? next : item)));
+  return (
+    <section className="z-stack" aria-label={`${label} backups`}>
+      <div className="z-row z-row--between">
+        <strong className="z-small">Backups</strong>
+        <span className="z-xsmall z-muted">Used in order when the agent above can't run.</span>
+      </div>
+      {value.map((backup, index) => {
+        const catalog = catalogs?.find((item) => item.runtime === backup.runtime)?.models ?? [];
+        return (
+          // biome-ignore lint/suspicious/noArrayIndexKey: backups are an ordered list edited in place.
+          <div className="z-stack" key={index}>
+            <Picker
+              label={`Backup ${index + 1}`}
+              value={backup.runtime}
+              options={runtimes.map((choice) => ({ value: choice, label: runtimeLabel(choice) }))}
+              onChange={(runtime) => update(index, { runtime })}
+            />
+            <div className="z-row" style={{ flexWrap: "nowrap" }}>
+              <Picker
+                label={`Backup ${index + 1} model`}
+                value={backup.model ?? ""}
+                options={[
+                  { value: "", label: "Default", description: "The agent's default model." },
+                  ...catalog.map((item) => ({ value: item.id, label: item.displayName })),
+                  ...(backup.model && !catalog.some((item) => item.id === backup.model)
+                    ? [{ value: backup.model, label: backup.model }]
+                    : []),
+                ]}
+                onChange={(model) =>
+                  update(index, { runtime: backup.runtime, ...(model ? { model } : {}) })
+                }
+              />
+              <Button
+                variant="ghost"
+                size="small"
+                onClick={() => onChange(value.filter((_, at) => at !== index))}
+              >
+                Remove
+              </Button>
+            </div>
+          </div>
+        );
+      })}
+      {value.length < MAX_BACKUPS && (
+        <Button
+          variant="secondary"
+          size="small"
+          onClick={() => onChange([...value, { runtime: runtimes[0] ?? DEFAULT_RUNTIME }])}
+        >
+          Add backup
+        </Button>
+      )}
+    </section>
   );
 }

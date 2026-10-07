@@ -4,7 +4,7 @@ import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { type MutationCtx, mutation, type QueryCtx, query } from "./_generated/server";
 import { fail, load, ownSession, requireNode, requireUser } from "./lib/access";
-import { resolveAgentProfile } from "./lib/agentProfiles";
+import { agentChain, firstAvailable, resolveAgentProfile } from "./lib/agentProfiles";
 import { enqueue } from "./lib/commands";
 import { deviceOnline } from "./lib/devices";
 import { explicitlyRequestsWork } from "./lib/orchestration";
@@ -172,17 +172,12 @@ export async function submitText(
   for (const item of locations) {
     if (wanted && item.workstationId !== wanted) continue;
     const device = await load(ctx, "workstations", item.workstationId);
-    const runtime = await ctx.db
-      .query("runtimeInstallations")
-      .withIndex("by_workstation_runtime", (q) =>
-        q.eq("workstationId", device._id).eq("runtime", effective.runtime),
-      )
-      .unique();
+    // Any Builder of the chain (its own or a backup) this computer can start will do.
     if (
       device.ownerId === owner._id &&
       deviceOnline(device) &&
       item.status === "available" &&
-      runtime?.status === "available"
+      (await firstAvailable(ctx, device._id, agentChain(effective.profile, effective.runtime)))
     ) {
       location = item;
       break;
@@ -273,6 +268,10 @@ export async function submitText(
     ...(args.sessionId ? { requestedSessionId: args.sessionId } : {}),
     ...(args.workstationId ? { requestedWorkstationId: args.workstationId } : {}),
   });
+  // The first Supervisor of the chain this computer has; the Node falls back itself if none.
+  const supervisorChain = agentChain(supervisor.profile, supervisor.runtime);
+  const planner = (await firstAvailable(ctx, location.workstationId, supervisorChain)) ??
+    supervisorChain[0] ?? { runtime: supervisor.runtime };
   await enqueue(
     ctx,
     location.workstationId,
@@ -284,11 +283,9 @@ export async function submitText(
       workspaceId: planningWorkspaceId,
       text: args.text,
       supervisor: {
-        runtime: supervisor.runtime,
-        ...(supervisor.profile?.model ? { model: supervisor.profile.model } : {}),
-        ...(supervisor.profile?.reasoningEffort
-          ? { reasoningEffort: supervisor.profile.reasoningEffort }
-          : {}),
+        runtime: planner.runtime,
+        ...(planner.model ? { model: planner.model } : {}),
+        ...(planner.reasoningEffort ? { reasoningEffort: planner.reasoningEffort } : {}),
         ...(supervisor.profile?.instructions
           ? { instructions: supervisor.profile.instructions }
           : {}),
@@ -838,14 +835,14 @@ export const dispatch = mutation({
         );
         if (profileRuns.length >= effective.profile.maxConcurrency) continue;
       }
-      const installation = await ctx.db
-        .query("runtimeInstallations")
-        .withIndex("by_workstation_runtime", (q) =>
-          q.eq("workstationId", args.workstationId).eq("runtime", effective.runtime),
-        )
-        .unique();
-      if (installation?.status !== "available") continue;
-      await queueRun(ctx, { taskId, workspaceId, role });
+      // The first agent of the role's chain this computer can start (its own, else a backup).
+      const choice = await firstAvailable(
+        ctx,
+        args.workstationId,
+        agentChain(effective.profile, effective.runtime),
+      );
+      if (!choice) continue;
+      await queueRun(ctx, { taskId, workspaceId, role, choice });
     }
     return null;
   },

@@ -1,6 +1,7 @@
 import { type Infer, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { fail, requireUser } from "./lib/access";
+import { agentBackup, MAX_BACKUPS } from "./lib/agentBackup";
 import {
   AGENT_ROLES,
   instructionsDigest,
@@ -172,6 +173,8 @@ export const upsert = mutation({
     approvalPolicy: v.optional(approvalPolicy),
     // Verifier only. Omitted or "review" runs a reviewer model; "checks_only" does not.
     verification: v.optional(verification),
+    // Omitted keeps the stored backups; an empty list clears them.
+    backups: v.optional(v.array(agentBackup)),
   },
   returns: v.id("agentProfiles"),
   handler: async (ctx, args) => {
@@ -195,6 +198,24 @@ export const upsert = mutation({
       args.verification && args.verification !== "review" ? args.verification : undefined;
     if (mode && args.role !== "verifier") fail("INVALID_ARGUMENT");
     if (!runtimeAllowedFor(args.role, args.runtime.trim())) fail("INVALID_ARGUMENT");
+    const backups = args.backups?.map((backup) => ({
+      runtime: backup.runtime.trim(),
+      ...(backup.model?.trim() ? { model: backup.model.trim() } : {}),
+      ...(backup.reasoningEffort?.trim() ? { reasoningEffort: backup.reasoningEffort.trim() } : {}),
+    }));
+    if (
+      backups &&
+      (backups.length > MAX_BACKUPS ||
+        backups.some(
+          (backup) =>
+            !backup.runtime ||
+            backup.runtime.length > 64 ||
+            (backup.model?.length ?? 0) > 256 ||
+            (backup.reasoningEffort?.length ?? 0) > 32 ||
+            !runtimeAllowedFor(args.role, backup.runtime),
+        ))
+    )
+      fail("INVALID_ARGUMENT");
     const digest = instructions ? await instructionsDigest(instructions) : undefined;
     if (args.productId) {
       const product = await ctx.db.get(args.productId);
@@ -228,6 +249,7 @@ export const upsert = mutation({
         ...(args.instructions !== undefined ? { instructions, instructionsDigest: digest } : {}),
         approvalPolicy: policy,
         verification: mode,
+        ...(backups ? { backups: backups.length ? backups : undefined } : {}),
         revision: existing.revision + 1,
         updatedAt: now,
       });
@@ -246,6 +268,7 @@ export const upsert = mutation({
       ...(instructions && digest ? { instructions, instructionsDigest: digest } : {}),
       ...(policy ? { approvalPolicy: policy } : {}),
       ...(mode ? { verification: mode } : {}),
+      ...(backups?.length ? { backups } : {}),
       revision: 1,
       createdAt: now,
       updatedAt: now,

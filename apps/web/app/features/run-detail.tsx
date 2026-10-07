@@ -98,6 +98,8 @@ export interface RunDetailData {
     resultSummary?: string;
     exitReason?: string;
     failure?: { code?: string; reason?: string; at: number };
+    /** Which backup of the role's chain ran (absent: the profile's own agent). */
+    backup?: number;
     startedAt?: number;
     completedAt?: number;
     lastActivityAt: number;
@@ -186,7 +188,10 @@ export function RunDetailBody({
         <Facts
           label="Run facts"
           items={[
-            { label: "Runtime", value: runtimeLabel(run) },
+            {
+              label: "Runtime",
+              value: `${runtimeLabel(run)}${run.backup ? ` (backup ${run.backup})` : ""}`,
+            },
             runDuration(run, now) !== undefined && {
               label: active ? "Running for" : "Duration",
               value: runDuration(run, now),
