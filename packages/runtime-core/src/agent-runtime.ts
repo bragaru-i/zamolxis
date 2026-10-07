@@ -15,6 +15,9 @@ export interface RuntimeWorkspace {
   readonly cwd: string;
   readonly branch: string;
   readonly headSha: string;
+  // Directories the Node prepared for this worktree (e.g. the repository's pinned pnpm),
+  // put first on the agent's PATH so ordinary commands work without the network.
+  readonly toolPaths?: readonly string[];
 }
 export interface StartRunInput {
   readonly runId: AgentRunId;

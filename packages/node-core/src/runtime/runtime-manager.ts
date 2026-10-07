@@ -7,6 +7,7 @@ import type {
   RuntimeSessionSnapshot,
 } from "@zamolxis/runtime-core";
 import type { LocalStateStore } from "../persistence/local-state";
+import type { WorkspaceToolchain } from "../workspace/toolchain";
 import type { WorkspaceManager } from "../workspace/workspace-manager";
 
 const TERMINAL = ["completed", "failed", "stopped"];
@@ -27,7 +28,16 @@ export class RuntimeManager {
     private readonly runtimes: RuntimeRegistry,
     private readonly workstationId: WorkstationId,
     private readonly isAllowed: (runtime: string) => boolean,
+    // Prepares each worktree outside the sandbox before its agent starts.
+    private readonly toolchain?: Pick<WorkspaceToolchain, "prepare">,
   ) {}
+  async #toolPaths(cwd: string, role: AgentRole | undefined): Promise<string[]> {
+    try {
+      return (await this.toolchain?.prepare(cwd, role)) ?? [];
+    } catch {
+      return [];
+    }
+  }
   async observe(runId: string): Promise<RuntimeSessionSnapshot> {
     const stored = this.store.getRuntimeSession(runId);
     if (!stored?.nativeSessionId) throw new Error("RECONCILIATION_REQUIRED");
@@ -60,6 +70,7 @@ export class RuntimeManager {
       this.isAllowed,
     );
     const workspace = this.#adopt(stored.workspaceId, runId);
+    const toolPaths = await this.#toolPaths(workspace.path, options.role);
     const snapshot = await runtime.resume({
       ...options,
       runId: runId as AgentRunId,
@@ -70,6 +81,7 @@ export class RuntimeManager {
         cwd: workspace.path,
         branch: workspace.branch,
         headSha: workspace.headSha ?? workspace.baseSha,
+        ...(toolPaths.length ? { toolPaths } : {}),
       },
     });
     if (snapshot.runId !== runId || snapshot.nativeSessionId !== stored.nativeSessionId)
@@ -139,6 +151,8 @@ export class RuntimeManager {
     }
     const workspace = this.workspaces.inspect(input.workspaceId);
     this.workspaces.acquire(input.workspaceId, input.runId, workspace.path, workspace.branch);
+    // Before the session is reserved: a restart during a long install leaves nothing to reconcile.
+    const toolPaths = await this.#toolPaths(workspace.path, input.role);
     if (
       !this.store.reserveRuntimeSession({
         runId: input.runId,
@@ -162,6 +176,7 @@ export class RuntimeManager {
         cwd: workspace.path,
         branch: workspace.branch,
         headSha: workspace.headSha ?? workspace.baseSha,
+        ...(toolPaths.length ? { toolPaths } : {}),
       },
     });
     this.store.upsertRuntimeSession({

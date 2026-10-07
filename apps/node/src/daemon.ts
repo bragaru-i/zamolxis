@@ -19,6 +19,7 @@ import {
   RuntimeManager,
   RuntimeModelCatalog,
   WorkspaceManager,
+  WorkspaceToolchain,
 } from "@zamolxis/node-core";
 import { ClaudeCliProcess, ClaudeRuntime, claudeEnv } from "@zamolxis/runtime-claude";
 import {
@@ -270,6 +271,7 @@ try {
       runtimes,
       config.workstationId as WorkstationId,
       (runtime) => runtimes.ids().includes(runtime),
+      new WorkspaceToolchain(join(root, "tools")),
     );
     const driver = new ControlPlaneDriver(
       store,
