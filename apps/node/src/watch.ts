@@ -150,21 +150,20 @@ export class WatchState {
           this.supervisorCalls += 1;
         }
         const tasks = Array.isArray(payload.tasks) ? payload.tasks.length : 0;
+        const model = text(usage.modelActual, 80);
+        // Home chat is the Orchestrator; a Session's planning is the Supervisor.
         add(
-          "Supervisor",
-          payload.kind === "repository.plan"
-            ? `planned ${tasks} task${tasks === 1 ? "" : "s"}${tokens}`
-            : `answered (${text(payload.decision, 20) || "reply"})${tokens}`,
+          payload.kind === "repository.plan" ? "Supervisor" : "Orchestrator",
+          [
+            payload.kind === "repository.plan"
+              ? `planned ${tasks} task${tasks === 1 ? "" : "s"}`
+              : `answered (${text(payload.decision, 20) || "reply"})`,
+            model || undefined,
+          ]
+            .filter(Boolean)
+            .join(" · ") + tokens,
           "ok",
         );
-        break;
-      }
-      case "supervisor.log": {
-        const steps = Array.isArray(payload.steps) ? payload.steps.map(object) : [];
-        const failed = steps.find((step) => step.kind === "supervisor" && step.status === "failed");
-        const note = steps.find((step) => step.kind === "message");
-        if (failed)
-          add("Supervisor", `failed: ${text(note?.detail) || text(failed.label)}`, "fail");
         break;
       }
       case "command.failed": {
@@ -177,6 +176,11 @@ export class WatchState {
         const reason = reasonText(failure.reason);
         const engine = [runtime, model].filter(Boolean).join(" ");
         if (typeof failure.at === "number") when = failure.at;
+        // Stopped on request is not a failure.
+        if (/_STOPPED$/.test(text(payload.code, 64))) {
+          add(who, `stopped${engine ? ` · ${engine}` : ""}`, "dim");
+          break;
+        }
         add(
           who,
           `failed${engine ? ` · ${engine}` : ""} · ${reason || text(payload.code, 64).replaceAll("_", " ").toLowerCase()}`,
@@ -354,7 +358,7 @@ export function renderStatus(
       "dim",
       clip(
         p,
-        `(Supervisor ${formatTokens(state.supervisorTokens)} · agents ${formatTokens(state.agentTokens)} · ${state.runs.size} runs)`,
+        `(chat & planning ${formatTokens(state.supervisorTokens)} · agents ${formatTokens(state.agentTokens)} · ${state.runs.size} runs)`,
       ),
     )}${waiting}`,
   );
