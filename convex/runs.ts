@@ -19,7 +19,7 @@ const PROOF_INSTRUCTION =
 // Builders and Repairs run in a workspace-write sandbox (worktree and a private TMPDIR,
 // no network). Every request to leave it waits for the owner, so ordinary work stays inside.
 const SANDBOX_INSTRUCTION =
-  "Commands run in a sandbox: your worktree and $TMPDIR are writable, the network is off. Run scripts, builds and tests there directly; never ask to run outside the sandbox for work inside your worktree, because each such request waits for the owner. Ask only when the task truly needs the network, other folders or system settings. If a command fails because of the sandbox, do not retry variations of it: say what is blocked in your summary.";
+  "Commands run in a sandbox: your worktree and $TMPDIR are writable, the network is off. Run scripts, builds and tests there directly; never ask to run outside the sandbox for work inside your worktree, because each such request waits for the owner. Ask only when the task truly needs the network, other folders or system settings. If a command fails because of the sandbox, do not retry variations of it: say what is blocked in your summary. To add a dependency, add it to the right package.json only and do not try to install it: Zamolxis updates the lockfile when you finish.";
 export async function queueRun(
   ctx: MutationCtx,
   input: {
