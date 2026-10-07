@@ -18,7 +18,7 @@ import { useMutation, useQuery } from "convex/react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
-import { SessionApprovals } from "./approvals";
+import { SessionApprovals, showApprovals } from "./approvals";
 import {
   assistantReply,
   type ConversationMessage,
@@ -324,6 +324,11 @@ export function SessionView({
                             costUsd={run.estimatedCostUsd}
                             openLabel={`Open ${ROLE[run.role ?? "builder"] ?? "agent"} details`}
                             onOpen={() => setRunParam(run._id, "replace")}
+                            onStatus={
+                              run.status === "needs_approval"
+                                ? () => showApprovals({ runId: run._id })
+                                : undefined
+                            }
                             actions={
                               ACTIVE_RUN.includes(run.status) || run.status === "lost" ? (
                                 <Button

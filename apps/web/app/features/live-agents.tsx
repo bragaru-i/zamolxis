@@ -4,6 +4,7 @@ import { useMutation, useQuery } from "convex/react";
 import { useState } from "react";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
+import { showApprovals } from "./approvals";
 import { explainError } from "./errors";
 import { runtimeLabel } from "./run-detail-model";
 import { useNow } from "./workspace";
@@ -82,6 +83,11 @@ export function LiveAgents({
               agent.taskTitle ? `${agent.taskTitle} · ${agent.sessionTitle}` : agent.sessionTitle
             }
             openLabel={`Open ${ROLE[agent.role] ?? "agent"} in ${agent.sessionTitle}`}
+            onStatus={
+              agent.kind === "run" && agent.status === "needs_approval"
+                ? () => showApprovals({ runId: agent._id })
+                : undefined
+            }
             onOpen={() =>
               onOpen(
                 agent.workSessionId,

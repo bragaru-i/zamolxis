@@ -1,7 +1,7 @@
 "use client";
-import { Button, Card, Notice, Toast, ToastStack, type Tone } from "@zamolxis/ui";
+import { Button, Card, Notice, StatusBadge, Toast, ToastStack, type Tone } from "@zamolxis/ui";
 import { useMutation, useQuery } from "convex/react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
 import { explainError } from "./errors";
@@ -147,10 +147,12 @@ export function ApprovalToast({
   approval,
   onOpen,
   onDismiss,
+  highlighted = false,
 }: {
   approval: PendingApproval;
   onOpen: (id: Id<"workSessions">) => void;
   onDismiss: () => void;
+  highlighted?: boolean;
 }) {
   const state = useApprovalDecision(approval);
   const risk = RISK[approval.risk] ?? RISK.critical;
@@ -160,6 +162,7 @@ export function ApprovalToast({
       tone={risk.tone === "neutral" ? "info" : risk.tone}
       meta={<span className={`z-badge z-tone-${risk.tone}`}>{risk.label}</span>}
       onDismiss={onDismiss}
+      highlighted={highlighted}
       actions={<ApprovalButtons approval={approval} state={state} onOpen={onOpen} />}
     >
       {approval.request?.summary ?? approval.action}
@@ -170,29 +173,66 @@ export function ApprovalToast({
 }
 
 const TOASTS_SHOWN = 3;
+const HIGHLIGHT_MS = 2500;
+
+/** Which requests to bring up: one run's, or every request of a Session. */
+export interface ApprovalFocus {
+  runId?: string;
+  workSessionId?: string;
+}
+const focusListeners = new Set<(focus: ApprovalFocus) => void>();
+/** Brings the matching requests' toasts back (even if dismissed), first and highlighted. */
+export function showApprovals(focus: ApprovalFocus): void {
+  for (const listener of focusListeners) listener(focus);
+}
+export function matchesFocus(approval: PendingApproval, focus: ApprovalFocus): boolean {
+  return focus.runId
+    ? approval.runId === focus.runId
+    : approval.workSessionId === focus.workSessionId;
+}
 
 /**
- * Pending requests as toasts on every screen. Requests of the Session that is open are
- * left to its own cards; a dismissed toast stays in the inbox and the Session.
+ * Pending requests as toasts on every screen, the open Session and Run detail included;
+ * a dismissed toast stays in the inbox and the Session, and a "Needs approval" chip
+ * brings it back (`showApprovals`).
  */
 export function ApprovalToasts({
   ready,
-  exceptSessionId,
   onOpen,
 }: {
   ready: boolean;
-  exceptSessionId?: Id<"workSessions">;
   onOpen: (id: Id<"workSessions">) => void;
 }) {
   const approvals = useQuery(api.approvals.listPending, ready ? {} : "skip") as
     | PendingApproval[]
     | undefined;
   const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set());
+  const [focused, setFocused] = useState<ReadonlySet<string>>(new Set());
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const listener = (focus: ApprovalFocus) => {
+      const ids = (approvals ?? [])
+        .filter((approval) => matchesFocus(approval, focus))
+        .map((approval) => approval._id as string);
+      if (!ids.length) return;
+      setDismissed((current) => new Set([...current].filter((id) => !ids.includes(id))));
+      setFocused(new Set(ids));
+      clearTimeout(timer);
+      timer = setTimeout(() => setFocused(new Set()), HIGHLIGHT_MS);
+    };
+    focusListeners.add(listener);
+    return () => {
+      focusListeners.delete(listener);
+      clearTimeout(timer);
+    };
+  }, [approvals]);
   const waiting = (approvals ?? [])
-    .filter(
-      (approval) => approval.workSessionId !== exceptSessionId && !dismissed.has(approval._id),
-    )
-    .sort((a, b) => a.requestedAt - b.requestedAt);
+    .filter((approval) => !dismissed.has(approval._id))
+    // The requests the owner asked for come first, then the oldest.
+    .sort(
+      (a, b) =>
+        Number(focused.has(b._id)) - Number(focused.has(a._id)) || a.requestedAt - b.requestedAt,
+    );
   const shown = waiting.slice(0, TOASTS_SHOWN);
   const more = waiting.length - shown.length;
   return (
@@ -201,6 +241,7 @@ export function ApprovalToasts({
         <ApprovalToast
           key={approval._id}
           approval={approval}
+          highlighted={focused.has(approval._id)}
           onOpen={onOpen}
           onDismiss={() => setDismissed((current) => new Set(current).add(approval._id))}
         />
@@ -211,6 +252,20 @@ export function ApprovalToasts({
         </Toast>
       )}
     </ToastStack>
+  );
+}
+
+/** A status chip; "Needs approval" is a button that brings up that run's request. */
+export function ApprovalStatusBadge({ status, runId }: { status: string; runId: string }) {
+  if (status !== "needs_approval") return <StatusBadge status={status} />;
+  return (
+    <button
+      type="button"
+      className="z-badge z-badge--action z-tone-warning"
+      onClick={() => showApprovals({ runId })}
+    >
+      Needs approval ›
+    </button>
   );
 }
 

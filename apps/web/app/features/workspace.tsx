@@ -106,7 +106,6 @@ export function Workspace() {
       )}
       <ApprovalToasts
         ready={ready}
-        {...(sessionId ? { exceptSessionId: sessionId as Id<"workSessions"> } : {})}
         onOpen={(id) => {
           setSettingsOpen(false);
           replaceRun("");

@@ -285,7 +285,8 @@ function build(name: string) {
         workspaceId: "ws1",
         role: "builder",
         runtime: "codex",
-        status: "running",
+        // The "attention" scenario has its request pending (approval ap1).
+        status: attention ? "needs_approval" : "running",
         modelRequested: "gpt-5.1-codex",
         modelActual: "gpt-5.1-codex",
         reasoningEffort: "medium",
