@@ -930,3 +930,49 @@ it("starts new work with the computer's saved workflow unless another one is cho
   });
   expect(await workflowOf(await open("m-3"))).toBeUndefined();
 });
+
+it("answers Home chat with the Orchestrator of the computer's saved workflow", async () => {
+  const f = await fixture();
+  const instanceId = (await f.t.run((ctx) => ctx.db.get("workstations", f.workstationId)))
+    ?.nodeInstanceId;
+  await f.node.mutation(api.node.heartbeat, {
+    workstationId: f.workstationId,
+    instanceId: instanceId ?? "instance",
+    runtimeCapabilities: [
+      { runtime: "codex", capabilities: ["start", "stop"] },
+      {
+        runtime: "local",
+        capabilities: ["start", "stop"],
+        models: [{ id: "qwen/qwen3-coder-30b", displayName: "qwen/qwen3-coder-30b" }],
+      },
+    ],
+  });
+  const workflowId = await f.user.mutation(api.workflows.create, {
+    productId: f.productId,
+    name: "Save tokens",
+    preset: "save_tokens",
+  });
+  const ask = async (key: string) => {
+    const { messageId } = await f.user.mutation(api.orchestrator.submit, {
+      text: "What is going on?",
+      idempotencyKey: key,
+      productId: f.productId,
+    });
+    const command = await f.t.run(async (ctx) =>
+      (await ctx.db.query("commands").collect()).find((row) => row.targetId === messageId),
+    );
+    return (command?.payload as { orchestrator?: { runtime: string; model?: string } } | undefined)
+      ?.orchestrator;
+  };
+  // Without a saved workflow: the product's Default (Codex here).
+  expect((await ask("h-1"))?.runtime).toBe("codex");
+  const [location] = await f.user.query(api.repositories.listLocations, {
+    workstationId: f.workstationId,
+  });
+  if (!location) throw new Error("no location");
+  await f.user.mutation(api.workflows.setForLocation, {
+    repositoryLocationId: location.repositoryLocationId,
+    workflowId,
+  });
+  expect(await ask("h-2")).toMatchObject({ runtime: "local", model: "qwen/qwen3-coder-30b" });
+});

@@ -108,7 +108,11 @@ export function MacItem({
     .map((candidate) => RUNTIME_NAMES[candidate.runtime] ?? candidate.runtime)
     .sort();
   const runtime = available.length > 0;
-  const runtimeName = available.join(" and ");
+  // "Codex", "Claude Code and Codex", "Claude Code, Codex and Local model".
+  const runtimeName =
+    available.length > 1
+      ? `${available.slice(0, -1).join(", ")} and ${available.at(-1)}`
+      : (available[0] ?? "");
   const choose = (next: MacMode) => {
     setProblem("");
     onMessage("");

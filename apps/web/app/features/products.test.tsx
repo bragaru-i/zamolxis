@@ -11,7 +11,7 @@ vi.mock("convex/react", () => ({
     args === "skip" ? undefined : state.data[getFunctionName(reference)],
 }));
 
-import { explainArchiveError, type ProductRow, productSummary, ProductsSection } from "./products";
+import { explainArchiveError, type ProductRow, ProductsSection, productSummary } from "./products";
 
 const product = (overrides: Partial<ProductRow> = {}): ProductRow => ({
   _id: "p1" as ProductRow["_id"],

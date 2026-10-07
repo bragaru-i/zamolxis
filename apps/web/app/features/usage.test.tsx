@@ -22,9 +22,9 @@ import {
   formatCost,
   formatTokens,
   SessionUsage,
-  usageDetail,
   UsageSettings,
   type UsageTotals,
+  usageDetail,
 } from "./usage";
 
 function totals(overrides: Partial<UsageTotals> = {}): UsageTotals {

@@ -266,7 +266,8 @@ export function SessionView({
       {session && (sortedTasks.length > 0 || session.status === "planning") && (
         <WorkMap
           ready={ready}
-          productId={messages?.[0]?.productId}
+          productId={messages?.[0]?.productId ?? session.productId}
+          workflowId={session.workflowId}
           sessionStatus={session.status}
           tasks={sortedTasks}
           runs={runs ?? []}

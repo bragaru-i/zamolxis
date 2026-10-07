@@ -158,3 +158,16 @@ it("colors tasks by process and renders their compact progress track", () => {
   expect(html).toContain('aria-label="Fix: Skipped"');
   expect(html).toContain('aria-label="Ready: Not yet"');
 });
+
+it("shows the Session workflow's agents, and a checks-only Verifier as no AI", () => {
+  const workflow = [
+    { role: "builder", runtime: "claude", model: "claude-sonnet-5-5", enabled: true },
+    { role: "verifier", runtime: "codex", enabled: true, verification: "checks_only" },
+  ] as never[];
+  const product = [
+    { role: "builder", runtime: "claude", model: "claude-opus-5-5", enabled: true },
+  ] as never[];
+  expect(stepAgent("builder", [], { product, workflow })).toBe("Claude · claude-sonnet-5-5");
+  expect(stepAgent("builder", [], { product })).toBe("Claude · claude-opus-5-5");
+  expect(stepAgent("verifier", [], { product, workflow })).toBe("Checks only (no AI)");
+});
