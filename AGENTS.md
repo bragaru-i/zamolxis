@@ -42,7 +42,9 @@ planned capability as shipped; the executable repository is the source of truth.
   or claim a merge without Git/PR evidence. Preserve human changes; inspect sibling
   work and the sibling `zamolxis-docs` repository before architectural changes.
 - Every push to main that passes CI deploys production (Convex, then Vercel). It does
-  not update the Node on the owner's computer (see the runbook). Current status, known
+  not update the Node on the owner's computers: a change under `apps/node/` or
+  `packages/` needs the Node service restarted there (never the machine; runbook,
+  "Updating the Node"). Current status, known
   gaps and next steps live in `docs/alpha-status.md`; update it when a gap opens or
   closes. Procedures and pitfalls live in `docs/agent-runbook.md`.
 
