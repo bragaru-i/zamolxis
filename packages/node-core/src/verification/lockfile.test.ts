@@ -56,4 +56,18 @@ describe("lockfile update before the candidate commit", () => {
       cwd,
     });
   }, 60_000);
+
+  it("also updates it for a manifest committed earlier in the task (a Repair after a Builder)", async () => {
+    const cwd = project();
+    const base = execFileSync("git", ["rev-parse", "HEAD"], { cwd }).toString().trim();
+    const manifest = JSON.parse(readFileSync(join(cwd, "package.json"), "utf8"));
+    writeFileSync(
+      join(cwd, "package.json"),
+      JSON.stringify({ ...manifest, dependencies: { dep: "file:./dep" } }),
+    );
+    git(cwd, ["commit", "-qam", "builder candidate without lockfile"]);
+    expect(await updateLockfile(cwd)).toBeUndefined();
+    expect(await updateLockfile(cwd, base)).toMatchObject({ result: "passed" });
+    expect(readFileSync(join(cwd, "pnpm-lock.yaml"), "utf8")).toContain("dep:");
+  }, 60_000);
 });
