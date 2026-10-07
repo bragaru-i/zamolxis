@@ -47,7 +47,10 @@ Each candidate receives a separate Verifier Run and worktree at its exact SHA.
 Verifiers are read-only (Codex: read-only sandbox; Claude: read-only tools with
 every other permission denied) and receive acceptance criteria and
 repository context, without Builder private reasoning. The Node then executes
-repository-owned package scripts in the verification worktree. Evidence records
+repository-owned package scripts in the verification worktree. A Verifier
+profile set to "Checks only" (Settings → Agents → Verifier → Verification) runs
+no reviewer model at all: the Node installs dependencies from the lockfile and
+runs those scripts, and the run costs no tokens. Evidence records
 contain the command outcome, modality, verifier identity and exact subject SHA.
 Git whitespace checks establish static evidence; executable test/acceptance/e2e
 scripts establish test or behavioral evidence. An absent check is a failure,
