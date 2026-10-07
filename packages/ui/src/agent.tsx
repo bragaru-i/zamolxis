@@ -41,6 +41,7 @@ export function AgentRow({
   context,
   actions,
   onOpen,
+  onStatus,
   openLabel = "Open details",
 }: {
   role: string;
@@ -57,6 +58,8 @@ export function AgentRow({
   /** Buttons at the trailing edge (Stop, Dismiss). */
   actions?: ReactNode | undefined;
   onOpen?: (() => void) | undefined;
+  /** Makes the status chip a button (e.g. "Needs approval" shows the request). */
+  onStatus?: (() => void) | undefined;
   openLabel?: string;
 }) {
   const resolved = statusLabel(status);
@@ -75,7 +78,7 @@ export function AgentRow({
           aria-hidden="true"
         />
         <strong className="z-agent__role">{role}</strong>
-        <span className={`z-badge z-tone-${resolved.tone}`}>{resolved.label}</span>
+        {!onStatus && <span className={`z-badge z-tone-${resolved.tone}`}>{resolved.label}</span>}
       </span>
       {(runtime || model) && (
         <span className="z-agent__model">
@@ -114,7 +117,21 @@ export function AgentRow({
       ) : (
         <div className="z-agent__main">{body}</div>
       )}
-      {actions && <div className="z-agent__actions">{actions}</div>}
+      {(actions || onStatus) && (
+        <div className="z-agent__actions">
+          {onStatus && (
+            // Outside the row's own button: a button cannot hold another one.
+            <button
+              type="button"
+              className={`z-badge z-badge--action z-tone-${resolved.tone}`}
+              onClick={onStatus}
+            >
+              {resolved.label} ›
+            </button>
+          )}
+          {actions}
+        </div>
+      )}
     </div>
   );
 }

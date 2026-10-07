@@ -796,6 +796,44 @@ code,
 .z-toast__actions {
   flex-wrap: wrap;
 }
+/* New toasts slide in; a toast the owner asked for (chip tap) pulses twice. */
+.z-toast {
+  animation: z-toast-in 180ms ease-out;
+}
+.z-toast--focus {
+  outline: 2px solid var(--z-warning);
+  outline-offset: 2px;
+  animation: z-toast-attention 700ms ease-in-out 2;
+}
+@keyframes z-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+@keyframes z-toast-attention {
+  50% {
+    transform: scale(1.02);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .z-toast,
+  .z-toast--focus {
+    animation: none;
+  }
+}
+/* A status chip that acts: "Needs approval ›" brings up the request. */
+.z-badge--action {
+  border: 1px solid currentColor;
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--z-text-xs);
+}
+.z-badge--action:hover,
+.z-badge--action:focus-visible {
+  filter: brightness(0.95);
+  text-decoration: underline;
+}
 
 /* Form fields */
 .z-field {

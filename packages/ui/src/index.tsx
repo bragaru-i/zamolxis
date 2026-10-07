@@ -196,10 +196,13 @@ export function Toast({
   meta,
   actions,
   onDismiss,
+  highlighted = false,
   children,
 }: {
   title: string;
   tone?: Tone;
+  /** Briefly draws attention, e.g. after the owner tapped a "Needs approval" chip. */
+  highlighted?: boolean;
   /** Shown after the title, e.g. a risk badge. */
   meta?: ReactNode;
   actions?: ReactNode;
@@ -208,7 +211,7 @@ export function Toast({
 }) {
   return (
     <section
-      className={`z-toast z-toast--${tone}`}
+      className={`z-toast z-toast--${tone}${highlighted ? " z-toast--focus" : ""}`}
       role={tone === "danger" ? "alert" : "status"}
       aria-label={title}
     >

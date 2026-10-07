@@ -9,7 +9,14 @@ vi.mock("convex/react", () => ({
   useQuery: (_reference: unknown, args: unknown) => (args === "skip" ? undefined : state.pending),
 }));
 
-import { ApprovalCard, ApprovalToasts, type PendingApproval } from "./approvals";
+import {
+  ApprovalCard,
+  ApprovalStatusBadge,
+  ApprovalToasts,
+  matchesFocus,
+  type PendingApproval,
+  showApprovals,
+} from "./approvals";
 
 const approval = (overrides: Partial<PendingApproval> = {}): PendingApproval => ({
   _id: "approval" as Id<"approvals">,
@@ -44,7 +51,7 @@ it("offers run-scoped approval only when the runtime allows it", () => {
   expect(oneTime).not.toContain("Approve for run");
 });
 
-it("shows pending requests as toasts everywhere except the open session, three at a time", () => {
+it("shows pending requests as toasts everywhere, the open session too, three at a time", () => {
   state.pending = [1, 2, 3, 4, 5].map((index) =>
     approval({
       _id: `a${index}` as Id<"approvals">,
@@ -54,20 +61,15 @@ it("shows pending requests as toasts everywhere except the open session, three a
     }),
   );
   const html = renderToStaticMarkup(
-    createElement(ApprovalToasts, {
-      ready: true,
-      exceptSessionId: "open" as Id<"workSessions">,
-      onOpen: vi.fn(),
-    }),
+    createElement(ApprovalToasts, { ready: true, onOpen: vi.fn() }),
   );
   expect(html).toContain('popover="manual"');
   expect(html).toContain('aria-label="Approvals waiting"');
-  // The open session's own card handles request 1; the three oldest others become toasts.
-  expect(html).not.toContain("Run: step 1");
-  expect(html).toContain("Run: step 2");
-  expect(html).toContain("Run: step 4");
-  expect(html).not.toContain("Run: step 5");
-  expect(html).toContain("1 more waiting");
+  // The three oldest become toasts, whichever session is open.
+  expect(html).toContain("Run: step 1");
+  expect(html).toContain("Run: step 3");
+  expect(html).not.toContain("Run: step 4");
+  expect(html).toContain("2 more waiting");
   expect(html).toContain("Medium risk");
   expect(html).toContain(">Approve<");
   expect(html).toContain("Open session");
@@ -77,4 +79,24 @@ it("shows pending requests as toasts everywhere except the open session, three a
   expect(
     renderToStaticMarkup(createElement(ApprovalToasts, { ready: true, onOpen: vi.fn() })),
   ).toBe("");
+});
+
+it("makes a Needs approval chip bring up that run's request", () => {
+  const chip = renderToStaticMarkup(
+    createElement(ApprovalStatusBadge, { status: "needs_approval", runId: "r1" }),
+  );
+  expect(chip).toContain("<button");
+  expect(chip).toContain("Needs approval ›");
+  expect(
+    renderToStaticMarkup(createElement(ApprovalStatusBadge, { status: "running", runId: "r1" })),
+  ).not.toContain("<button");
+  const request = approval({
+    runId: "r1" as Id<"agentRuns">,
+    workSessionId: "s1" as Id<"workSessions">,
+  });
+  expect(matchesFocus(request, { runId: "r1" })).toBe(true);
+  expect(matchesFocus(request, { runId: "r2" })).toBe(false);
+  expect(matchesFocus(request, { workSessionId: "s1" })).toBe(true);
+  // Without a mounted toast stack the call is a harmless no-op.
+  expect(() => showApprovals({ runId: "r1" })).not.toThrow();
 });

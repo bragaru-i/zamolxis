@@ -40,8 +40,11 @@ shipped or a tested implementation as proven in production.
   **Toasts (2026-10-07):** every pending request also appears as a toast on whatever
   screen is open (Settings, another chat, Run detail), with the same Approve / Approve
   for run / Reject / Open session actions as the card; the open Session's own cards
-  take over for its requests; at most three toasts, older ones stay on Home; a dismissed
-  toast stays in the inbox. The stack is a manual popover, so it sits above open sheets.
+  also show their requests as toasts (since 2026-10-07, next to its cards); at most three
+  toasts, older ones stay on Home; a dismissed toast stays in the inbox. A "Needs approval ›"
+  chip on a run (Session, Working now, Run detail) brings that request's toast back, first
+  and highlighted (`showApprovals`). The stack is a manual popover, so it sits above open
+  sheets.
   **Approval policy (2026-10-07):** a Builder or Repair profile may say "Allow low risk"
   or "Allow low and medium risk" (Settings → Agents → role → Approvals). The run
   snapshots the policy; `applyApprovalEvent` records a covered command request as

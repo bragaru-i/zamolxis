@@ -17,6 +17,7 @@ import { usePaginatedQuery, useQuery } from "convex/react";
 import { useEffect, useState } from "react";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
+import { ApprovalStatusBadge } from "./approvals";
 import { likelyLongSummary } from "./conversation";
 import { RunFailure } from "./failure";
 import {
@@ -178,7 +179,7 @@ export function RunDetailBody({
     <div className="z-stack">
       <section className="z-stack" aria-label="Summary">
         <div className="z-row">
-          <StatusBadge status={run.status} />
+          <ApprovalStatusBadge status={run.status} runId={run._id} />
           {detail.task && <span className="z-small z-break">{detail.task.title}</span>}
         </div>
         {active && run.activityLabel && <Thinking label={run.activityLabel} />}
