@@ -1,6 +1,7 @@
 import { authTables } from "@convex-dev/auth/server";
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { agentBackup } from "./lib/agentBackup";
 import { approvalPolicy } from "./lib/approvalPolicy";
 import { failureDetail, runFailure } from "./lib/failure";
 import { verification } from "./lib/verification";
@@ -578,6 +579,8 @@ export default defineSchema({
     approvalPolicy: v.optional(approvalPolicy),
     // Verifier role only: absent means a reviewer model runs (lib/verification).
     verification: v.optional(verification),
+    // Backup agents in order, used when the ones before cannot run (lib/agentBackup).
+    backups: v.optional(v.array(agentBackup)),
     revision: v.number(),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -597,6 +600,8 @@ export default defineSchema({
     agentProfileRevision: v.optional(v.number()),
     // SHA-256 of the owner instructions included in this run's prompt, if any.
     instructionsDigest: v.optional(v.string()),
+    // Which agent of the role's chain ran: absent for the profile's own, else backup N.
+    backup: v.optional(v.number()),
     modelRequested: v.optional(v.string()),
     modelActual: v.optional(v.string()),
     reasoningEffort: v.optional(v.string()),

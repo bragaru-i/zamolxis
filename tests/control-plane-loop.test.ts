@@ -194,6 +194,63 @@ it("executes Session→Task→real isolated worktree→Fake Runtime→Convex eve
   expect(git(f.path, ["rev-parse", "HEAD"])).toBe(f.originalHead);
   expect(git(f.path, ["status", "--porcelain"])).toBe(f.originalStatus);
 });
+it("starts the role's backup agent when the computer does not have its own", async () => {
+  const f = await fixture();
+  // The Builder's own agent is Codex, which this computer does not offer; its backup is.
+  await f.user.mutation(api.agentProfiles.upsert, {
+    name: "Builder",
+    role: "builder",
+    runtime: "codex",
+    model: "gpt-x",
+    backups: [{ runtime: "fake", model: "fake-mini" }],
+    enabled: true,
+  });
+  await expect(
+    f.user.mutation(api.agentProfiles.upsert, {
+      name: "Too many",
+      role: "verifier",
+      runtime: "codex",
+      backups: [{ runtime: "fake" }, { runtime: "fake" }, { runtime: "fake" }],
+      enabled: true,
+    }),
+  ).rejects.toThrow("INVALID_ARGUMENT");
+  await expect(
+    f.user.mutation(api.agentProfiles.upsert, {
+      name: "Local backup",
+      role: "repair",
+      runtime: "codex",
+      backups: [{ runtime: "local" }],
+      enabled: true,
+    }),
+  ).rejects.toThrow("INVALID_ARGUMENT");
+  const node = await f.boot();
+  const workspaceId = await f.user.mutation(api.workspaces.request, {
+    taskId: f.taskId,
+    repositoryLocationId: f.repositoryLocationId,
+    baseRef: "main",
+  });
+  await node.driver().tick();
+  const runId = await f.user.mutation(api.runs.request, {
+    taskId: f.taskId,
+    workspaceId,
+    runtime: "fake",
+  });
+  const queued = await f.user.query(api.runs.get, { runId });
+  expect(queued).toMatchObject({ runtime: "fake", modelRequested: "fake-mini", backup: 1 });
+  const start = await f.t.run(async (ctx) =>
+    (await ctx.db.query("commands").collect()).find((command) => command.type === "runtime.start"),
+  );
+  expect(start?.payload).toMatchObject({ runtime: "fake", model: "fake-mini" });
+  await node.driver().tick();
+  await node.driver().tick();
+  expect(f.runtime.starts).toBe(1);
+  expect((await f.user.query(api.runs.get, { runId })).status).toBe("completed");
+  // A runtime outside the chain is still refused.
+  await expect(
+    f.user.mutation(api.runs.request, { taskId: f.taskId, workspaceId, runtime: "claude" }),
+  ).rejects.toThrow();
+});
+
 it("recovers persisted delivery after a lost event acknowledgement and a new Node instance without starting twice", async () => {
   const f = await fixture();
   const first = await f.boot();
@@ -979,7 +1036,8 @@ it("verifies with the repository checks only, without a reviewer model, when the
     override async start(input: StartRunInput) {
       // The Verifier role never reaches a runtime: the Node runs the checks itself.
       if (input.role === "verifier") throw new Error("VERIFIER_RUNTIME_MUST_NOT_START");
-      if (input.role === "builder") writeFileSync(join(input.workspace.cwd, "outcome.txt"), "ALPHA_OK\n");
+      if (input.role === "builder")
+        writeFileSync(join(input.workspace.cwd, "outcome.txt"), "ALPHA_OK\n");
       return super.start(input);
     }
   })((input) => [

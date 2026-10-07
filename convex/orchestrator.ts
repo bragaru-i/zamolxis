@@ -2,7 +2,7 @@ import { type Infer, v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { type MutationCtx, mutation, type QueryCtx, query } from "./_generated/server";
 import { fail, load, requireNode, requireUser } from "./lib/access";
-import { resolveAgentProfile } from "./lib/agentProfiles";
+import { agentChain, firstAvailable, resolveAgentProfile } from "./lib/agentProfiles";
 import { enqueue } from "./lib/commands";
 import type { failureDetail } from "./lib/failure";
 import { explicitlyRequestsWork } from "./lib/orchestration";
@@ -294,8 +294,8 @@ export const submit = mutation({
       status: model ? "thinking" : "answered",
       ...(model
         ? {
-            runtime: model.runtime,
-            ...(model.profile?.model ? { modelRequested: model.profile.model } : {}),
+            runtime: model.choice.runtime,
+            ...(model.choice.model ? { modelRequested: model.choice.model } : {}),
           }
         : { answeredBy: "deterministic" as const }),
       createdAt: now,
@@ -320,10 +320,10 @@ export const submit = mutation({
           context: controlPlaneContext(product?.name, reply, links),
           conversation: history,
           orchestrator: {
-            runtime: model.runtime,
-            ...(model.profile?.model ? { model: model.profile.model } : {}),
-            ...(model.profile?.reasoningEffort
-              ? { reasoningEffort: model.profile.reasoningEffort }
+            runtime: model.choice.runtime,
+            ...(model.choice.model ? { model: model.choice.model } : {}),
+            ...(model.choice.reasoningEffort
+              ? { reasoningEffort: model.choice.reasoningEffort }
               : {}),
             ...(model.profile?.instructions ? { instructions: model.profile.instructions } : {}),
           },
@@ -529,29 +529,25 @@ async function workLinks(
   return [...links, ...prs, ...tasks, ...runs].slice(0, MAX_LINKS);
 }
 
-// The Orchestrator model runs on one of the owner's online Nodes that has the runtime of the
-// effective Orchestrator profile. Without one the deterministic answer stands.
+// The Orchestrator model runs on one of the owner's online Nodes: the first agent of the
+// Orchestrator's chain (its own, then its backups) that such a Node has. Without one the
+// deterministic answer stands.
 async function orchestratorTarget(
   ctx: MutationCtx,
   ownerId: Id<"users">,
   productId: Id<"products"> | undefined,
 ) {
   const effective = await resolveAgentProfile(ctx, ownerId, productId, "orchestrator");
-  const devices = await ctx.db
-    .query("workstations")
-    .withIndex("by_owner_status", (q) => q.eq("ownerId", ownerId).eq("status", "online"))
-    .take(10);
-  for (const device of devices) {
-    if ((device.lastHeartbeatAt ?? 0) <= Date.now() - HEARTBEAT_FRESH_MS) continue;
-    const runtime = await ctx.db
-      .query("runtimeInstallations")
-      .withIndex("by_workstation_runtime", (q) =>
-        q.eq("workstationId", device._id).eq("runtime", effective.runtime),
-      )
-      .unique();
-    if (runtime?.status === "available")
-      return { workstationId: device._id, runtime: effective.runtime, profile: effective.profile };
-  }
+  const devices = (
+    await ctx.db
+      .query("workstations")
+      .withIndex("by_owner_status", (q) => q.eq("ownerId", ownerId).eq("status", "online"))
+      .take(10)
+  ).filter((device) => (device.lastHeartbeatAt ?? 0) > Date.now() - HEARTBEAT_FRESH_MS);
+  for (const choice of agentChain(effective.profile, effective.runtime))
+    for (const device of devices)
+      if (await firstAvailable(ctx, device._id, [choice]))
+        return { workstationId: device._id, choice, profile: effective.profile };
   return undefined;
 }
 

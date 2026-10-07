@@ -105,6 +105,7 @@ export const get = query({
         resultSummary: run.resultSummary,
         exitReason: run.exitReason,
         failure: run.failure,
+        backup: run.backup,
         startedAt: run.startedAt,
         completedAt: run.completedAt,
         lastActivityAt: run.lastActivityAt,

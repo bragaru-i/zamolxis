@@ -791,6 +791,7 @@ function build(name: string) {
           model: "gpt-5.1-codex",
           reasoningEffort: "medium",
           enabled: true,
+          backups: [{ runtime: "claude", model: "claude-sonnet-5-5" }],
           updatedAt: now - 3 * HOUR,
         },
         {

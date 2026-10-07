@@ -4,6 +4,8 @@ import type { Id } from "./_generated/dataModel";
 import { internalMutation, type MutationCtx, mutation, query } from "./_generated/server";
 import { bounded, fail, load, ownRun, ownSession, requireUser } from "./lib/access";
 import {
+  type AgentChoice,
+  agentChain,
   ownerInstructionsSection,
   resolveAgentProfile,
   runtimeAllowedFor,
@@ -25,6 +27,8 @@ export async function queueRun(
     workspaceId: Id<"workspaces">;
     runtime?: string;
     role?: "builder" | "verifier" | "repair";
+    /** Which agent of the role's chain to start (dispatch picks one the computer has). */
+    choice?: AgentChoice;
   },
 ) {
   const task = await load(ctx, "tasks", input.taskId);
@@ -49,14 +53,29 @@ export async function queueRun(
       fail("COMMAND_CONFLICT");
     return run._id;
   }
-  const { profile, runtime } = await resolveAgentProfile(
+  const resolved = await resolveAgentProfile(
     ctx,
     session.ownerId,
     session.productId,
     role,
     input.runtime,
   );
-  if (input.runtime && input.runtime !== runtime) fail("AGENT_PROFILE_RUNTIME_MISMATCH");
+  const { profile } = resolved;
+  // Only an agent of the profile's own chain can be started: the profile's own or a backup
+  // (a requested runtime picks the first agent of the chain on it).
+  const chain = agentChain(profile, resolved.runtime);
+  const agent = input.choice
+    ? chain.find(
+        (item) =>
+          item.runtime === input.choice?.runtime &&
+          item.model === input.choice.model &&
+          item.backup === input.choice.backup,
+      )
+    : input.runtime
+      ? chain.find((item) => item.runtime === input.runtime)
+      : chain[0];
+  if (!agent) fail("AGENT_PROFILE_RUNTIME_MISMATCH");
+  const runtime = agent.runtime;
   if (!runtimeAllowedFor(role, runtime)) fail("RUNTIME_UNAVAILABLE");
   assertCanQueueRun(
     role === "verifier" && task.status === "waiting" ? "ready" : task.status,
@@ -127,11 +146,12 @@ export async function queueRun(
           agentProfileId: profile._id,
           agentProfileRevision: profile.revision,
           ...(profile.instructionsDigest ? { instructionsDigest: profile.instructionsDigest } : {}),
-          ...(profile.model ? { modelRequested: profile.model } : {}),
-          ...(profile.reasoningEffort ? { reasoningEffort: profile.reasoningEffort } : {}),
           ...(profile.approvalPolicy ? { approvalPolicy: profile.approvalPolicy } : {}),
         }
       : {}),
+    ...(agent.model ? { modelRequested: agent.model } : {}),
+    ...(agent.reasoningEffort ? { reasoningEffort: agent.reasoningEffort } : {}),
+    ...(agent.backup ? { backup: agent.backup } : {}),
     ...(checksOnly ? { checksOnly: true } : {}),
     ...(installation.version ? { runtimeVersion: installation.version } : {}),
     status: "queued",
@@ -167,8 +187,8 @@ export async function queueRun(
       workspaceId: workspace._id,
       runtime,
       role,
-      ...(profile?.model ? { model: profile.model } : {}),
-      ...(profile?.reasoningEffort ? { reasoningEffort: profile.reasoningEffort } : {}),
+      ...(agent.model ? { model: agent.model } : {}),
+      ...(agent.reasoningEffort ? { reasoningEffort: agent.reasoningEffort } : {}),
       instruction:
         (role === "verifier"
           ? `Independently review exact SHA ${workspace.baseSha}. Do not modify files or Git state. Acceptance: ${task.description}. Provide a concise review; deterministic Node checks establish trust.\n${PROOF_INSTRUCTION}`
