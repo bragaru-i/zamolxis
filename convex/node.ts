@@ -28,6 +28,9 @@ export const heartbeat = mutation({
   args: {
     ...deviceArgs,
     instanceId: v.string(),
+    // The commit the Node runs from ("<sha>" or "<sha>+dirty"), so Settings → Computers can
+    // show whether a computer was restarted on the current main.
+    nodeVersion: v.optional(v.string()),
     // Node.js `process.platform` / `process.arch`, so the app can say which kind of computer.
     platform: v.optional(v.string()),
     architecture: v.optional(v.string()),
@@ -48,10 +51,13 @@ export const heartbeat = mutation({
       if ((advertised.models?.length ?? 0) > RUNTIME_MODEL_LIMITS.models) fail("INVALID_ARGUMENT");
     if ((args.platform?.length ?? 0) > 32 || (args.architecture?.length ?? 0) > 32)
       fail("INVALID_ARGUMENT");
+    if (args.nodeVersion !== undefined && !/^[\x21-\x7e]{1,64}$/.test(args.nodeVersion))
+      fail("INVALID_ARGUMENT");
     await ctx.db.patch("workstations", args.workstationId, {
       nodeInstanceId: args.instanceId,
       status: "online",
       lastHeartbeatAt: Date.now(),
+      ...(args.nodeVersion ? { nodeVersion: args.nodeVersion } : {}),
       ...(args.platform ? { platform: args.platform } : {}),
       ...(args.architecture ? { architecture: args.architecture } : {}),
     });
