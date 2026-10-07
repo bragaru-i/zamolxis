@@ -57,6 +57,18 @@ shipped or a tested implementation as proven in production.
   request escalation (the Supervisor's requests are always refused, so retries only cost
   tokens). Verified with `codex sandbox` and the real-Codex acceptance; not yet measured
   on a real owner task (prompt count and tokens before/after).
+  **Worktree preparation (2026-10-07):** the 10 approval requests the Node recorded for
+  the 2.1M-token logo task were all high risk and none was about TMPDIR: `pnpm install`,
+  `pnpm check` and local preview servers/browsers. In the offline sandbox every `pnpm`
+  command failed: the global pnpm 11 switches to the repository's pinned 10.17.1 and
+  verifies its signature against the registry. Before an agent starts, the Node now keeps
+  each pinned pnpm under `<state>/tools/pnpm@<version>` (installed once with npm), puts it
+  first on the agent's PATH, and installs Builder/Repair dependencies from the lockfile
+  (`WorkspaceToolchain`). Verified for real: preparation of a fresh worktree took 3 s and
+  `pnpm --version`, typecheck, vitest and lint then pass in the offline sandbox. Still
+  asking (by design, high risk): starting a local server or browser, because the sandbox
+  blocks listening on localhost (EPERM). Codex runtime only; the Claude runtime does not
+  receive the prepared PATH yet.
 - **Activity summaries:** the Codex adapter reports the real command line (wrapper
   removed, exit code or failure reason on completion), MCP `server/tool`, web
   searches and sub-agent labels; agent text, tool output and reasoning are never
