@@ -214,7 +214,22 @@ against a written contract. When lanes are integrated:
   "runs text intent" real-Codex acceptance times out at 240 s. `codex exec` still
   answers read-only prompts and the Supervisor/Orchestrator/models acceptances pass.
   Run the Builder acceptance on macOS (or relax the sysctl as root) before merging
-  runtime changes.
+  runtime changes. The same setting breaks Claude Code's sandbox (`bwrap: loopback:
+  Failed RTM_NEWADDR: Operation not permitted`): the CLI then runs every command
+  unsandboxed, each one becomes a high-risk approval ("Outside the sandbox"), and each
+  approval costs a model round trip (2026-10-07: 21 approvals and 26 model calls for a
+  two-file change). Fix as root, once: `sudo sysctl -w
+  kernel.apparmor_restrict_unprivileged_userns=0` and the same line in
+  `/etc/sysctl.d/60-zamolxis-userns.conf`; then `bwrap --ro-bind / / --unshare-all
+  --dev /dev true` must exit 0. Restart the Node afterwards.
+- **Unpublished candidate (2026-10-07):** a Builder's candidate commit never reached
+  GitHub because the Verifier's fresh worktree had no `node_modules`, so `pnpm run
+  typecheck` and `pnpm run test` failed, the Repair run changed nothing and the task
+  stopped in "needs input". Find such work with `git worktree list` under
+  `~/.config/zamolxis/worktrees/workspaces/` and `git rev-list --count origin/main..HEAD`
+  per worktree; the Node's `node-state.sqlite` (`event_outbox`, `command_executions`)
+  holds the run summaries and check output. Recover by cherry-picking the candidate onto
+  `origin/main` in a worktree, running `pnpm check`, and publishing as `bragaru-i`.
 - GitHub CI sometimes leaves a job queued without a runner until it is cancelled
   after 15 minutes; re-run it before treating it as a failure.
 - "Open pull request" never uses the Mac's active `gh` account or global Git

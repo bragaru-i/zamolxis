@@ -387,6 +387,14 @@ module aliases exist only when the variable is set.
    days, 1–30 per owner; planning worktrees after 1 day; unpublished trusted work is
    kept indefinitely), prunes Git metadata and deletes only `zam/...` branches at the
    expected SHA; Settings → Storage shows counts and "Clean up now".
+   Gap (2026-10-07): the Verifier runs the repository's `typecheck`/`lint`/`test`
+   scripts in a fresh worktree that has no installed dependencies, and the Verifier
+   agent is not allowed to install them. In this pnpm repository every scripted check
+   therefore fails on the first verification, a Repair run finds nothing to change,
+   and the task stops in "needs input" with "Repair produced no new candidate SHA";
+   the candidate commit stays local (see the runbook, "Unpublished candidate"). The
+   Node has to prepare dependencies for verifier worktrees before trust can be
+   automatic here.
 8. **Validation.** Done: a Mac reboot on 2026-10-06 — the launchd Node started at
    login, read its credential from the login Keychain and resumed heartbeats with no
    errors once the network was up (a few `HEARTBEAT_FAILED`/`NODE_CONTROL_FAILED` lines
@@ -405,12 +413,15 @@ module aliases exist only when the variable is set.
 
 1. Make the configured repository publishing identity pass the production push and
    open one real PR entirely through Zamolxis.
-2. Reconcile or close the remaining Alpha tracking issues against shipped behavior.
+2. Install dependencies in verifier worktrees (lockfile-only, offline when possible)
+   before the deterministic checks, so a verification does not fail for the lack of
+   `node_modules`.
+3. Reconcile or close the remaining Alpha tracking issues against shipped behavior.
    For #114, re-run a logo-redesign-sized task and compare the Builder's processed
    tokens and calls (now visible in Run detail) with the 2.6M / 41 baseline.
-3. Owner-deferred validation: real iPhone/PWA/offline behavior, a second Google
+4. Owner-deferred validation: real iPhone/PWA/offline behavior, a second Google
    account and a second workstation.
-4. External ticket links (GitHub/Linear) need a connector first and are not part of
+5. External ticket links (GitHub/Linear) need a connector first and are not part of
    the implemented Alpha candidate.
 
 ## Operations on the owner's Mac
