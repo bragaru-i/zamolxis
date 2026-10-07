@@ -55,9 +55,64 @@ async function publishable(ctx: QueryCtx, task: Doc<"tasks">): Promise<Publishab
   return { workspace, decision, ...(base && BASE.test(base) ? { base } : {}) };
 }
 
+const CHECK_NAMES: Record<string, string> = {
+  static: "Code hygiene",
+  test: "Tests",
+  behavioral: "Behaviour",
+};
+// Commit ids are shown short: the Node's secret filter hides any 32+ hex run (a full SHA).
+const shortSha = (sha: string) => sha.slice(0, 12);
+const oneLine = (text: string, limit: number) => text.replace(/\s+/g, " ").trim().slice(0, limit);
+
+/**
+ * A pull request description for a reviewer: what the agents changed (in their own words),
+ * the owner's request folded away, the checks in plain words, and the trusted commit.
+ */
+export function pullRequestText(input: {
+  readonly request: string;
+  readonly builder?: string;
+  readonly repairs: readonly string[];
+  readonly evidence: readonly { modality: string; result: string; summary: string }[];
+  readonly sha: string;
+  readonly reasons: readonly string[];
+}): string {
+  const summary = input.builder?.trim();
+  return [
+    "## Summary",
+    summary ? summary.slice(0, 3000) : oneLine(input.request, 600),
+    ...input.repairs
+      .filter((text) => text.trim())
+      .slice(-2)
+      .flatMap((text) => ["", `**Fixed after a failed check:** ${text.trim().slice(0, 1500)}`]),
+    "",
+    "## Checks",
+    ...(input.evidence.length
+      ? input.evidence.map(
+          (item) =>
+            `- ${item.result === "passed" ? "✅" : "❌"} ${CHECK_NAMES[item.modality] ?? item.modality}: ${oneLine(item.summary, 200)}`,
+        )
+      : ["- No checks were recorded."]),
+    "",
+    "<details><summary>What was requested</summary>",
+    "",
+    input.request.slice(0, 4000),
+    "",
+    "</details>",
+    "",
+    `Checked independently at \`${shortSha(input.sha)}\`${
+      input.reasons.length
+        ? ` (${input.reasons
+            .slice(0, 3)
+            .map((reason) => oneLine(reason, 120))
+            .join("; ")})`
+        : ""
+    }. ${FOOTER}`,
+  ].join("\n");
+}
+
 async function pullRequestBody(ctx: QueryCtx, task: Doc<"tasks">, decision: Doc<"trustDecisions">) {
   // Earlier verification failures appended for repair are history, not the change.
-  const description = task.description.split("\n\nVerification failure:")[0]?.trim() ?? "";
+  const request = task.description.split("\n\nVerification failure:")[0]?.trim() ?? "";
   const verificationRunId = task.verificationRunId;
   const evidence = verificationRunId
     ? await ctx.db
@@ -65,24 +120,27 @@ async function pullRequestBody(ctx: QueryCtx, task: Doc<"tasks">, decision: Doc<
         .withIndex("by_verification", (q) => q.eq("verificationRunId", verificationRunId))
         .take(16)
     : [];
-  const lines = [
-    description.slice(0, 4000),
-    "",
-    "### Verification",
-    ...(evidence.length
-      ? evidence.map(
-          (item) =>
-            `- ${item.modality}: ${item.result} — ${item.summary.replace(/\s+/g, " ").slice(0, 300)}`,
-        )
-      : ["- No evidence recorded."]),
-    "",
-    "### Trust decision",
-    `Trusted: commit \`${decision.subjectSha}\` passed independent verification.`,
-    ...decision.reasons.slice(0, 8).map((reason) => `- ${reason.slice(0, 300)}`),
-    "",
-    FOOTER,
-  ];
-  return lines.join("\n");
+  // The agents' own final words: the Builder's, then any Repair that followed it.
+  const runs = (
+    await ctx.db
+      .query("agentRuns")
+      .withIndex("by_task", (q) => q.eq("taskId", task._id))
+      .take(50)
+  )
+    .filter((run) => run.status === "completed" && run.resultSummary?.trim())
+    .sort((a, b) => (a.completedAt ?? 0) - (b.completedAt ?? 0));
+  const builder = runs.filter((run) => (run.role ?? "builder") === "builder").at(-1);
+  const repairs = runs
+    .filter((run) => run.role === "repair" && (run.completedAt ?? 0) >= (builder?.completedAt ?? 0))
+    .map((run) => run.resultSummary ?? "");
+  return pullRequestText({
+    request,
+    ...(builder?.resultSummary ? { builder: builder.resultSummary } : {}),
+    repairs,
+    evidence,
+    sha: decision.subjectSha,
+    reasons: decision.reasons,
+  });
 }
 
 export const publication = query({
