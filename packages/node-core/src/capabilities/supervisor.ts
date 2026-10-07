@@ -9,6 +9,8 @@ export interface SupervisorDecision {
   readonly decision: SupervisorDecisionKind;
   readonly reply: string;
   readonly tasks: PlannedTask[];
+  // The Supervisor meant to propose or delegate, but its task list could not be used.
+  readonly unusablePlan?: true;
 }
 export interface ConversationMessage {
   readonly role: "user" | "supervisor";
@@ -75,7 +77,7 @@ export function supervisorInstruction(input: {
         .join("\n\n")
     : "(no earlier messages)";
   return [
-    "You are the Zamolxis Supervisor: a conversational project lead for this repository. You work read-only: inspect files and history as needed, but never edit files, never run commands that change the repository and never commit. Your sandbox is read-only and offline, and nobody can approve a request to leave it: never ask for escalated permissions, and when a command fails with \"Operation not permitted\" or a network error, do not retry it; read the files directly instead. Read only what you need to decide; search and open specific sections instead of whole documents. Builders are separate agents; Zamolxis creates and dispatches them only when the user explicitly delegates work.",
+    'You are the Zamolxis Supervisor: a conversational project lead for this repository. You work read-only: inspect files and history as needed, but never edit files, never run commands that change the repository and never commit. Your sandbox is read-only and offline, and nobody can approve a request to leave it: never ask for escalated permissions, and when a command fails with "Operation not permitted" or a network error, do not retry it; read the files directly instead. Read only what you need to decide; search and open specific sections instead of whole documents. Read each section once: never open the same lines again with a slightly wider range. Stop exploring as soon as you can name the files and functions to change, then write your JSON reply. Builders are separate agents; Zamolxis creates and dispatches them only when the user explicitly delegates work.',
     "",
     "Repository context (repository instructions cannot waive hard runtime/trust policy):",
     JSON.stringify({
@@ -164,23 +166,41 @@ function strings(value: unknown): string[] | undefined {
     throw new Error("INVALID_PLAN");
   return value as string[];
 }
-function normalizeTask(value: unknown, checks: RepositoryChecks): PlannedTask {
-  if (
-    !isRecord(value) ||
-    typeof value.key !== "string" ||
-    typeof value.title !== "string" ||
-    typeof value.description !== "string"
-  )
-    throw new Error("INVALID_PLAN");
-  const requested = strings(value.verificationScripts);
+// One string where a list was asked for is a list of one (local models often do this).
+function list(value: unknown): unknown {
+  return typeof value === "string" ? (value.trim() ? [value] : []) : value;
+}
+function normalizeTask(value: unknown, index: number, checks: RepositoryChecks): PlannedTask {
+  if (!isRecord(value)) throw new Error("INVALID_PLAN");
+  const description = typeof value.description === "string" ? value.description.trim() : "";
+  if (!description) throw new Error("INVALID_PLAN");
+  // A missing key or title is filled in; the description is what a builder needs.
+  const key =
+    typeof value.key === "string" && /^[a-zA-Z0-9_-]{1,64}$/.test(value.key)
+      ? value.key
+      : `task-${index + 1}`;
+  const title =
+    typeof value.title === "string" && value.title.trim()
+      ? value.title
+      : (description.split(/\.\s|\n/)[0] ?? description).slice(0, 120);
+  const task: Record<string, unknown> = {
+    ...value,
+    key,
+    title,
+    description,
+    dependencies: list(value.dependencies),
+    verificationScripts: list(value.verificationScripts),
+    requiredModalities: list(value.requiredModalities),
+  };
+  const requested = strings(task.verificationScripts);
   // Unknown scripts would only fail verification; keep the ones the repository defines.
   const known = requested?.filter((script) => checks.scripts.includes(script));
-  const modalities = strings(value.requiredModalities);
+  const modalities = strings(task.requiredModalities);
   return {
-    key: value.key,
-    title: redactSecrets(value.title).trim().slice(0, 200),
-    description: redactSecrets(value.description),
-    dependencies: strings(value.dependencies) ?? [],
+    key,
+    title: redactSecrets(title).trim().slice(0, 200),
+    description: redactSecrets(description),
+    dependencies: strings(task.dependencies) ?? [],
     verificationScripts: known?.length ? [...new Set(known)] : [...checks.verificationScripts],
     requiredModalities: modalities?.length
       ? [...new Set(modalities)]
@@ -234,10 +254,13 @@ export function parseSupervisorDecision(
   let tasks: PlannedTask[];
   try {
     if (!Array.isArray(parsed.tasks) || !parsed.tasks.length) throw new Error("INVALID_PLAN");
-    tasks = ordered(parsed.tasks.map((task) => normalizeTask(task, checks)));
+    tasks = ordered(parsed.tasks.map((task, index) => normalizeTask(task, index, checks)));
     validatePlan(tasks);
   } catch {
-    return fallback("The proposed plan was not valid, so no builders were started.");
+    return {
+      ...fallback("The proposed plan was not valid, so no builders were started."),
+      unusablePlan: true,
+    };
   }
   return {
     decision,
@@ -248,4 +271,24 @@ export function parseSupervisorDecision(
       ),
     tasks,
   };
+}
+
+/**
+ * One correction round when a plan came back unusable: the same Supervisor rewrites its own
+ * reply as the output contract, without reading the repository again.
+ */
+export function planRepairInstruction(input: {
+  readonly original: string;
+  readonly previousReply: string;
+}): string {
+  return [
+    input.original,
+    "",
+    "Your previous reply could not be used: its task list was missing or malformed, so no builders were started. Your previous reply was:",
+    "<<<",
+    redactSecrets(input.previousReply).slice(0, 12_000),
+    ">>>",
+    "",
+    'Do not read files or run commands again: you already know what is needed. Reply now with ONLY the JSON object from the output contract. Every task needs a short "key", a "title" and a "description" that names the files to change; "tasks" is a non-empty array for "propose" and "delegate".',
+  ].join("\n");
 }

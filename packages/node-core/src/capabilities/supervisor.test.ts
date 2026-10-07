@@ -102,6 +102,30 @@ describe("parseSupervisorDecision", () => {
       parseSupervisorDecision(JSON.stringify({ decision: "plan", tasks: [task("a")] }), checks),
     ).toMatchObject({ decision: "propose", tasks: [{ key: "a" }] });
   });
+  it("fills in what a local model often gets wrong, and marks a plan it cannot use", () => {
+    const fixed = parseSupervisorDecision(
+      JSON.stringify({
+        decision: "delegate",
+        reply: "Doing it.",
+        tasks: [
+          { key: "bad key", description: "Change apps/web/x.tsx. Then test.", dependencies: "" },
+          { description: "Update y.ts", verificationScripts: "test" },
+        ],
+      }),
+      checks,
+    );
+    expect(fixed.decision).toBe("delegate");
+    expect(fixed.tasks.map((item) => [item.key, item.title])).toEqual([
+      ["task-1", "Change apps/web/x.tsx"],
+      ["task-2", "Update y.ts"],
+    ]);
+    expect(fixed.unusablePlan).toBeUndefined();
+    const broken = parseSupervisorDecision(
+      JSON.stringify({ decision: "delegate", reply: "Doing it.", tasks: [] }),
+      checks,
+    );
+    expect(broken).toMatchObject({ decision: "answer", unusablePlan: true, tasks: [] });
+  });
   it("never plans from invalid output", () => {
     expect(parseSupervisorDecision("Plain prose answer.", checks)).toEqual({
       decision: "answer",
@@ -114,7 +138,6 @@ describe("parseSupervisorDecision", () => {
       [],
       [task("a", ["a"])],
       [task("a", ["b"]), task("b", ["a"])],
-      [task("bad key")],
       [{ ...task("a"), dependencies: "b" }],
       [{ ...task("a"), requiredModalities: ["visual"] }],
       "not tasks",

@@ -238,6 +238,55 @@ describe("repository.plan through a Supervisor run", { timeout: 30_000 }, () => 
     expect(git(f.repo.path, ["status", "--porcelain"])).toBe("");
   });
 
+  it("gives an unusable plan one correction round, without the repository again", async () => {
+    let call = 0;
+    const f = fixture(() =>
+      ++call === 1
+        ? json({ decision: "delegate", reply: "Would you like a plan?", tasks: [] })
+        : json({
+            decision: "delegate",
+            reply: "One task.",
+            tasks: [{ title: "Palette", description: "Add apps/web/app/palette.tsx." }],
+          }),
+    );
+    const { textCommandId } = await f.plan("Open this work: add a command palette");
+    expect(f.runtime.started.map((run) => run.runId)).toEqual([
+      `supervisor:${textCommandId}`,
+      `supervisor:${textCommandId}:repair`,
+    ]);
+    expect(f.runtime.started[1]?.instruction).toContain("Would you like a plan?");
+    expect(f.runtime.started[1]?.instruction).toContain("Do not read files");
+    expect(f.deliveries[0]).toMatchObject({
+      kind: "repository.plan",
+      decision: "delegate",
+      tasks: [{ key: "task-1", title: "Palette" }],
+      // Both runs are counted.
+      usage: { inputTokens: 20, outputTokens: 10, totalTokens: 30 },
+    });
+    expect(f.store.getWorkspaceLease("plan")).toBeUndefined();
+  });
+
+  it("starts a proposal when the owner opened the work", async () => {
+    const f = fixture(() =>
+      json({
+        decision: "propose",
+        reply: "Here is a plan.",
+        tasks: [{ key: "a", title: "Palette", description: "Add apps/web/app/palette.tsx." }],
+      }),
+    );
+    await f.plan("Open this work: add a command palette");
+    expect(f.deliveries[0]).toMatchObject({ decision: "delegate", tasks: [{ key: "a" }] });
+    const g = fixture(() =>
+      json({
+        decision: "propose",
+        reply: "Here is a plan.",
+        tasks: [{ key: "a", title: "Palette", description: "Add apps/web/app/palette.tsx." }],
+      }),
+    );
+    await g.plan("How would you add a command palette?");
+    expect(g.deliveries[0]).toMatchObject({ decision: "propose" });
+  });
+
   it("delivers a validated plan with repository default checks", async () => {
     const f = fixture(() =>
       answer(
