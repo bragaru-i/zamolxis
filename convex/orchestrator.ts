@@ -276,7 +276,9 @@ export const submit = mutation({
     } else {
       const summary = await statusAnswer(ctx, owner._id, product?._id, text);
       reply = summary.reply;
-      links = summary.links;
+      // The Sessions are shown as buttons only for a question about work; otherwise they
+      // are only context for the model (a request to change something is not about them).
+      links = asksAboutWork(text) ? summary.links : [];
       model = await orchestratorTarget(ctx, owner._id, product?._id);
     }
     const history = model ? await conversationHistory(ctx, conversation._id) : [];
@@ -450,6 +452,13 @@ async function statusAnswer(
     reply: [`${headline}.`, "", ...lines].join("\n"),
     links: await workLinks(ctx, owned, approvals),
   };
+}
+
+/** "What's going on?", "status", "how is the checkout fix?": a question about work. */
+export function asksAboutWork(text: string): boolean {
+  return /\b(?:status|progress|going on|happening|running|working on|update|sessions?|approvals?|pull requests?|prs?|done yet|finished|stuck|waiting|how is|how's|needs? me|attention|what's new)\b/i.test(
+    text,
+  );
 }
 
 // Typed navigation for a status answer, most actionable first: Sessions, pending
