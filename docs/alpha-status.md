@@ -439,6 +439,18 @@ module aliases exist only when the variable is set.
    control plane supports multiple workstation records, but production currently
    demonstrates only one real Mac.
 
+- **Failure details (2026-10-07):** every Supervisor, Orchestrator and agent-run failure now
+  says who failed, on which runtime and model, when and why (the provider's redacted
+  reason): Codex reports `turn.error`, the Node sends a `failure` with `command.failed`,
+  Convex stores it on the command, the Home chat message and the run (`agentRuns.failure`),
+  and the web shows it under the reply, the run row and Run detail; `pnpm zamolxis watch`
+  prints it too. Failures from before this change show only their code.
+- **Claude Builders still ask often (2026-10-07, open):** the owner's Builders run on the
+  Claude runtime. Claude Code asks for every Bash command it cannot analyse in advance
+  ("Part of this command (a variable) cannot be checked in advance") even in its sandbox,
+  and for localhost/browser work; the TMPDIR and pinned-pnpm fixes are Codex-only. The
+  Claude adapter also reports tokens only when a turn ends, so live token counts stay 0.
+
 ## Next steps, in order
 
 1. For #114, re-run a logo-redesign-sized task and compare the Builder's processed
