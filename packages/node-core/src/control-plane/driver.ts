@@ -26,6 +26,7 @@ import {
   type ConversationMessage,
   explicitPlan,
   parseSupervisorDecision,
+  planRepairInstruction,
   REPLY_LIMIT,
   repositoryChecks,
   type SupervisorDecision,
@@ -186,8 +187,19 @@ function boundedSummary(value: unknown): string | undefined {
   const text = value.trim().slice(0, REPLY_LIMIT);
   return text || undefined;
 }
-export function supervisorRunId(textCommandId: string): string {
-  return `supervisor:${textCommandId}`;
+export function supervisorRunId(textCommandId: string, attempt?: "repair"): string {
+  return `supervisor:${textCommandId}${attempt ? `:${attempt}` : ""}`;
+}
+// The message Home chat sends when the owner opens a proposal.
+const OPENS_WORK = /^\s*open this work:/i;
+// Counters of two Supervisor runs for one message, added together.
+function addUsage(a: SupervisorUsage, b: SupervisorUsage): SupervisorUsage {
+  const sum: SupervisorUsage = { ...a, ...(b.modelActual ? { modelActual: b.modelActual } : {}) };
+  for (const counter of USAGE_COUNTERS) {
+    const value = (a[counter] ?? 0) + (b[counter] ?? 0);
+    if (a[counter] !== undefined || b[counter] !== undefined) sum[counter] = value;
+  }
+  return sum;
 }
 export function orchestratorRunId(orchestratorMessageId: string): string {
   return `orchestrator:${orchestratorMessageId}`;
@@ -677,21 +689,35 @@ export class ControlPlaneDriver {
           );
           log.discovery(discoveryStep(command.commandId, discoveredAt, context));
           try {
-            const outcome = await this.#supervise(
-              command.payload,
-              supervisorInstruction({
-                text: command.payload.text,
-                conversation: command.payload.conversation ?? [],
-                context,
-                checks,
-                ...(command.payload.supervisor?.instructions
-                  ? { instructions: command.payload.supervisor.instructions }
-                  : {}),
-              }),
-              log,
-            );
+            const instruction = supervisorInstruction({
+              text: command.payload.text,
+              conversation: command.payload.conversation ?? [],
+              context,
+              checks,
+              ...(command.payload.supervisor?.instructions
+                ? { instructions: command.payload.supervisor.instructions }
+                : {}),
+            });
+            const outcome = await this.#supervise(command.payload, instruction, log);
             usage = outcome.usage;
             result = parseSupervisorDecision(outcome.summary, checks);
+            // A plan whose task list is unusable gets one correction round: the same
+            // Supervisor rewrites its reply as the contract, without reading files again.
+            if (result.unusablePlan && outcome.summary) {
+              const repaired = await this.#supervise(
+                command.payload,
+                planRepairInstruction({ original: instruction, previousReply: outcome.summary }),
+                log,
+                "repair",
+              );
+              usage = addUsage(usage, repaired.usage);
+              const second = parseSupervisorDecision(repaired.summary, checks);
+              if (!second.unusablePlan) result = second;
+            }
+            // "Open this work" is the owner's explicit go: a proposal for it starts the work
+            // instead of asking again (local models often propose anyway).
+            if (result.decision === "propose" && OPENS_WORK.test(command.payload.text))
+              result = { ...result, decision: "delegate" };
             log.decided(result);
           } catch (error) {
             log.failed(error);
@@ -1199,8 +1225,9 @@ export class ControlPlaneDriver {
     payload: { textCommandId: string; workspaceId: string; supervisor?: SupervisorSelection },
     instruction: string,
     log: SupervisorLog,
+    attempt?: "repair",
   ): Promise<{ summary?: string; usage: SupervisorUsage }> {
-    const runId = supervisorRunId(payload.textCommandId) as AgentRunId;
+    const runId = supervisorRunId(payload.textCommandId, attempt) as AgentRunId;
     const workspaceId = payload.workspaceId as WorkspaceId;
     const runtimeId = this.#supervisorRuntime(payload.supervisor?.runtime);
     const runtime = this.runtimes.get(runtimeId);
@@ -1612,11 +1639,17 @@ export class ControlPlaneDriver {
       // must be bound to the repository context current when it is accepted.
       const payload = command.payload as Record<string, unknown>;
       if (typeof payload.textCommandId === "string" && typeof payload.workspaceId === "string") {
-        const runId = supervisorRunId(payload.textCommandId);
-        this.#releaseLease(payload.workspaceId, runId);
-        const session = this.store.getRuntimeSession(runId);
-        if (session && !TERMINAL.includes(session.status))
-          this.store.upsertRuntimeSession({ ...session, status: "failed" });
+        for (const runId of [
+          supervisorRunId(payload.textCommandId),
+          supervisorRunId(payload.textCommandId, "repair"),
+        ]) {
+          const session = this.store.getRuntimeSession(runId);
+          // The correction round exists only when the first plan was unusable.
+          if (!session && runId.endsWith(":repair")) continue;
+          this.#releaseLease(payload.workspaceId, runId);
+          if (session && !TERMINAL.includes(session.status))
+            this.store.upsertRuntimeSession({ ...session, status: "failed" });
+        }
       }
       this.store.completeCommandWithEvents(command.commandId, [
         {
