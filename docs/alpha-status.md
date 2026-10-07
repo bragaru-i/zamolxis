@@ -1,11 +1,10 @@
 # Alpha status and handoff
 
-Status as of 2026-10-06, main through #112 (plus #105 and #110). The engineering Alpha is built and
-deployed as a **private Alpha candidate**: the core Supervisor -> Builder ->
-Verifier -> trust -> integration loop and its web/mobile control plane are shipped.
-Alpha completion still requires the operational proof listed below. The owner has
-explicitly deferred real-iPhone, second-Google-account and multiple-workstation
-validation. This file is the handoff for any agent picking up the work; update it
+Status as of 2026-10-07, main through #129. The **private Alpha** is complete: the core
+Supervisor -> Builder -> Verifier -> trust -> integration loop and its web/mobile control
+plane are shipped and deployed, and the release gate (#107) passed with PR #123, opened
+in production through Zamolxis. The owner deferred real-iPhone, second-Google-account and
+second-workstation validation past Alpha (#130). This file is the handoff for any agent picking up the work; update it
 when a gap closes or a new one is found. Never describe a planned capability as
 shipped or a tested implementation as proven in production.
 
@@ -228,11 +227,12 @@ shipped or a tested implementation as proven in production.
   only at push time (`PUBLISH_PUSH_FAILED`); repository hooks see the git environment
   during the push; non-GitHub remotes still push with their own Git credentials; the
   gh-account status check runs `gh auth token` about once a minute per repository.
-  The automated local end-to-end path passes, but opening a PR through the deployed
-  production path has not yet succeeded; recent attempts ended in
-  `PUBLISH_PUSH_FAILED`, so production publishing remains unproven. #105 (merged) treats a
-  retry whose branch is already at the exact trusted SHA as published and recovers its PR
-  even when closed or merged; a successful production PR after it is still the proof.
+  Proven in production on 2026-10-06: PR #123 was opened by the owner's "Open pull
+  request" from the never-published branch
+  `zamolxis/rework-the-shared-composer-into-a-chatgp-48af9ca` at the trusted SHA `48af9ca`
+  (single "Zamolxis candidate" commit, no force push) and shown in Zamolxis (#107). #105
+  treats a retry whose branch is already at the exact trusted SHA as published and
+  recovers its PR even when closed or merged.
 - **Run detail (#68):** tapping a run opens result, grouped live activity, changes
   (files, base → head, branch) and verification (evidence, trust decision, repairs).
 - **Setup repair (#69):** rerunning setup offers Check and repair, repositories,
@@ -370,19 +370,20 @@ module aliases exist only when the variable is set.
    names, as repository paths, the files to change and to read first, or is not ready
    (ask/propose); Builder and Repair instructions tell the agent to start from those
    files and search only when they are not enough.
-5. **Identity (#47), mostly shipped.** Signed-in devices show a self-reported label
+5. **Identity (#47), shipped.** Signed-in devices show a self-reported label
    ("Safari on iPhone"); a minimal service worker makes the app installable with an
    offline page (no caching of app data or API responses); a second-account isolation
    test covers every user-facing query/mutation (convex-test identities). Missing:
    validation with two real Google accounts on the deployed app and iPhone home-screen
-   / offline checks.
+   / offline checks (owner-deferred, #130).
 6. **Onboarding (#45), shipped.** Rename a computer (Settings or setup), remove a
    repository from a Mac (refused while busy; sticky across Node restarts; re-granted
    from setup's repository list), "Pair again" revokes the previous entry when its
    credential is still valid, setup waits for a heartbeat from the new Node instance,
    and the sessions screen shows a "Get started" checklist derived from real backend
    state (`onboarding.progress`) until the first session. Limits: a missing Codex login
-   usually shows as "no heartbeat"; QR scanning before approval is not tracked.
+   usually shows as "no heartbeat"; QR scanning before approval is not tracked. The
+   real-iPhone camera and home-screen check is owner-deferred (#130).
 7. **Integration, shipped for single tasks.** On main (#96), setup selects and
    verifies a publishing gh account per GitHub repository and the Node supplies that
    account's saved credential only to the matching push and PR command without
@@ -421,14 +422,11 @@ module aliases exist only when the variable is set.
 
 ## Next steps, in order
 
-1. Make the configured repository publishing identity pass the production push and
-   open one real PR entirely through Zamolxis.
-2. Reconcile or close the remaining Alpha tracking issues against shipped behavior.
-   For #114, re-run a logo-redesign-sized task and compare the Builder's processed
+1. For #114, re-run a logo-redesign-sized task and compare the Builder's processed
    tokens and calls (now visible in Run detail) with the 2.6M / 41 baseline.
-3. Owner-deferred validation: real iPhone/PWA/offline behavior, a second Google
+2. Owner-deferred validation (#130): real iPhone/PWA/offline behavior, a second Google
    account and a second workstation.
-4. External ticket links (GitHub/Linear) need a connector first and are not part of
+3. External ticket links (GitHub/Linear) need a connector first and are not part of
    the implemented Alpha candidate.
 
 ## Operations on the owner's Mac
