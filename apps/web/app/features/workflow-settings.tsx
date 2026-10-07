@@ -584,8 +584,12 @@ export function MyAgentsSettings({
   const codexModels = catalogs?.find((item) => item.runtime === "codex")?.models ?? [];
   const codexDefault = codexModels.find((model) => model.isDefault);
   const affordable = codexModels.find((model) => /luna/i.test(model.id));
+  // Codex's Sol models (its default included) are replaced too, chosen by hand or not.
+  const sol = codexModels.filter((model) => /sol/i.test(model.id)).map((model) => model.id);
   const unnamed = (agents ?? []).filter((agent) =>
-    agent.chain.some((entry) => entry.runtime === "codex" && !entry.model),
+    agent.chain.some(
+      (entry) => entry.runtime === "codex" && (!entry.model || sol.includes(entry.model)),
+    ),
   ).length;
   return (
     <section className="z-stack" aria-label="My agents">
@@ -604,17 +608,21 @@ export function MyAgentsSettings({
         <Notice tone="warning">
           <span className="z-stack">
             <span>
-              {unnamed} {unnamed === 1 ? "agent uses" : "agents use"} Codex&apos;s default model,{" "}
-              {codexDefault.displayName}, which uses your plan fastest. {affordable.displayName} is
-              Codex&apos;s affordable model.
+              {unnamed} {unnamed === 1 ? "agent uses" : "agents use"} a Sol model in Codex
+              (Codex&apos;s default is {codexDefault.displayName}), which uses your plan fastest.{" "}
+              {affordable.displayName} is Codex&apos;s affordable model.
             </span>
             <Button
               size="small"
               variant="secondary"
               onClick={async () => {
-                const changed = await setUnnamed({ runtime: "codex", model: affordable.id });
+                const changed = await setUnnamed({
+                  runtime: "codex",
+                  model: affordable.id,
+                  replace: sol,
+                });
                 setSwitched(
-                  `${affordable.displayName} now runs wherever Codex had no model (${changed} ${
+                  `${affordable.displayName} now runs wherever Codex used Sol (${changed} ${
                     changed === 1 ? "place" : "places"
                   }). Work already running keeps its model.`,
                 );
