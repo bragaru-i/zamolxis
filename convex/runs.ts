@@ -102,6 +102,8 @@ export async function queueRun(
       fail("AGENT_PROFILE_CAPACITY_EXCEEDED");
   }
   const now = Date.now();
+  // A checks-only Verifier profile: the Node runs the repository checks and no model.
+  const checksOnly = role === "verifier" && profile?.verification === "checks_only";
   const runId = await ctx.db.insert("agentRuns", {
     workSessionId: session._id,
     taskId: task._id,
@@ -121,6 +123,7 @@ export async function queueRun(
           ...(profile.approvalPolicy ? { approvalPolicy: profile.approvalPolicy } : {}),
         }
       : {}),
+    ...(checksOnly ? { checksOnly: true } : {}),
     ...(installation.version ? { runtimeVersion: installation.version } : {}),
     status: "queued",
     attempt: (task.repairAttempts ?? 0) + 1,
@@ -161,13 +164,14 @@ export async function queueRun(
         (role === "verifier"
           ? `Independently review exact SHA ${workspace.baseSha}. Do not modify files or Git state. Acceptance: ${task.description}. Provide a concise review; deterministic Node checks establish trust.\n${PROOF_INSTRUCTION}`
           : `${task.description}
-Leave all intended implementation edits in your assigned worktree. Zamolxis captures the candidate commit. Do not publish, merge, or modify other checkouts.\n${PROOF_INSTRUCTION}`) +
+Start from the files the task names and read only what you need to change them; search the repository only when they are not enough. Leave all intended implementation edits in your assigned worktree. Zamolxis captures the candidate commit. Do not publish, merge, or modify other checkouts.\n${PROOF_INSTRUCTION}`) +
         // Owner text is appended last and labelled; it cannot change trust or approval.
         ownerInstructionsSection(profile?.instructions),
       ...(role === "verifier"
         ? {
             verificationScripts: task.verificationScripts ?? [],
             requiredModalities: task.requiredModalities ?? ["static", "behavioral"],
+            ...(checksOnly ? { checksOnly: true } : {}),
           }
         : {}),
     },

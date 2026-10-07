@@ -259,6 +259,13 @@ describe("profile resolution", () => {
       approvalPolicy: "auto_low_medium",
     });
     expect(upsertArgs({ ...base, role: "verifier" })).not.toHaveProperty("approvalPolicy");
+    // The verification mode travels only for the Verifier.
+    const { approvalPolicy: _policy, ...rest } = base;
+    const mode = { ...rest, verification: "checks_only" as const };
+    expect(upsertArgs({ ...mode, role: "verifier" })).toMatchObject({
+      verification: "checks_only",
+    });
+    expect(upsertArgs({ ...mode, role: "builder" })).not.toHaveProperty("verification");
   });
 
   it("sends trimmed instructions, clears them when empty and keeps them when omitted", () => {

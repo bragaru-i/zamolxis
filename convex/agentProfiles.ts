@@ -1,6 +1,7 @@
 import { type Infer, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { approvalPolicy } from "./lib/approvalPolicy";
+import { verification } from "./lib/verification";
 import { fail, requireUser } from "./lib/access";
 import {
   AGENT_ROLES,
@@ -165,6 +166,8 @@ export const upsert = mutation({
     instructions: v.optional(v.string()),
     // Omitted or "ask" means every command approval waits for the owner.
     approvalPolicy: v.optional(approvalPolicy),
+    // Verifier only. Omitted or "review" runs a reviewer model; "checks_only" does not.
+    verification: v.optional(verification),
   },
   returns: v.id("agentProfiles"),
   handler: async (ctx, args) => {
@@ -184,6 +187,9 @@ export const upsert = mutation({
     const policy =
       args.approvalPolicy && args.approvalPolicy !== "ask" ? args.approvalPolicy : undefined;
     if (policy && !["builder", "repair"].includes(args.role)) fail("INVALID_ARGUMENT");
+    const mode =
+      args.verification && args.verification !== "review" ? args.verification : undefined;
+    if (mode && args.role !== "verifier") fail("INVALID_ARGUMENT");
     const digest = instructions ? await instructionsDigest(instructions) : undefined;
     if (args.productId) {
       const product = await ctx.db.get(args.productId);
@@ -216,6 +222,7 @@ export const upsert = mutation({
         maxConcurrency: args.maxConcurrency,
         ...(args.instructions !== undefined ? { instructions, instructionsDigest: digest } : {}),
         approvalPolicy: policy,
+        verification: mode,
         revision: existing.revision + 1,
         updatedAt: now,
       });
@@ -233,6 +240,7 @@ export const upsert = mutation({
       ...(args.maxConcurrency !== undefined ? { maxConcurrency: args.maxConcurrency } : {}),
       ...(instructions && digest ? { instructions, instructionsDigest: digest } : {}),
       ...(policy ? { approvalPolicy: policy } : {}),
+      ...(mode ? { verification: mode } : {}),
       revision: 1,
       createdAt: now,
       updatedAt: now,

@@ -938,6 +938,132 @@ it("runs text intent through discovery, native Builder, independent Verifier, de
   );
 }, 240_000);
 
+it("verifies with the repository checks only, without a reviewer model, when the Verifier profile says so", async () => {
+  const f = await fixture("codex");
+  const { writeFileSync } = await import("node:fs");
+  writeFileSync(
+    join(f.path, "package.json"),
+    JSON.stringify({
+      scripts: {
+        test: "node -e \"require('node:assert/strict').equal(require('node:fs').readFileSync('outcome.txt','utf8').trim(),'ALPHA_OK')\"",
+      },
+    }),
+  );
+  git(f.path, ["add", "."]);
+  git(f.path, ["commit", "-m", "acceptance check"]);
+  const canonicalSha = git(f.path, ["rev-parse", "HEAD"]);
+  const productId = await f.t.run(async (ctx) => {
+    const session = await ctx.db.get("workSessions", f.workSessionId);
+    const id = await ctx.db.insert("products", {
+      ownerId: session!.ownerId,
+      name: "Checks only",
+      slug: "checks-only",
+      createdAt: 0,
+      updatedAt: 0,
+    });
+    await ctx.db.patch("repositories", f.repositoryId, { productId: id });
+    await ctx.db.patch("repositoryLocations", f.repositoryLocationId, {
+      lastKnownHead: canonicalSha,
+    });
+    return id;
+  });
+  for (const role of ["builder", "verifier", "repair"] as const)
+    await f.user.mutation(api.agentProfiles.upsert, {
+      name: role,
+      role,
+      runtime: "fake",
+      enabled: true,
+      ...(role === "verifier" ? { verification: "checks_only" as const } : {}),
+    });
+  const runtime = new (class extends FakeRuntime {
+    override async start(input: StartRunInput) {
+      // The Verifier role never reaches a runtime: the Node runs the checks itself.
+      if (input.role === "verifier") throw new Error("VERIFIER_RUNTIME_MUST_NOT_START");
+      if (input.role === "builder") writeFileSync(join(input.workspace.cwd, "outcome.txt"), "ALPHA_OK\n");
+      return super.start(input);
+    }
+  })((input) => [
+    {
+      type: "success",
+      summary:
+        input.role === "supervisor"
+          ? JSON.stringify({
+              decision: "delegate",
+              reply: "One task: create outcome.txt.",
+              tasks: [
+                {
+                  key: "outcome",
+                  title: "Create outcome.txt",
+                  description: "Create outcome.txt containing exactly ALPHA_OK and a newline.",
+                  dependencies: [],
+                  verificationScripts: ["test"],
+                  requiredModalities: ["static", "test"],
+                },
+              ],
+            })
+          : `${input.role} finished: wrote outcome.txt`,
+    },
+  ]);
+  const n = await f.boot(runtime);
+  const driver = n.driver();
+  const { RepositoryDiscovery } = await import(
+    "../packages/node-core/src/capabilities/repository-discovery"
+  );
+  driver.setRepositoryDiscovery(new RepositoryDiscovery(n.workspaces));
+  const sessionId = await f.user.mutation(api.supervisor.submit, {
+    productId,
+    repositoryId: f.repositoryId,
+    text: "Create outcome.txt containing exactly ALPHA_OK and a newline.",
+    idempotencyKey: "checks-only",
+  });
+  for (let tick = 0; tick < 20; tick++) {
+    await f.node.mutation(api.supervisor.dispatch, { workstationId: f.workstationId });
+    await driver.tick();
+    const session = await f.user.query(api.sessions.get, { workSessionId: sessionId });
+    if (["completed", "failed", "needs_input"].includes(session.status)) break;
+  }
+  expect((await f.user.query(api.sessions.get, { workSessionId: sessionId })).status).toBe(
+    "completed",
+  );
+  const runs = await f.user.query(api.runs.listBySession, { workSessionId: sessionId });
+  const candidate = runs.find((run) => run.role === "builder")!;
+  const verifier = runs.find((run) => run.role === "verifier")!;
+  // The verifier run is a plain record of the checks: no session, no model, no tokens.
+  expect(verifier).toMatchObject({
+    checksOnly: true,
+    status: "completed",
+    finalHeadSha: candidate.finalHeadSha,
+    resultSummary: expect.stringContaining("Checks only: no reviewer model ran"),
+  });
+  expect(verifier.nativeSessionId).toBeUndefined();
+  expect(verifier.totalTokens).toBeUndefined();
+  expect(verifier.modelCalls).toBeUndefined();
+  expect(n.store.getRuntimeSession(verifier._id)).toBeUndefined();
+  expect((await f.user.query(api.trust.listByRun, { runId: candidate._id }))[0]!.eligible).toBe(
+    true,
+  );
+  const checked = (
+    await f.user.query(api.traces.listByRun, {
+      runId: verifier._id,
+      paginationOpts: { numItems: 100, cursor: null },
+    })
+  ).page as { kind: string; status: string; label: string }[];
+  expect(checked.map((step) => [step.kind, step.status])).toEqual([
+    ["discovery", "passed"],
+    ["workspace", "passed"],
+    ["verification-check", "passed"],
+    ["verification-check", "passed"],
+  ]);
+  const spaces = await f.user.query(api.workspaces.listBySession, { workSessionId: sessionId });
+  expect(
+    spaces.some(
+      (space) => space.kind === "integration" && space.currentHeadSha === candidate.finalHeadSha,
+    ),
+  ).toBe(true);
+  expect(git(f.path, ["rev-parse", "HEAD"])).toBe(canonicalSha);
+  expect(n.store.listPendingEvents()).toEqual([]);
+}, 120_000);
+
 it("runs independent builders concurrently and provisions a dependent task with both trusted commits", async () => {
   const f = await fixture();
   const { writeFileSync, existsSync } = await import("node:fs");

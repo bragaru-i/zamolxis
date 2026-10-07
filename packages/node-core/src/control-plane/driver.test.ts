@@ -23,6 +23,7 @@ import { repositoryFixture } from "../testing/git-fixture";
 import type { SupervisorLogBatch } from "../trace/supervisor-log";
 import { WorkspaceManager } from "../workspace/workspace-manager";
 import {
+  CHECKS_ONLY_SUMMARY,
   ControlPlaneDriver,
   type ControlPlaneDriverOptions,
   type ControlPlaneTransport,
@@ -1068,6 +1069,60 @@ describe("execution trace", { timeout: 30_000 }, () => {
     });
     for (const step of [...builder, ...verifier]) expect(traceStepProblem(step)).toBeUndefined();
     // Everything left the durable outbox.
+    expect(f.store.listPendingEvents()).toEqual([]);
+  });
+
+  it("verifies with the repository checks only, starting no runtime, when the run says so", async () => {
+    const f = fixture(() => {
+      throw new Error("RUNTIME_MUST_NOT_START");
+    });
+    const plan = f.workspaces.inspect("plan").path;
+    writeFileSync(
+      join(plan, "package.json"),
+      JSON.stringify({ scripts: { test: "node -e \"console.log('checked')\"" } }),
+    );
+    git(plan, ["add", "."]);
+    git(plan, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "checks"]);
+    const subject = git(plan, ["rev-parse", "HEAD"]);
+    const command = start("c", "plan", "verifier", ["test"]);
+    await f.driver.execute({
+      ...command,
+      payload: { ...command.payload, checksOnly: true },
+    } as ExecutionCommand);
+    // The Node reports the run's start and end itself; there is no native session.
+    const events = f.deliveries.flatMap((delivery) =>
+      delivery.kind === "run.events" && delivery.runId === "run-c" ? delivery.events : [],
+    );
+    expect(events.map((event) => [event.eventId, event.sequence, event.type])).toEqual([
+      ["checks:run-c:1", 1, "run.started"],
+      ["checks:run-c:2", 2, "run.completed"],
+    ]);
+    expect(events[1]?.payload).toEqual({ summary: CHECKS_ONLY_SUMMARY });
+    expect(f.store.getRuntimeSession("run-c")).toBeUndefined();
+    const complete = f.deliveries.find(
+      (delivery) => delivery.kind === "run.complete" && delivery.runId === "run-c",
+    );
+    expect(complete).toMatchObject({
+      headSha: subject,
+      dirty: false,
+      summary: CHECKS_ONLY_SUMMARY,
+      evidence: [
+        { modality: "static", result: "passed" },
+        { modality: "test", result: "passed", summary: "npm run test: passed" },
+      ],
+    });
+    const steps = traced(f.deliveries, "run-c");
+    expect(steps.map((step) => [step.kind, step.status])).toEqual([
+      ["discovery", "passed"],
+      ["workspace", "passed"],
+      ["verification-check", "passed"],
+      ["verification-check", "passed"],
+    ]);
+    expect(steps[3]).toMatchObject({
+      label: "npm run test",
+      references: { script: "test", exitCode: 0, sha: subject },
+    });
+    for (const step of steps) expect(traceStepProblem(step)).toBeUndefined();
     expect(f.store.listPendingEvents()).toEqual([]);
   });
 });
