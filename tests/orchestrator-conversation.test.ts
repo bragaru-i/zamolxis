@@ -1,6 +1,7 @@
 import { convexTest } from "convex-test";
 import { expect, it } from "vitest";
 import { api } from "../convex/_generated/api";
+import type { Id } from "../convex/_generated/dataModel";
 import schema from "../convex/schema";
 import { seedHuman } from "./fixtures/auth";
 
@@ -879,4 +880,53 @@ it("keeps only agents a computer offers and switches an open Session's workflow"
   await expect(
     f.other.mutation(api.workflows.setForSession, { workSessionId: sessionId, workflowId }),
   ).rejects.toThrow();
+});
+
+it("starts new work with the computer's saved workflow unless another one is chosen", async () => {
+  const f = await fixture();
+  const workflowId = await f.user.mutation(api.workflows.create, {
+    productId: f.productId,
+    name: "Codex only",
+    preset: "codex_only",
+  });
+  const [location] = await f.user.query(api.repositories.listLocations, {
+    workstationId: f.workstationId,
+  });
+  if (!location) throw new Error("no location");
+  await f.user.mutation(api.workflows.setForLocation, {
+    repositoryLocationId: location.repositoryLocationId,
+    workflowId,
+  });
+  expect(
+    (await f.user.query(api.repositories.listLocations, { workstationId: f.workstationId }))[0],
+  ).toMatchObject({ productId: f.productId, defaultWorkflowId: workflowId });
+  expect(
+    (await f.user.query(api.repositories.computers, { repositoryId: f.repositoryId }))[0]
+      ?.defaultWorkflowId,
+  ).toBe(workflowId);
+  const open = (key: string, extra = {}) =>
+    f.user.mutation(api.supervisor.submit, {
+      productId: f.productId,
+      repositoryId: f.repositoryId,
+      text: "Fix it",
+      idempotencyKey: key,
+      ...extra,
+    });
+  const workflowOf = async (sessionId: Id<"workSessions">) =>
+    (await f.t.run((ctx) => ctx.db.get("workSessions", sessionId)))?.workflowId;
+  // Nothing chosen: the computer's saved workflow.
+  expect(await workflowOf(await open("m-1"))).toBe(workflowId);
+  // The Default chosen explicitly wins over the computer's.
+  expect(await workflowOf(await open("m-2", { defaultWorkflow: true }))).toBeUndefined();
+  // Another owner cannot set it.
+  await expect(
+    f.other.mutation(api.workflows.setForLocation, {
+      repositoryLocationId: location.repositoryLocationId,
+      workflowId,
+    }),
+  ).rejects.toThrow();
+  await f.user.mutation(api.workflows.setForLocation, {
+    repositoryLocationId: location.repositoryLocationId,
+  });
+  expect(await workflowOf(await open("m-3"))).toBeUndefined();
 });

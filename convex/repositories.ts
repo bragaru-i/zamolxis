@@ -111,6 +111,9 @@ export const listLocations = query({
       // Present for GitHub repositories: where the owner creates its publishing token.
       github: v.optional(v.object({ slug: v.string(), tokenUrl: v.string() })),
       githubAccess: v.optional(githubAccess),
+      // The repository's product and the workflow new Sessions here start with.
+      productId: v.optional(v.id("products")),
+      defaultWorkflowId: v.optional(v.id("agentWorkflows")),
     }),
   ),
   handler: async (ctx, args) => {
@@ -133,6 +136,10 @@ export const listLocations = query({
             repositoryName: repository?.name ?? "Repository",
             canonicalPath: location.canonicalPath,
             status: location.status,
+            ...(repository?.productId ? { productId: repository.productId } : {}),
+            ...(location.defaultWorkflowId
+              ? { defaultWorkflowId: location.defaultWorkflowId }
+              : {}),
             ...(github
               ? { github: { slug: githubSlug(github), tokenUrl: githubTokenUrl(github) } }
               : {}),
@@ -155,6 +162,8 @@ export const computers = query({
       platform: v.optional(v.string()),
       online: v.boolean(),
       runtimes: v.array(v.string()),
+      // The workflow new Sessions of this repository start with on this computer.
+      defaultWorkflowId: v.optional(v.id("agentWorkflows")),
     }),
   ),
   handler: async (ctx, args) => {
@@ -185,6 +194,7 @@ export const computers = query({
           .filter((runtime) => runtime.status === "available")
           .map((runtime) => runtime.runtime)
           .sort(),
+        ...(location.defaultWorkflowId ? { defaultWorkflowId: location.defaultWorkflowId } : {}),
       });
     }
     return result.sort((a, b) => a.name.localeCompare(b.name));

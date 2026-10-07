@@ -95,7 +95,7 @@ vi.mock("convex/react", () => ({
   },
 }));
 
-import { computerDescription, SessionList } from "./sessions";
+import { computerDescription, SessionList, suggestedWorkflow } from "./sessions";
 
 it("describes a computer by whether it is online and which agents it has", () => {
   expect(computerDescription({ online: true, runtimes: ["codex"] })).toBe("Online · Codex");
@@ -167,4 +167,17 @@ it("opens as a new, empty chat with earlier chats in the sidebar", () => {
   expect(html).toContain("Earlier chats are in the sidebar.");
   expect(html).toContain("What is going on?");
   expect(html).toMatch(/z-home-link z-home-link--active[^>]*aria-current="page"/);
+});
+
+it("pre-selects the chosen computer's saved workflow when opening work", () => {
+  const computers = [
+    { workstationId: "mac" as never, defaultWorkflowId: "save" as never },
+    { workstationId: "ubuntu" as never },
+  ];
+  expect(suggestedWorkflow(computers, "mac")).toBe("save");
+  expect(suggestedWorkflow(computers, "ubuntu")).toBe("");
+  // Several computers and none chosen: each computer's own applies.
+  expect(suggestedWorkflow(computers, "")).toBe("auto");
+  expect(suggestedWorkflow([computers[0] as never], "")).toBe("save");
+  expect(suggestedWorkflow(undefined, "")).toBe("");
 });

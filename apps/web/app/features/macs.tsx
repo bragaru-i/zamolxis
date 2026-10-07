@@ -1,5 +1,5 @@
 "use client";
-import { Button, Notice, StatusBadge, TextInput } from "@zamolxis/ui";
+import { Button, Notice, Picker, StatusBadge, TextInput } from "@zamolxis/ui";
 import { useMutation, useQuery } from "convex/react";
 import { useId, useState } from "react";
 import { api } from "../../../../convex/_generated/api";
@@ -20,7 +20,10 @@ export interface Device {
 }
 /** "macOS · Node 1a2b3c4d5e6f": what kind of computer and which Node code it runs. */
 export function deviceDetail(device: Pick<Device, "platform" | "nodeVersion">): string | undefined {
-  const parts = [platformLabel(device.platform), device.nodeVersion && `Node ${device.nodeVersion}`];
+  const parts = [
+    platformLabel(device.platform),
+    device.nodeVersion && `Node ${device.nodeVersion}`,
+  ];
   return parts.filter(Boolean).join(" · ") || undefined;
 }
 
@@ -68,9 +71,16 @@ export interface MacLocation {
   // GitHub repositories only: where to create the token, and what the computer last reported.
   github?: GithubRepository;
   githubAccess?: GithubAccess;
+  productId?: Id<"products">;
+  /** The workflow new work on this repository starts with on this computer. */
+  defaultWorkflowId?: Id<"agentWorkflows">;
 }
 
-const RUNTIME_NAMES: Record<string, string> = { codex: "Codex", claude: "Claude Code" };
+const RUNTIME_NAMES: Record<string, string> = {
+  codex: "Codex",
+  claude: "Claude Code",
+  local: "Local model",
+};
 
 type MacMode = "idle" | "rename" | "repositories" | "revoke";
 
@@ -193,6 +203,7 @@ export function MacItem({
           </Button>
         </div>
       )}
+      {state !== "revoked" && mode === "idle" && <MacWorkflows device={device} />}
       {state !== "revoked" && mode === "idle" && (
         <div className="z-row">
           <Button variant="ghost" size="small" onClick={() => choose("rename")}>
@@ -298,5 +309,61 @@ function MacRepositories({
         Done
       </Button>
     </section>
+  );
+}
+
+/**
+ * The workflow each repository on this computer starts new work with. A new Session picks
+ * it up when it runs here; the owner can still choose another when opening the work.
+ */
+function MacWorkflows({ device }: { device: Device }) {
+  const locations = useQuery(api.repositories.listLocations, { workstationId: device._id }) as
+    | MacLocation[]
+    | undefined;
+  const shown = (locations ?? []).filter((location) => location.productId);
+  if (!shown.length) return null;
+  return (
+    <section className="z-stack" aria-label={`Workflows on ${device.name}`}>
+      {shown.map((location) => (
+        <LocationWorkflow key={location.repositoryLocationId} location={location} />
+      ))}
+    </section>
+  );
+}
+
+function LocationWorkflow({ location }: { location: MacLocation }) {
+  const workflows = useQuery(
+    api.workflows.list,
+    location.productId ? { productId: location.productId } : "skip",
+  ) as Array<{ _id: Id<"agentWorkflows">; name: string; roles: number }> | undefined;
+  const save = useMutation(api.workflows.setForLocation);
+  const [problem, setProblem] = useState("");
+  return (
+    <div className="z-stack">
+      <Picker
+        label={`${location.repositoryName}: workflow for new work here`}
+        value={location.defaultWorkflowId ?? ""}
+        options={[
+          { value: "", label: "Default", description: "The product's own agent settings." },
+          ...(workflows ?? []).map((item) => ({
+            value: item._id,
+            label: item.name,
+            description: `Its own agents for ${item.roles} ${item.roles === 1 ? "role" : "roles"}; the rest from the Default.`,
+          })),
+        ]}
+        onChange={async (next) => {
+          setProblem("");
+          try {
+            await save({
+              repositoryLocationId: location.repositoryLocationId,
+              ...(next ? { workflowId: next as Id<"agentWorkflows"> } : {}),
+            });
+          } catch (error) {
+            setProblem(explainError(error, "Could not save the workflow."));
+          }
+        }}
+      />
+      {problem && <Notice tone="danger">{problem}</Notice>}
+    </div>
   );
 }
