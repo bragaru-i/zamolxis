@@ -266,6 +266,30 @@ describe("repository.plan through a Supervisor run", { timeout: 30_000 }, () => 
     expect(f.store.getWorkspaceLease("plan")).toBeUndefined();
   });
 
+  it("asks once more for tasks when the owner opened the work and got none", async () => {
+    let call = 0;
+    const f = fixture(() =>
+      ++call === 1
+        ? json({ decision: "answer", reply: "Here is how I'd do it. Shall I start?", tasks: [] })
+        : json({
+            decision: "delegate",
+            reply: "Starting.",
+            tasks: [{ key: "a", title: "Palette", description: "Add apps/web/app/palette.tsx." }],
+          }),
+    );
+    const { textCommandId } = await f.plan("Open this work: add a command palette");
+    expect(f.runtime.started.map((run) => run.runId)).toEqual([
+      `supervisor:${textCommandId}`,
+      `supervisor:${textCommandId}:repair`,
+    ]);
+    expect(f.runtime.started[1]?.instruction).toContain("Do not ask for confirmation");
+    expect(f.deliveries[0]).toMatchObject({ decision: "delegate", tasks: [{ key: "a" }] });
+    // A question is answered once: no second run.
+    const g = fixture(() => json({ decision: "answer", reply: "It uses turbo.", tasks: [] }));
+    await g.plan("How is the build organised?");
+    expect(g.runtime.started).toHaveLength(1);
+  });
+
   it("starts a proposal when the owner opened the work", async () => {
     const f = fixture(() =>
       json({

@@ -280,11 +280,15 @@ export function parseSupervisorDecision(
 export function planRepairInstruction(input: {
   readonly original: string;
   readonly previousReply: string;
+  // The owner opened the work and the reply had no tasks: it must delegate now.
+  readonly mustDelegate?: boolean;
 }): string {
   return [
     input.original,
     "",
-    "Your previous reply could not be used: its task list was missing or malformed, so no builders were started. Your previous reply was:",
+    input.mustDelegate
+      ? 'The owner explicitly asked to start this work ("Open this work"), but your previous reply had no tasks, so nothing started. Do not ask for confirmation: reply with "decision": "delegate" and the tasks. Your previous reply was:'
+      : "Your previous reply could not be used: its task list was missing or malformed, so no builders were started. Your previous reply was:",
     "<<<",
     redactSecrets(input.previousReply).slice(0, 12_000),
     ">>>",
