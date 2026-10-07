@@ -1,13 +1,16 @@
 import { githubTokenCli, prerequisites, setup } from "./setup";
 import { update } from "./update";
+import { watch } from "./watch";
 
 const USAGE =
-  "Usage: pnpm zamolxis setup [--repair] | update | doctor | github-token [owner/repo] [--remove]";
+  "Usage: pnpm zamolxis setup [--repair] | update | watch [--once] | doctor | github-token [owner/repo] [--remove]";
 const [command, ...flags] = process.argv.slice(2);
 try {
   if (command === "setup" && flags.every((flag) => flag === "--repair"))
     await setup({ repair: flags.includes("--repair") });
   else if (command === "update" && !flags.length) await update();
+  else if (command === "watch" && flags.every((flag) => flag === "--once"))
+    await watch({ once: flags.includes("--once") });
   else if (command === "doctor" && !flags.length) prerequisites();
   else if (command === "github-token") {
     const remove = flags.includes("--remove");
