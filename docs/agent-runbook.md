@@ -78,6 +78,11 @@ code until it is restarted on the new checkout, so:
   (up to 20 minutes) until `<appUrl>/api/bootstrap` reports that commit or a later one
   containing it; then restarts the service (launchd or systemd) and waits for a heartbeat
   from the new process (the same check as `setup --repair`).
+- **See what a Node is doing:** `pnpm zamolxis watch` on that computer shows its activity
+  live (commands, edits, approvals, Supervisor answers) with tokens per run and today's
+  total, read-only from `node-state.sqlite`; Ctrl+C closes it and the Node keeps running.
+  `--once` prints today's activity and exits. Supervisor tokens appear when it answers
+  (live Supervisor progress is not stored locally).
 - **Never a machine reboot.** Restarting the service is enough: `launchctl kickstart -k`
   on the Mac, `systemctl --user restart` on Linux. The one root-level setting on Linux
   (`kernel.apparmor_restrict_unprivileged_userns`, see "Pitfalls") also takes effect
