@@ -236,7 +236,7 @@ describe("Codex resume after a Node restart", () => {
       approvalPolicy: "on-request",
       sandboxPolicy: {
         type: "workspaceWrite",
-        writableRoots: ["/assigned/worktree"],
+        writableRoots: ["/assigned/worktree", expect.stringContaining("zamolxis-run-")],
         networkAccess: false,
         excludeTmpdirEnvVar: true,
         excludeSlashTmp: true,

@@ -9,6 +9,7 @@ import {
   defineRuntimeAdapterContract,
   defineRuntimeApprovalContract,
 } from "@zamolxis/test-kit/runtime-contract";
+import { existsSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import type {
   AppServerNotification,
@@ -88,7 +89,7 @@ class ControlledConnection implements CodexConnection {
 }
 function harness(approvalTimeoutMs?: number) {
   const connection = new ControlledConnection();
-  const connect = vi.fn(() => connection);
+  const connect = vi.fn((_cwd: string, _env?: NodeJS.ProcessEnv) => connection);
   const runtime = new CodexRuntime({
     connect,
     stopTimeoutMs: 5,
@@ -353,19 +354,40 @@ describe("Codex native lifecycle", () => {
     const [a, b] = await Promise.all([h.runtime.start(input()), h.runtime.start(input())]);
     expect(a.nativeSessionId).toBe(b.nativeSessionId);
     expect(h.connect).toHaveBeenCalledOnce();
-    expect(h.connect).toHaveBeenCalledWith(input().workspace.cwd);
+    // A private TMPDIR, writable in the sandbox, so temporary files never need an approval.
+    const env = h.connect.mock.calls[0]?.[1] as { TMPDIR: string };
+    expect(h.connect).toHaveBeenCalledWith(input().workspace.cwd, {
+      TMPDIR: expect.stringMatching(/zamolxis-run-[^/]+\/$/),
+    });
+    const tmp = env.TMPDIR.slice(0, -1);
+    expect(existsSync(tmp)).toBe(true);
     expect(h.connection.request.mock.calls[1]?.[1]).toMatchObject({
       cwd: input().workspace.cwd,
       approvalPolicy: "on-request",
       sandboxPolicy: {
-        writableRoots: [input().workspace.cwd],
+        writableRoots: [input().workspace.cwd, tmp],
         networkAccess: false,
+        excludeTmpdirEnvVar: true,
         excludeSlashTmp: true,
       },
     });
     await expect(h.runtime.start({ ...input(), instruction: "different" })).rejects.toThrow(
       "CONFLICT",
     );
+    await h.runtime.stop({ nativeSessionId: "native" });
+    h.connection.close();
+    expect(existsSync(tmp)).toBe(false);
+  });
+  it("gives read-only roles no TMPDIR and no writable roots", async () => {
+    const h = harness();
+    await h.runtime.start({ ...input(), role: "verifier" });
+    expect(h.connect).toHaveBeenCalledWith(input().workspace.cwd, undefined);
+    expect(h.connection.request.mock.calls[1]?.[1].sandboxPolicy).toEqual({
+      type: "readOnly",
+      networkAccess: false,
+      excludeTmpdirEnvVar: true,
+      excludeSlashTmp: true,
+    });
     await h.runtime.stop({ nativeSessionId: "native" });
   });
   it("normalizes ordered tool/file/activity events and ignores duplicate and foreign events", async () => {

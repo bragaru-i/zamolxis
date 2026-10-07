@@ -55,12 +55,15 @@ export interface CodexRuntimeOptions {
   readonly stopTimeoutMs?: number;
   // Pending approvals are rejected after this long (default 30 minutes).
   readonly approvalTimeoutMs?: number;
-  readonly connect?: (cwd: string) => CodexConnection;
+  readonly connect?: (cwd: string, env?: NodeJS.ProcessEnv) => CodexConnection;
   readonly now?: () => number;
 }
 interface Session {
   input: StartRunInput;
   client: CodexConnection;
+  // The run's private TMPDIR (writing roles only), writable in the sandbox and removed
+  // with the connection: tools that need temporary files then work without asking.
+  tmp?: string;
   id: string;
   turnId: string;
   state: RuntimeSessionSnapshot["state"];
@@ -239,16 +242,23 @@ export class CodexRuntime implements AgentRuntime {
   }
   // A native connection and an empty session bound to it.
   #open(input: StartRunInput, resumed?: ResumeRunInput): Session {
+    const tmp = readOnly(input)
+      ? undefined
+      : realpathSync.native(mkdtempSync(join(tmpdir(), "zamolxis-run-")));
+    const env = tmp ? { TMPDIR: `${tmp}/` } : undefined;
     const client =
-      this.options.connect?.(input.workspace.cwd) ??
+      this.options.connect?.(input.workspace.cwd, env) ??
       new AppServerClient({
         cwd: input.workspace.cwd,
+        ...(env ? { env } : {}),
         ...(this.options.executable ? { executable: this.options.executable } : {}),
       });
+    if (tmp) client.onClose(() => rmSync(tmp, { recursive: true, force: true }));
     const base = resumed?.afterSequence ?? 0;
     const session: Session = {
       input,
       client,
+      ...(tmp ? { tmp } : {}),
       commits: knownCommit(input.workspace.cwd),
       id: "",
       turnId: "",
@@ -284,7 +294,7 @@ export class CodexRuntime implements AgentRuntime {
         approvalPolicy: "on-request",
         sandboxPolicy: {
           type: readOnly(input) ? "readOnly" : "workspaceWrite",
-          ...(readOnly(input) ? {} : { writableRoots: [input.workspace.cwd] }),
+          ...(session.tmp ? { writableRoots: [input.workspace.cwd, session.tmp] } : {}),
           networkAccess: false,
           excludeTmpdirEnvVar: true,
           excludeSlashTmp: true,

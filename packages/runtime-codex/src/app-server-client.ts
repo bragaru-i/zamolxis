@@ -30,7 +30,9 @@ export interface AppServerClientOptions {
   readonly executable?: string;
   readonly timeoutMs?: number;
   readonly maxFrameBytes?: number;
-  readonly launch?: (executable: string, cwd: string) => AppServerProcess;
+  // Added to the app-server environment (and so to every command it runs).
+  readonly env?: NodeJS.ProcessEnv;
+  readonly launch?: (executable: string, cwd: string, env: NodeJS.ProcessEnv) => AppServerProcess;
 }
 interface PendingRequest {
   resolve(value: unknown): void;
@@ -69,14 +71,14 @@ export class AppServerClient {
     if (!options.cwd.startsWith("/")) throw new Error("ABSOLUTE_WORKSPACE_REQUIRED");
     this.#process = (
       options.launch ??
-      ((executable, cwd) =>
+      ((executable, cwd, env) =>
         spawn(executable, ["app-server", "--listen", "stdio://"], {
           cwd,
-          env: codexEnv(),
+          env,
           shell: false,
           stdio: ["pipe", "pipe", "ignore"],
         }))
-    )(options.executable ?? "codex", options.cwd);
+    )(options.executable ?? "codex", options.cwd, codexEnv(options.env));
     this.#process.stdout.setEncoding("utf8");
     this.#process.stdout.on("data", (chunk: string) => this.#receive(chunk));
     this.#process.stdout.on("error", () => this.#fail("CODEX_TRANSPORT_FAILED"));

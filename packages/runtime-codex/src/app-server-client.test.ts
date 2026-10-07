@@ -40,7 +40,7 @@ describe("Codex app-server stdio boundary", () => {
     h.child.stdout.write('{"id":1,"res');
     h.child.stdout.write('ult":{}}\n');
     await init;
-    expect(h.launch).toHaveBeenCalledWith("codex", "/assigned/worktree");
+    expect(h.launch).toHaveBeenCalledWith("codex", "/assigned/worktree", expect.any(Object));
     expect(h.sent[1]).toEqual({ method: "initialized" });
     const a = h.client.request("thread/start", {});
     const b = h.client.request("thread/read", {});
