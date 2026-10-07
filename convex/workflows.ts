@@ -2,6 +2,8 @@ import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { type MutationCtx, mutation, type QueryCtx, query } from "./_generated/server";
 import { fail, requireUser } from "./lib/access";
+import { ROLE_LABELS } from "./lib/agentProfiles";
+import { offeredModels, presetProfiles, workflowPreset } from "./lib/workflowPresets";
 
 const NAME_LIMIT = 64;
 const WORKFLOWS_PER_PRODUCT = 20;
@@ -92,6 +94,8 @@ export const create = mutation({
         workflowId: v.optional(v.id("agentWorkflows")),
       }),
     ),
+    // A recommended workflow (lib/workflowPresets), matched to the owner's computers.
+    preset: v.optional(workflowPreset),
   },
   returns: v.id("agentWorkflows"),
   handler: async (ctx, args) => {
@@ -106,6 +110,7 @@ export const create = mutation({
     if (active.length >= WORKFLOWS_PER_PRODUCT) fail("LIMIT_EXCEEDED");
     if (active.some((row) => row.name.toLowerCase() === name.toLowerCase()))
       fail("WORKFLOW_NAME_TAKEN");
+    if (args.copyFrom && args.preset) fail("INVALID_ARGUMENT");
     let source: Doc<"agentProfiles">[] = [];
     if (args.copyFrom) {
       const { productId, workflowId } = args.copyFrom;
@@ -127,6 +132,23 @@ export const create = mutation({
       updatedAt: now,
     });
     await copyProfiles(ctx, source, args.productId, workflowId, now);
+    if (args.preset)
+      for (const profile of presetProfiles(args.preset, await offeredModels(ctx, owner._id)))
+        await ctx.db.insert("agentProfiles", {
+          ownerId: owner._id,
+          productId: args.productId,
+          workflowId,
+          name: `${ROLE_LABELS[profile.role]} · ${name}`,
+          role: profile.role,
+          runtime: profile.runtime,
+          ...(profile.model ? { model: profile.model } : {}),
+          ...(profile.backups.length ? { backups: profile.backups } : {}),
+          ...(profile.checksOnly ? { verification: "checks_only" as const } : {}),
+          enabled: true,
+          revision: 1,
+          createdAt: now,
+          updatedAt: now,
+        });
     return workflowId;
   },
 });
@@ -226,5 +248,25 @@ export const listAll = query({
           result.push({ _id: workflow._id, productId: product._id, name: workflow.name });
     }
     return result;
+  },
+});
+
+/**
+ * Switches an open Session to another workflow of its product (absent: the Default). Only
+ * agents started from now on use it; running and finished runs keep their snapshot.
+ */
+export const setForSession = mutation({
+  args: { workSessionId: v.id("workSessions"), workflowId: v.optional(v.id("agentWorkflows")) },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const owner = await requireUser(ctx);
+    const session = await ctx.db.get(args.workSessionId);
+    if (!session || session.ownerId !== owner._id) fail("NOT_FOUND");
+    if (args.workflowId) {
+      const workflow = await ownWorkflow(ctx, owner._id, args.workflowId);
+      if (workflow.productId !== session.productId) fail("WORKFLOW_MISMATCH");
+    }
+    await ctx.db.patch(session._id, { workflowId: args.workflowId, updatedAt: Date.now() });
+    return null;
   },
 });
