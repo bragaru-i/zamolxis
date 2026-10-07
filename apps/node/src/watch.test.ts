@@ -151,3 +151,30 @@ describe("pnpm zamolxis watch", () => {
     expect(commandText("git status")).toBe("git status");
   });
 });
+
+it("labels Home chat as the Orchestrator with its model, and a stop as not failed", () => {
+  const state = new WatchState(() => undefined);
+  const lines = [
+    row({
+      kind: "orchestrator.answer",
+      decision: "answer",
+      usage: { modelActual: "qwen/qwen3-coder-30b", totalTokens: 942 },
+    }),
+    row({
+      kind: "repository.plan",
+      tasks: [{}],
+      usage: { modelActual: "qwen", totalTokens: 9000 },
+    }),
+    row({
+      kind: "command.failed",
+      commandId: "c1",
+      code: "SUPERVISOR_STOPPED",
+      failure: { agent: "supervisor", runtime: "claude", model: "haiku", at: 5 },
+    }),
+  ].flatMap((value) => state.ingest(value));
+  expect(lines.map((line) => [line.who, line.text, line.tone])).toEqual([
+    ["Orchestrator", "answered (answer) · qwen/qwen3-coder-30b · 942 tokens", "ok"],
+    ["Supervisor", "planned 1 task · qwen · 9.0k tokens", "ok"],
+    ["Supervisor", "stopped · claude haiku", "dim"],
+  ]);
+});
