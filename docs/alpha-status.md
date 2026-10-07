@@ -496,6 +496,13 @@ module aliases exist only when the variable is set.
   computer offers are dropped, and a role left empty uses the product's Default. An open
   Session has a Workflow picker (`workflows.setForSession`, next agents only).
 
+- **Per-computer workflow and steady Settings (2026-10-07):** `repositoryLocations.defaultWorkflowId`
+  (`workflows.setForLocation`) is the workflow new work on that repository starts with on that
+  computer; `submitText` applies it when no workflow was chosen (`defaultWorkflow` asks for
+  the Default explicitly). Settings → Computers shows it per repository; the review sheet
+  pre-selects the chosen computer's. The wide Settings sheet has a fixed height, so switching
+  pages no longer resizes and re-centres it (it moved about 100 px before).
+
 ## Next steps, in order
 
 1. For #114, re-run a logo-redesign-sized task and compare the Builder's processed
