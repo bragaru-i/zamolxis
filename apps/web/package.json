@@ -11,6 +11,7 @@
   "dependencies": {
     "@convex-dev/auth": "^0.0.96",
     "@zamolxis/ui": "workspace:*",
+    "cmdk": "^1.1.1",
     "convex": "^1.27.3",
     "next": "^15.5.4",
     "react": "^19.1.1",

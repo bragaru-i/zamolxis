@@ -20,6 +20,7 @@ import {
   useScrollLock,
   useWide,
 } from "@zamolxis/ui";
+import { Command } from "cmdk";
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { api } from "../../../../convex/_generated/api";
@@ -142,12 +143,16 @@ export function SessionList({
         <div className="z-home-nav__connection">{indicator}</div>
       </div>
       <div className="z-home-nav__scroll">
-        <TextInput
-          value={search}
-          aria-label="Search chats and work sessions"
-          placeholder="Search…"
-          onChange={(event) => setSearch(event.target.value)}
-        />
+        {/* The lists below do the filtering by title, so cmdk only provides the search field. */}
+        <Command label="Search chats and work sessions" shouldFilter={false}>
+          <Command.Input
+            className="z-input"
+            value={search}
+            aria-label="Search chats and work sessions"
+            placeholder="Search…"
+            onValueChange={setSearch}
+          />
+        </Command>
         <div className="z-row z-row--between">
           <h2 className="z-section-title">Chats</h2>
           <span className="z-xsmall z-muted">{chats?.length ?? ""}</span>
