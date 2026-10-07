@@ -60,6 +60,7 @@ import {
 } from "../trace/steps";
 import { SupervisorLog, type SupervisorLogBatch } from "../trace/supervisor-log";
 import { type CheckEvidence, runVerificationChecks } from "../verification/checks";
+import { updateLockfile } from "../verification/lockfile";
 import type { WorkspaceManager } from "../workspace/workspace-manager";
 import { PROOF_MAX_FILES, type ProofFile, takeChangedImages, takeProof } from "./proof";
 
@@ -1133,6 +1134,9 @@ export class ControlPlaneDriver {
       if (context.role !== "verifier" && state === "completed") {
         const at = Date.now();
         const before = workspace.headSha ?? workspace.baseSha;
+        // A new dependency from an offline agent gets its lockfile entry before the commit.
+        const lockfile = await updateLockfile(workspace.path);
+        if (lockfile) trace.record(checkStep(`${commandId}:lockfile`, 0, lockfile, before));
         try {
           commitCandidate(workspace.path);
         } catch (error) {
