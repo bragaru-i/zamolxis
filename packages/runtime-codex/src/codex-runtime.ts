@@ -1,6 +1,6 @@
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { delimiter, isAbsolute, join, relative, resolve } from "node:path";
 import type {
   ApprovalDecision,
   ApprovalKind,
@@ -18,6 +18,7 @@ import {
   classifyCommandRisk,
   insideWorkspace,
   maxRisk,
+  REQUIRED_USAGE_COUNTERS,
   RESTART_CONTINUATION,
   RESTART_INTERRUPTED_CODE,
   type ResumeRunInput,
@@ -26,7 +27,6 @@ import {
   type RuntimeSessionSnapshot,
   redactSecrets,
   type StartRunInput,
-  REQUIRED_USAGE_COUNTERS,
   type UsageCounter,
 } from "@zamolxis/runtime-core";
 import { knownCommit } from "@zamolxis/runtime-core/known-commits";
@@ -245,7 +245,14 @@ export class CodexRuntime implements AgentRuntime {
     const tmp = readOnly(input)
       ? undefined
       : realpathSync.native(mkdtempSync(join(tmpdir(), "zamolxis-run-")));
-    const env = tmp ? { TMPDIR: `${tmp}/` } : undefined;
+    const tools = input.workspace.toolPaths ?? [];
+    const env =
+      tmp || tools.length
+        ? {
+            ...(tmp ? { TMPDIR: `${tmp}/` } : {}),
+            ...(tools.length ? { PATH: [...tools, process.env.PATH ?? ""].join(delimiter) } : {}),
+          }
+        : undefined;
     const client =
       this.options.connect?.(input.workspace.cwd, env) ??
       new AppServerClient({

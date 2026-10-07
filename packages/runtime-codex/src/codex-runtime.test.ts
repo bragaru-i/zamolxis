@@ -378,6 +378,18 @@ describe("Codex native lifecycle", () => {
     h.connection.close();
     expect(existsSync(tmp)).toBe(false);
   });
+  it("puts the Node-prepared tool directories first on the agent's PATH", async () => {
+    const h = harness();
+    const base = input();
+    await h.runtime.start({
+      ...base,
+      workspace: { ...base.workspace, toolPaths: ["/tools/pnpm@10.17.1/node_modules/.bin"] },
+    });
+    const env = h.connect.mock.calls[0]?.[1];
+    expect(env?.PATH?.split(":")[0]).toBe("/tools/pnpm@10.17.1/node_modules/.bin");
+    expect(env?.TMPDIR).toMatch(/zamolxis-run-/);
+    await h.runtime.stop({ nativeSessionId: "native" });
+  });
   it("gives read-only roles no TMPDIR and no writable roots", async () => {
     const h = harness();
     await h.runtime.start({ ...input(), role: "verifier" });
