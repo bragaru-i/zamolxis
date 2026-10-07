@@ -2,7 +2,7 @@ import { type Infer, v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { type MutationCtx, mutation, type QueryCtx, query } from "./_generated/server";
 import { fail, load, requireNode, requireUser } from "./lib/access";
-import { agentChain, firstAvailable, resolveAgentProfile } from "./lib/agentProfiles";
+import { agentChain, firstAvailable, MAX_BACKUPS, resolveAgentProfile } from "./lib/agentProfiles";
 import { enqueue } from "./lib/commands";
 import type { failureDetail } from "./lib/failure";
 import { explicitlyRequestsWork } from "./lib/orchestration";
@@ -529,25 +529,61 @@ async function workLinks(
   return [...links, ...prs, ...tasks, ...runs].slice(0, MAX_LINKS);
 }
 
-// The Orchestrator model runs on one of the owner's online Nodes: the first agent of the
-// Orchestrator's chain (its own, then its backups) that such a Node has. Without one the
-// deterministic answer stands.
+// The workflow a computer starts new work of this product with (Settings → Computers).
+async function computerWorkflow(
+  ctx: MutationCtx,
+  workstationId: Id<"workstations">,
+  productId: Id<"products">,
+) {
+  const locations = await ctx.db
+    .query("repositoryLocations")
+    .withIndex("by_workstation", (q) => q.eq("workstationId", workstationId))
+    .take(65);
+  for (const location of locations) {
+    if (!location.defaultWorkflowId || location.status === "removed") continue;
+    const repository = await ctx.db.get("repositories", location.repositoryId);
+    if (repository?.productId !== productId) continue;
+    const workflow = await ctx.db.get("agentWorkflows", location.defaultWorkflowId);
+    if (workflow && workflow.archivedAt === undefined && workflow.productId === productId)
+      return workflow._id;
+  }
+  return undefined;
+}
+
+// The Orchestrator model runs on one of the owner's online Nodes. Each computer offers the
+// Orchestrator of its saved workflow for the product (else the product's Default); a first
+// choice on any computer beats a backup on another. Without one the deterministic answer
+// stands.
 async function orchestratorTarget(
   ctx: MutationCtx,
   ownerId: Id<"users">,
   productId: Id<"products"> | undefined,
 ) {
-  const effective = await resolveAgentProfile(ctx, ownerId, productId, "orchestrator");
   const devices = (
     await ctx.db
       .query("workstations")
       .withIndex("by_owner_status", (q) => q.eq("ownerId", ownerId).eq("status", "online"))
       .take(10)
   ).filter((device) => (device.lastHeartbeatAt ?? 0) > Date.now() - HEARTBEAT_FRESH_MS);
-  for (const choice of agentChain(effective.profile, effective.runtime))
-    for (const device of devices)
-      if (await firstAvailable(ctx, device._id, [choice]))
+  const candidates = [];
+  for (const device of devices) {
+    const flow = productId ? await computerWorkflow(ctx, device._id, productId) : undefined;
+    const effective = await resolveAgentProfile(
+      ctx,
+      ownerId,
+      productId,
+      "orchestrator",
+      undefined,
+      flow,
+    );
+    candidates.push({ device, effective, chain: agentChain(effective.profile, effective.runtime) });
+  }
+  for (let position = 0; position <= MAX_BACKUPS; position++)
+    for (const { device, effective, chain } of candidates) {
+      const choice = chain[position];
+      if (choice && (await firstAvailable(ctx, device._id, [choice])))
         return { workstationId: device._id, choice, profile: effective.profile };
+    }
   return undefined;
 }
 

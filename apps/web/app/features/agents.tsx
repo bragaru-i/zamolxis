@@ -381,6 +381,7 @@ export function AgentsSettings({
   devices,
   initialRole,
   initialScope = "",
+  initialWorkflow = "",
   compact = false,
 }: {
   active: boolean;
@@ -388,12 +389,14 @@ export function AgentsSettings({
   /** Opens one role directly, e.g. from a Session's work map. */
   initialRole?: Role;
   initialScope?: string;
+  /** Opens one of the product's workflows, e.g. the one a Session uses. */
+  initialWorkflow?: string;
   /** Only the editor for `initialRole`, for a surface that already describes the role. */
   compact?: boolean;
 }) {
   const [scope, setScope] = useState(initialScope);
   // "" is the product's Default; otherwise one of its named workflows.
-  const [workflow, setWorkflow] = useState("");
+  const [workflow, setWorkflow] = useState(initialWorkflow);
   const [editing, setEditing] = useState<Role | undefined>(initialRole);
   const [saved, setSaved] = useState(false);
   const [switching, setSwitching] = useState(false);

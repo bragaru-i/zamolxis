@@ -206,7 +206,7 @@ export function currentStep(steps: WorkStep[]): WorkStep | undefined {
 export function stepAgent(
   role: Role,
   runs: MapRun[],
-  profiles: { product?: Profile[]; global?: Profile[] },
+  profiles: { product?: Profile[]; global?: Profile[]; workflow?: Profile[] },
   fallback = DEFAULT_RUNTIME,
 ): string {
   const latest = [...runs]
@@ -214,7 +214,15 @@ export function stepAgent(
     .sort((a, b) => b._creationTime - a._creationTime)[0];
   if (latest)
     return `${runtimeLabel(latest.runtime)} · ${latest.modelActual ?? latest.modelRequested ?? "default model"}`;
-  const effective = effectiveProfile(role, profiles.product, profiles.global ?? []).profile;
+  // The Session's workflow first, then the product's Default, then All products.
+  const effective = effectiveProfile(
+    role,
+    profiles.product,
+    profiles.global ?? [],
+    profiles.workflow,
+  ).profile;
+  if (role === "verifier" && effective?.verification === "checks_only")
+    return "Checks only (no AI)";
   return effective ? describeProfile(effective) : `${runtimeLabel(fallback)} · default model`;
 }
 
@@ -229,12 +237,15 @@ const STATE_LABEL: Record<StepState, string> = {
 export function WorkMap({
   ready,
   productId,
+  workflowId,
   sessionStatus,
   tasks,
   runs,
 }: {
   ready: boolean;
   productId: Id<"products"> | undefined;
+  /** The Session's workflow (absent: the product's Default). */
+  workflowId?: Id<"agentWorkflows"> | undefined;
   sessionStatus: string;
   tasks: MapTask[];
   runs: MapRun[];
@@ -246,6 +257,10 @@ export function WorkMap({
   const product = useQuery(api.agentProfiles.list, ready && productId ? { productId } : "skip") as
     | Profile[]
     | undefined;
+  const workflow = useQuery(
+    api.agentProfiles.list,
+    ready && productId && workflowId ? { productId, workflowId } : "skip",
+  ) as Profile[] | undefined;
   const devices = useQuery(api.workstations.listMine, ready && changing ? {} : "skip") as
     | Array<{ status: string; runtimes: Array<{ runtime: string; status: string }> }>
     | undefined;
@@ -254,7 +269,11 @@ export function WorkMap({
     DEFAULT_RUNTIME;
   const steps = workSteps({ sessionStatus, tasks, runs });
   const now = currentStep(steps);
-  const profiles = { ...(product ? { product } : {}), ...(global ? { global } : {}) };
+  const profiles = {
+    ...(product ? { product } : {}),
+    ...(global ? { global } : {}),
+    ...(workflow ? { workflow } : {}),
+  };
   const selected = steps.find((step) => step.key === openStep);
   return (
     <section className="z-flow-card" aria-label="How this work moves">
@@ -330,6 +349,7 @@ export function WorkMap({
                 initialRole={selected.role}
                 compact
                 {...(productId ? { initialScope: productId } : {})}
+                {...(workflowId ? { initialWorkflow: workflowId } : {})}
               />
             ) : (
               <button
