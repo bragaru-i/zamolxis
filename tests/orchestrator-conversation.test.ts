@@ -976,3 +976,22 @@ it("answers Home chat with the Orchestrator of the computer's saved workflow", a
   });
   expect(await ask("h-2")).toMatchObject({ runtime: "local", model: "qwen/qwen3-coder-30b" });
 });
+
+it("lets Codex + local model plan and check, never build or repair", async () => {
+  const f = await fixture();
+  const profile = (role: "supervisor" | "verifier" | "builder" | "repair") =>
+    f.user.mutation(api.agentProfiles.upsert, {
+      name: role,
+      role,
+      runtime: "codex-local",
+      model: "qwen/qwen3-coder-30b",
+      enabled: true,
+    });
+  await profile("supervisor");
+  await profile("verifier");
+  await expect(profile("builder")).rejects.toThrow("INVALID_ARGUMENT");
+  await expect(profile("repair")).rejects.toThrow("INVALID_ARGUMENT");
+  await expect(
+    f.user.mutation(api.agentProfiles.setRuntimeForAllRoles, { runtime: "codex-local" }),
+  ).rejects.toThrow("INVALID_ARGUMENT");
+});

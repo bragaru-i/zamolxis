@@ -60,6 +60,8 @@ const RUNTIME_LABEL: Record<string, string> = {
   codex: "Codex",
   claude: "Claude",
   hermes: "Hermes",
+  local: "Local model",
+  "codex-local": "Codex + local model",
   fake: "Test runtime",
 };
 export const MODALITY_LABEL: Record<string, string> = {

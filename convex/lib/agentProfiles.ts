@@ -40,8 +40,13 @@ const ONLINE_WINDOW_MS = 45_000;
  * the Orchestrator may use them; roles that read or change a repository never.
  */
 export const TEXT_ONLY_RUNTIMES: readonly string[] = ["local"];
+/** Runtimes driving a local model through Codex's tools: they read, never build or repair. */
+export const READ_ONLY_RUNTIMES: readonly string[] = ["codex-local"];
+const READING_ROLES = ["orchestrator", "supervisor", "verifier"];
 export function runtimeAllowedFor(role: string, runtime: string): boolean {
-  return role === "orchestrator" || !TEXT_ONLY_RUNTIMES.includes(runtime);
+  if (TEXT_ONLY_RUNTIMES.includes(runtime)) return role === "orchestrator";
+  if (READ_ONLY_RUNTIMES.includes(runtime)) return READING_ROLES.includes(role);
+  return true;
 }
 
 export async function defaultRuntime(ctx: QueryCtx, ownerId: Id<"users">): Promise<string> {
@@ -66,7 +71,8 @@ export async function defaultRuntime(ctx: QueryCtx, ownerId: Id<"users">): Promi
       if (
         installation.status !== "available" ||
         !installation.capabilities.includes("start") ||
-        TEXT_ONLY_RUNTIMES.includes(installation.runtime)
+        TEXT_ONLY_RUNTIMES.includes(installation.runtime) ||
+        READ_ONLY_RUNTIMES.includes(installation.runtime)
       )
         continue;
       anywhere.add(installation.runtime);

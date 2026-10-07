@@ -503,6 +503,17 @@ module aliases exist only when the variable is set.
   pre-selects the chosen computer's. The wide Settings sheet has a fixed height, so switching
   pages no longer resizes and re-centres it (it moved about 100 px before).
 
+- **Codex + local model (2026-10-07):** runtime `codex-local` is a second `CodexRuntime`
+  (`local: { id, modelProvider, models }`) whose threads use Codex's built-in `lmstudio` /
+  `ollama` provider. Reading roles only (`READ_ONLY_RUNTIMES`; adapter refuses others).
+  Advertised while the server answers and LM Studio reports a loaded context ≥ 32,768
+  (`/api/v0/models`); at 8,192 Codex fails with "tokens to keep … greater than the context
+  length". Real check: as Supervisor in a repository copy, 10 calls, 167k local tokens, 58 s,
+  correct file found. Claude Code + local model was tried (LM Studio answers `/v1/messages`)
+  and rejected: the same question was still running after 10 minutes.
+  **Fixed:** the daemon's Codex `connect`/`launch` dropped the per-run env, so #132's TMPDIR
+  and #133's prepared PATH never reached real Codex agents until this change.
+
 ## Next steps, in order
 
 1. For #114, re-run a logo-redesign-sized task and compare the Builder's processed
