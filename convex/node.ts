@@ -11,6 +11,7 @@ import { mutation, query } from "./_generated/server";
 import { applyApprovalEvent, expireRunApprovals } from "./approvals";
 import { failPublish, publishRecorded } from "./integration";
 import { bounded, fail, load, nodeRun, requireNode } from "./lib/access";
+import { boundFailure, failureDetail } from "./lib/failure";
 import { decideVerification, refreshSession } from "./lib/lifecycle";
 import { canonicalRepository } from "./lib/repositories";
 import { recordCleanupFailure, recordCleanupRemoved } from "./lib/retention";
@@ -321,7 +322,13 @@ export const completeCommand = mutation({
   },
 });
 export const failCommand = mutation({
-  args: { ...deviceArgs, commandId: v.id("commands"), instanceId: v.string(), code: v.string() },
+  args: {
+    ...deviceArgs,
+    commandId: v.id("commands"),
+    instanceId: v.string(),
+    code: v.string(),
+    failure: v.optional(failureDetail),
+  },
   returns: v.null(),
   handler: async (ctx, args) => {
     const device = await requireNode(ctx, args.workstationId);
@@ -333,10 +340,12 @@ export const failCommand = mutation({
     if (command.workstationId !== args.workstationId) fail("FORBIDDEN");
     if (command.status === "failed") return null;
     if (!["claimed", "acknowledged"].includes(command.status)) fail("INVALID_STATE");
+    const failure = args.failure ? boundFailure(args.failure) : undefined;
     await ctx.db.patch("commands", command._id, {
       status: "failed",
       error: args.code,
       completedAt: Date.now(),
+      ...(failure ? { failure } : {}),
     });
     // A failed publication is reported on the task; the trusted work itself is unaffected.
     if (command.type === "integration.publish") {
@@ -345,7 +354,7 @@ export const failCommand = mutation({
     }
     // Without a model reply the deterministic answer stands; no Session needs input.
     if (command.type === "orchestrator.answer") {
-      await settleFailedAnswer(ctx, command.targetId, args.code);
+      await settleFailedAnswer(ctx, command.targetId, args.code, failure);
       return null;
     }
     // A refused or failed cleanup is recorded on the worktree; nothing else needs input.
@@ -563,6 +572,19 @@ export const ingestBatch = mutation({
           : {}),
         ...(event.type === "run.activity" && typeof event.payload?.label === "string"
           ? { activityLabel: event.payload.label }
+          : {}),
+        ...(event.type === "run.failed"
+          ? {
+              failure: {
+                ...(typeof event.payload?.code === "string"
+                  ? { code: event.payload.code.slice(0, 64) }
+                  : {}),
+                ...(typeof event.payload?.message === "string"
+                  ? { reason: event.payload.message.slice(0, 400) }
+                  : {}),
+                at: event.occurredAt,
+              },
+            }
           : {}),
       });
       run = { ...run, ...usage, status };

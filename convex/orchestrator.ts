@@ -1,9 +1,10 @@
-import { v } from "convex/values";
+import { type Infer, v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { type MutationCtx, mutation, type QueryCtx, query } from "./_generated/server";
 import { fail, load, requireNode, requireUser } from "./lib/access";
 import { resolveAgentProfile } from "./lib/agentProfiles";
 import { enqueue } from "./lib/commands";
+import type { failureDetail } from "./lib/failure";
 import { explicitlyRequestsWork } from "./lib/orchestration";
 import { assertUsage, submitText, usageArgs } from "./supervisor";
 
@@ -669,7 +670,12 @@ export const openProposal = mutation({
 });
 
 /** The Node could not produce a model reply: the deterministic answer stands. */
-export async function settleFailedAnswer(ctx: MutationCtx, targetId: string, code: string) {
+export async function settleFailedAnswer(
+  ctx: MutationCtx,
+  targetId: string,
+  code: string,
+  failure?: Infer<typeof failureDetail>,
+) {
   const id = ctx.db.normalizeId("orchestratorMessages", targetId);
   if (!id) return;
   const message = await ctx.db.get(id);
@@ -678,5 +684,6 @@ export async function settleFailedAnswer(ctx: MutationCtx, targetId: string, cod
       status: "answered",
       answeredBy: "deterministic",
       modelError: code.slice(0, 64),
+      ...(failure ? { failure } : {}),
     });
 }

@@ -320,14 +320,25 @@ describe("repository.plan through a Supervisor run", { timeout: 30_000 }, () => 
     const failing = fixture(() => [{ type: "failure", message: "boom" }]);
     const first = await failing.plan("Question");
     expect(failing.deliveries).toEqual([
-      { kind: "command.failed", commandId: first.id, code: "SUPERVISOR_FAILED" },
+      {
+        kind: "command.failed",
+        commandId: first.id,
+        code: "SUPERVISOR_FAILED",
+        // Who failed and why reaches the owner, not only the code.
+        failure: { agent: "supervisor", runtime: "fake", reason: "boom", at: expect.any(Number) },
+      },
     ]);
     expect(failing.store.getWorkspaceLease("plan")).toBeUndefined();
 
     const waiting = fixture(() => [{ type: "waiting", reason: "Needs approval" }]);
     const second = await waiting.plan("Question");
     expect(waiting.deliveries).toEqual([
-      { kind: "command.failed", commandId: second.id, code: "SUPERVISOR_INCOMPLETE" },
+      {
+        kind: "command.failed",
+        commandId: second.id,
+        code: "SUPERVISOR_INCOMPLETE",
+        failure: { agent: "supervisor", runtime: "fake", at: expect.any(Number) },
+      },
     ]);
     expect(waiting.store.getWorkspaceLease("plan")).toBeUndefined();
     expect((await waiting.runtime.inspect(`fake:supervisor:${second.textCommandId}`)).state).toBe(
@@ -763,11 +774,14 @@ describe("Supervisor activity log", { timeout: 30_000 }, () => {
       ["discovery", "Repository discovered", "passed"],
       ["supervisor", "Supervisor failed", "failed"],
       ["message", "Note", "passed"],
+      ["message", "Model error", "failed"],
       ["supervisor", "No answer", "failed"],
     ]);
     // The Node redacts again whatever the adapter reported.
     expect(steps[2]?.detail).toBe("Starting with PASSWORD=***");
-    expect(steps[3]?.detail).toBe("Failure: SUPERVISOR_FAILED");
+    // The provider's reason is its own step, so the owner sees why it failed.
+    expect(steps[3]?.detail).toBe("boom");
+    expect(steps[4]?.detail).toBe("Failure: SUPERVISOR_FAILED");
   });
   it("keeps the log bounded and says how many later steps were not recorded", async () => {
     const tools: FakeStep[] = Array.from({ length: 400 }, (_, index) => ({
@@ -893,7 +907,12 @@ describe("Supervisor progress and stop", { timeout: 30_000 }, () => {
     await ticking;
     expect(f.deliveries).toEqual([
       { kind: "command.complete", commandId: stop.commandId },
-      { kind: "command.failed", commandId: command.commandId, code: "SUPERVISOR_STOPPED" },
+      {
+        kind: "command.failed",
+        commandId: command.commandId,
+        code: "SUPERVISOR_STOPPED",
+        failure: { agent: "supervisor", runtime: "fake", at: expect.any(Number) },
+      },
     ]);
     expect(f.state.pending).toEqual([]);
     // What it did before the stop stays visible.
@@ -933,7 +952,12 @@ describe("Supervisor progress and stop", { timeout: 30_000 }, () => {
     await ticking;
     expect(f.deliveries).toEqual([
       { kind: "command.complete", commandId: stop.commandId },
-      { kind: "command.failed", commandId: command.commandId, code: "SUPERVISOR_STOPPED" },
+      {
+        kind: "command.failed",
+        commandId: command.commandId,
+        code: "SUPERVISOR_STOPPED",
+        failure: { agent: "supervisor", runtime: "fake", at: expect.any(Number) },
+      },
     ]);
     expect(f.store.getWorkspaceLease("plan")).toBeUndefined();
   });

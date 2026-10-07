@@ -1430,6 +1430,8 @@ it("keeps the deterministic answer when the Orchestrator model fails", async () 
     status: "answered",
     answeredBy: "deterministic",
     modelError: "ORCHESTRATOR_FAILED",
+    // Who failed, on which runtime, when and why, for the owner to see.
+    failure: { agent: "orchestrator", runtime: "fake", reason: "boom", at: expect.any(Number) },
     route: "answer",
     reply: before?.reply,
   });
@@ -1607,6 +1609,7 @@ it("shows a blocking Supervisor's progress and stops it from the owner's message
     stopped: true,
     planStatus: "failed",
     planError: "SUPERVISOR_STOPPED",
+    planFailure: { agent: "supervisor", at: expect.any(Number) },
     planned: false,
   });
   expect(roles).toEqual(["supervisor"]);

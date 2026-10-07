@@ -496,6 +496,21 @@ describe("approvals", { timeout: 60_000 }, () => {
   });
 });
 
+describe("failures", { timeout: 60_000 }, () => {
+  it("records why an agent run failed and when, for the owner", async () => {
+    const f = await fixture(
+      new FakeRuntime([{ type: "failure", message: "Codex turn failed: Quota exceeded" }]),
+    );
+    await f.driver.tick();
+    await f.until(async () => (await f.run()).status === "failed");
+    expect((await f.run()).failure).toEqual({
+      reason: "Codex turn failed: Quota exceeded",
+      at: expect.any(Number),
+    });
+    f.assertCanonicalUnchanged();
+  });
+});
+
 describe("steering", { timeout: 60_000 }, () => {
   it("sends a message to a streaming run through the control loop", async () => {
     const runtime = new LiveRuntime(approvalThenSuccess);

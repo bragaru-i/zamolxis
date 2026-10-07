@@ -346,8 +346,42 @@ export type Delivery =
       readonly orchestratorMessageId: string;
       readonly usage?: SupervisorUsage;
     } & OrchestratorDecision)
-  | { readonly kind: "command.failed"; readonly commandId: string; readonly code: string }
+  | {
+      readonly kind: "command.failed";
+      readonly commandId: string;
+      readonly code: string;
+      readonly failure?: FailureDetail;
+    }
   | { readonly kind: "command.complete"; readonly commandId: string };
+/**
+ * Who failed and why, for a Supervisor or Orchestrator turn: the agent, its runtime and
+ * model (requested and reported), the provider's redacted reason and when it failed.
+ */
+// A type, not an interface: it is sent as a plain Convex value.
+export type FailureDetail = {
+  readonly agent: "supervisor" | "orchestrator";
+  readonly runtime: string;
+  readonly model?: string;
+  readonly modelActual?: string;
+  readonly reason?: string;
+  readonly at: number;
+};
+const FAILURE_REASON_LIMIT = 400;
+class CapabilityFailure extends Error {
+  constructor(
+    code: string,
+    readonly detail: FailureDetail,
+  ) {
+    super(code);
+  }
+}
+function failureReason(event: NormalizedRunEventDto): string | undefined {
+  if (event.type !== "run.failed") return undefined;
+  const message = event.payload.message;
+  return typeof message === "string" && message.trim()
+    ? message.trim().slice(0, FAILURE_REASON_LIMIT)
+    : undefined;
+}
 /** The control plane's view of a run, returned by reconcile when it is known. */
 export interface RunReconciliation {
   readonly status?: string;
@@ -912,6 +946,7 @@ export class ControlPlaneDriver {
         kind: "command.failed",
         commandId: command.commandId,
         code: /^[A-Z_]{1,64}$/.test(message) ? message : "LOCAL_OPERATION_FAILED",
+        ...(error instanceof CapabilityFailure ? { failure: error.detail } : {}),
       });
     }
     if (!deliveries.some((delivery) => delivery.kind === "command.failed"))
@@ -1194,6 +1229,7 @@ export class ControlPlaneDriver {
       let summary: string | undefined;
       let activity: string | undefined;
       const usage: SupervisorUsage = {};
+      let reason: string | undefined;
       const report = () =>
         progress.update({
           textCommandId: payload.textCommandId,
@@ -1204,6 +1240,7 @@ export class ControlPlaneDriver {
       report();
       for await (const event of this.#follow(runtime, nativeSessionId, runId, workspaceId)) {
         log.observe(event);
+        reason = failureReason(event) ?? reason;
         // The Supervisor is read-only and Node-local: nobody can approve its requests.
         if (event.type === "approval.requested")
           await runtime.resolveApproval?.({
@@ -1235,12 +1272,20 @@ export class ControlPlaneDriver {
       log.ended(final.state, usage);
       // A Supervisor that finished before the stop reached it keeps its answer.
       if (final.state === "completed") return { ...(summary ? { summary } : {}), usage };
-      throw new Error(
+      throw new CapabilityFailure(
         planning.stop || final.state === "stopped"
           ? "SUPERVISOR_STOPPED"
           : final.state === "failed"
             ? "SUPERVISOR_FAILED"
             : "SUPERVISOR_INCOMPLETE",
+        {
+          agent: "supervisor",
+          runtime: runtimeId,
+          ...(payload.supervisor?.model ? { model: payload.supervisor.model } : {}),
+          ...(usage.modelActual ? { modelActual: usage.modelActual } : {}),
+          ...(reason ? { reason } : {}),
+          at: Date.now(),
+        },
       );
     } finally {
       planning.active = undefined;
@@ -1269,7 +1314,8 @@ export class ControlPlaneDriver {
     orchestrator?: SupervisorSelection;
   }): Promise<{ summary?: string; usage: SupervisorUsage }> {
     const runId = orchestratorRunId(payload.orchestratorMessageId);
-    const runtime = this.runtimes.get(this.#supervisorRuntime(payload.orchestrator?.runtime));
+    const runtimeId = this.#supervisorRuntime(payload.orchestrator?.runtime);
+    const runtime = this.runtimes.get(runtimeId);
     const cwd = realpathSync(mkdtempSync(join(tmpdir(), "zamolxis-orchestrator-")));
     let nativeSessionId: string | undefined;
     let settled = false;
@@ -1308,7 +1354,9 @@ export class ControlPlaneDriver {
       }, ORCHESTRATOR_TIMEOUT_MS);
       let summary: string | undefined;
       const usage: SupervisorUsage = {};
+      let reason: string | undefined;
       for await (const event of this.#follow(runtime, id, runId, runId)) {
+        reason = failureReason(event) ?? reason;
         if (event.type === "approval.requested")
           await runtime.resolveApproval?.({
             nativeSessionId: id,
@@ -1335,12 +1383,20 @@ export class ControlPlaneDriver {
       settled = TERMINAL.includes(final.state);
       if (final.state === "completed" && !timedOut)
         return { ...(summary ? { summary } : {}), usage };
-      throw new Error(
+      throw new CapabilityFailure(
         timedOut
           ? "ORCHESTRATOR_TIMEOUT"
           : final.state === "failed"
             ? "ORCHESTRATOR_FAILED"
             : "ORCHESTRATOR_INCOMPLETE",
+        {
+          agent: "orchestrator",
+          runtime: runtimeId,
+          ...(payload.orchestrator?.model ? { model: payload.orchestrator.model } : {}),
+          ...(usage.modelActual ? { modelActual: usage.modelActual } : {}),
+          ...(reason ? { reason } : {}),
+          at: Date.now(),
+        },
       );
     } finally {
       if (timer) clearTimeout(timer);

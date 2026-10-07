@@ -2,6 +2,7 @@ import { authTables } from "@convex-dev/auth/server";
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { approvalPolicy } from "./lib/approvalPolicy";
+import { failureDetail, runFailure } from "./lib/failure";
 import { verification } from "./lib/verification";
 
 // Supervisor log steps (mirrors packages/contracts/src/trace/supervisor-log.ts).
@@ -315,6 +316,8 @@ export default defineSchema({
     status: v.optional(v.union(v.literal("thinking"), v.literal("answered"))),
     answeredBy: v.optional(v.union(v.literal("model"), v.literal("deterministic"))),
     modelError: v.optional(v.string()),
+    // Who failed and why (lib/failure), when the Node reported it.
+    failure: v.optional(failureDetail),
     // An inert proposal: nothing starts until the owner opens it into a Session.
     proposal: v.optional(v.string()),
     proposalSessionId: v.optional(v.id("workSessions")),
@@ -617,6 +620,8 @@ export default defineSchema({
     activityLabel: v.optional(v.string()),
     resultSummary: v.optional(v.string()),
     exitReason: v.optional(v.string()),
+    // The runtime's run.failed code and reason (lib/failure).
+    failure: v.optional(runFailure),
     startedAt: v.optional(v.number()),
     lastActivityAt: v.number(),
     heartbeatAt: v.optional(v.number()),
@@ -660,6 +665,8 @@ export default defineSchema({
     payload: v.any(),
     result: v.optional(v.any()),
     error: v.optional(v.string()),
+    // Supervisor/Orchestrator failures: who failed and why (lib/failure).
+    failure: v.optional(failureDetail),
     createdAt: v.number(),
     claimedAt: v.optional(v.number()),
     acknowledgedAt: v.optional(v.number()),

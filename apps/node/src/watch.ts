@@ -32,7 +32,23 @@ interface RunState {
   activity?: string | undefined;
   waiting: number;
   warned: boolean;
+  model?: string | undefined;
 }
+/** A command this Node ran, for failures reported without details (older Nodes). */
+export interface CommandInfo {
+  readonly type: string;
+  readonly runtime?: string;
+  readonly model?: string;
+}
+const AGENTS: Record<string, string> = {
+  supervisor: "Supervisor",
+  orchestrator: "Assistant",
+  "repository.plan": "Supervisor",
+  "orchestrator.answer": "Assistant",
+};
+// "Codex turn failed: <reason>" repeats what the line already says.
+const reasonText = (value: unknown) =>
+  text(value, 300).replace(/^(Codex|Claude) turn failed:?\s*/i, "");
 
 const LABELS: Record<string, string> = {
   builder: "Builder",
@@ -74,7 +90,10 @@ export class WatchState {
   supervisorTokens = 0;
   supervisorCalls = 0;
 
-  constructor(private readonly roleOf: (runId: string) => RunRole | undefined) {}
+  constructor(
+    private readonly roleOf: (runId: string) => RunRole | undefined,
+    private readonly commandOf: (commandId: string) => CommandInfo | undefined = () => undefined,
+  ) {}
 
   get agentTokens(): number {
     let total = 0;
@@ -148,6 +167,23 @@ export class WatchState {
           add("Supervisor", `failed: ${text(note?.detail) || text(failed.label)}`, "fail");
         break;
       }
+      case "command.failed": {
+        // Who failed, on which model, and why: from the Node's report, else from the command.
+        const failure = object(payload.failure);
+        const command = this.commandOf(text(payload.commandId, 200));
+        const who = AGENTS[text(failure.agent, 40)] ?? AGENTS[command?.type ?? ""] ?? "Node";
+        const runtime = text(failure.runtime, 40) || command?.runtime;
+        const model = text(failure.modelActual, 80) || text(failure.model, 80) || command?.model;
+        const reason = reasonText(failure.reason);
+        const engine = [runtime, model].filter(Boolean).join(" ");
+        if (typeof failure.at === "number") when = failure.at;
+        add(
+          who,
+          `failed${engine ? ` · ${engine}` : ""} · ${reason || text(payload.code, 64).replaceAll("_", " ").toLowerCase()}`,
+          "fail",
+        );
+        break;
+      }
       case "workspace.ready":
         add("Node", "worktree ready", "dim");
         break;
@@ -209,6 +245,7 @@ export class WatchState {
               add(run.who, `“${text(data.text, 140)}”`, "dim");
               break;
             case "run.usage": {
+              if (typeof data.modelActual === "string") run.model = text(data.modelActual, 80);
               const total = number(data.totalTokens);
               if (total !== undefined) run.tokens = Math.max(run.tokens, total);
               if (!run.warned && run.tokens > HEAVY_RUN_TOKENS) {
@@ -228,9 +265,17 @@ export class WatchState {
                     : "stopped";
               run.waiting = 0;
               run.activity = undefined;
+              const reason = run.state === "failed" ? reasonText(data.message) : "";
               add(
                 run.who,
-                `${run.state} · ${formatTokens(run.tokens)} tokens`,
+                [
+                  run.state,
+                  run.state === "failed" ? run.model : undefined,
+                  `${formatTokens(run.tokens)} tokens`,
+                  reason || undefined,
+                ]
+                  .filter(Boolean)
+                  .join(" · "),
                 run.state === "completed" ? "ok" : "fail",
               );
               break;
@@ -349,7 +394,21 @@ export async function watch(options: { once?: boolean } = {}): Promise<void> {
   const rows = db.prepare(
     "SELECT rowid AS id, created_at AS createdAt, payload_json AS payload FROM event_outbox WHERE rowid > ? AND created_at >= ? ORDER BY rowid",
   );
-  const state = new WatchState(roleOf);
+  const commandQuery = db.prepare(
+    "SELECT type, payload_json FROM command_executions WHERE command_id = ?",
+  );
+  const commandOf = (commandId: string): CommandInfo | undefined => {
+    const row = commandQuery.get(commandId) as { type: string; payload_json: string } | undefined;
+    if (!row) return undefined;
+    const payload = object(JSON.parse(row.payload_json));
+    const agent = object(payload.supervisor ?? payload.orchestrator);
+    return {
+      type: row.type,
+      ...(agent.runtime ? { runtime: text(agent.runtime, 40) } : {}),
+      ...(agent.model ? { model: text(agent.model, 80) } : {}),
+    };
+  };
+  const state = new WatchState(roleOf, commandOf);
   const painter = (): Painter => ({
     color: !!process.stdout.isTTY && !process.env.NO_COLOR,
     width: Math.max(40, process.stdout.columns ?? 100),

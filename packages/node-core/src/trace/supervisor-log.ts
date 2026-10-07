@@ -260,6 +260,18 @@ export class SupervisorLog {
           detail: event.payload.text,
         });
         return;
+      case "run.failed":
+        this.#closePhase(at);
+        this.record({
+          stepId: this.#id("message"),
+          kind: "message",
+          label: "Model error",
+          status: "failed",
+          startedAt: at,
+          finishedAt: at,
+          detail: event.payload.message,
+        });
+        return;
       case "approval.requested":
         this.#closePhase(at);
         this.record({

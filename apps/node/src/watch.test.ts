@@ -87,6 +87,38 @@ describe("pnpm zamolxis watch", () => {
     expect(state.supervisorTokens).toBe(27_200);
     expect(state.supervisorCalls).toBe(2);
   });
+  it("says who failed, on which model and why", () => {
+    const state = new WatchState(
+      () => ({ role: "builder" }),
+      (commandId) =>
+        commandId === "old" ? { type: "orchestrator.answer", runtime: "codex" } : undefined,
+    );
+    const lines = [
+      row({
+        kind: "command.failed",
+        commandId: "new",
+        code: "SUPERVISOR_FAILED",
+        failure: {
+          agent: "supervisor",
+          runtime: "claude",
+          model: "claude-opus-5-5",
+          reason: "Claude turn failed: You've hit your session limit",
+          at: 42,
+        },
+      }),
+      row({ kind: "command.failed", commandId: "old", code: "ORCHESTRATOR_FAILED" }),
+      events("run-abcd", [
+        { type: "run.usage", payload: { modelActual: "gpt-6.1-sol", totalTokens: 9_000 } },
+        { type: "run.failed", payload: { message: "Codex turn failed: Quota exceeded" } },
+      ]),
+    ].flatMap((value) => state.ingest(value));
+    expect(lines.map((line) => [line.who, line.text, line.tone])).toEqual([
+      ["Supervisor", "failed · claude claude-opus-5-5 · You've hit your session limit", "fail"],
+      ["Assistant", "failed · codex · orchestrator failed", "fail"],
+      ["Builder abcd", "failed · gpt-6.1-sol · 9.0k tokens · Quota exceeded", "fail"],
+    ]);
+    expect(lines[0]?.at).toBe(42);
+  });
   it("renders a status block with today's total that fits the terminal", () => {
     const state = new WatchState(() => ({ role: "verifier" }));
     state.ingest(events("run-wxyz", [{ type: "run.usage", payload: { totalTokens: 2_590_000 } }]));
