@@ -2,6 +2,7 @@ import { convexTest } from "convex-test";
 import { expect, it } from "vitest";
 import { api } from "../convex/_generated/api";
 import { starterChains } from "../convex/agents";
+import { asksAboutWork } from "../convex/orchestrator";
 import type { Id } from "../convex/_generated/dataModel";
 import schema from "../convex/schema";
 import { seedHuman } from "./fixtures/auth";
@@ -1220,4 +1221,15 @@ it("gives each computer its own workflow, with a project's own as the exception"
       workflowId: save,
     }),
   ).rejects.toThrow();
+});
+
+it("shows Sessions as buttons only for a question about work", () => {
+  for (const text of ["What's going on?", "status", "How is the checkout fix?", "any PRs?"])
+    expect(asksAboutWork(text)).toBe(true);
+  for (const text of [
+    "from sidebar remove usage and settings, as its present in fitlers the top right bar",
+    "can you remove the dark mode toggle?",
+    "add a delete button to each chat",
+  ])
+    expect(asksAboutWork(text)).toBe(false);
 });
