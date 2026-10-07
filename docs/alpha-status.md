@@ -518,6 +518,18 @@ module aliases exist only when the variable is set.
   profiles still resolve (Session workflow → product → Default) but Settings no longer
   shows them.
 
+- **Agents get context; the Checker judges the request (2026-10-08, #162, #163):** the
+  Node reads the repository's `.zamolxis/code-map.md` (area -> files, bounded, redacted;
+  optional) and gives it to the planner, Builder, Repair and reviewing Verifier. A reviewing
+  Verifier ends with `{"acceptance":[{point, met: true|false|null, where}]}`; the Node turns
+  it into `acceptance` evidence. A point not met is failed evidence and so can only block
+  trust (Repair gets the reason); trust still needs the deterministic checks. `null` (cannot
+  be judged from the repository) never blocks; instructions about how to work are not
+  points (a real Codex run blocked "do not run Git" before that rule). Failed checks keep
+  their last output lines in the evidence, so Repair sees the real error. Builders are told
+  which package scripts the Verifier will run. **Gap:** "Checks only" workflows still skip
+  the review; the owner's "Mac > New Local" uses it.
+
 - **Codex + local model (2026-10-07):** runtime `codex-local` is a second `CodexRuntime`
   (`local: { id, modelProvider, models }`) whose threads use Codex's built-in `lmstudio` /
   `ollama` provider. Reading roles only (`READ_ONLY_RUNTIMES`; adapter refuses others).
