@@ -426,6 +426,8 @@ export default defineSchema({
     reopenedAt: v.optional(v.number()),
     // The computer this Session's work runs on: chosen by the owner or picked at creation.
     // Follow-ups stay there (its worktrees hold the work). Absent on Sessions from before.
+    // The product workflow the Session uses (absent: the product's Default).
+    workflowId: v.optional(v.id("agentWorkflows")),
     workstationId: v.optional(v.id("workstations")),
   })
     .index("by_owner_activity", ["ownerId", "lastActivityAt"])
@@ -555,9 +557,21 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_owner", ["ownerId"]),
 
+  // A product's named set of agent settings (one profile per role, `agentProfiles.workflowId`).
+  // Each product also has an implicit Default: its profiles without a workflow.
+  agentWorkflows: defineTable({
+    ownerId: v.id("users"),
+    productId: v.id("products"),
+    name: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    archivedAt: v.optional(v.number()),
+  }).index("by_product", ["productId"]),
   agentProfiles: defineTable({
     ownerId: v.id("users"),
     productId: v.optional(v.id("products")),
+    // A named workflow of the product (agentWorkflows); absent: the product's Default.
+    workflowId: v.optional(v.id("agentWorkflows")),
     name: v.string(),
     role: v.union(
       v.literal("orchestrator"),

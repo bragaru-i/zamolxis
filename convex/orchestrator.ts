@@ -638,6 +638,8 @@ export const openProposal = mutation({
     repositoryId: v.id("repositories"),
     // "Run on": the computer the new Session must use (see supervisor.submit).
     workstationId: v.optional(v.id("workstations")),
+    // The product workflow the new Session uses (absent: the product's Default).
+    workflowId: v.optional(v.id("agentWorkflows")),
   },
   returns: v.id("workSessions"),
   handler: async (ctx, args) => {
@@ -652,6 +654,7 @@ export const openProposal = mutation({
       text: `Open this work: ${message.proposal}`,
       idempotencyKey: `orchprop_${message._id}`.slice(0, 128),
       ...(args.workstationId ? { workstationId: args.workstationId } : {}),
+      ...(args.workflowId ? { workflowId: args.workflowId } : {}),
     });
     await ctx.db.patch("orchestratorMessages", message._id, { proposalSessionId: workSessionId });
     const session = await load(ctx, "workSessions", workSessionId);

@@ -40,7 +40,12 @@ export const get = query({
     const device = session.workstationId
       ? await ctx.db.get("workstations", session.workstationId)
       : null;
-    return { ...session, ...(device ? { workstationName: device.name } : {}) };
+    const workflow = session.workflowId ? await ctx.db.get(session.workflowId) : null;
+    return {
+      ...session,
+      ...(device ? { workstationName: device.name } : {}),
+      ...(workflow ? { workflowName: workflow.name } : {}),
+    };
   },
 });
 export const create = mutation({

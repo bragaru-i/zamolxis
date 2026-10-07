@@ -79,8 +79,10 @@ export async function defaultRuntime(ctx: QueryCtx, ownerId: Id<"users">): Promi
 }
 
 /**
- * Product -> owner/global -> default. The default is `fallback` when the caller has one
- * (a run already told which runtime it wants), else `defaultRuntime`.
+ * Workflow -> product Default -> owner/global -> default. A Session's workflow sets only the
+ * roles it has a profile for; the rest come from the product's Default (its profiles without
+ * a workflow), then the global ones. The default is `fallback` when the caller has one (a
+ * run already told which runtime it wants), else `defaultRuntime`.
  */
 export async function resolveAgentProfile(
   ctx: QueryCtx,
@@ -88,6 +90,7 @@ export async function resolveAgentProfile(
   productId: Id<"products"> | undefined,
   role: AgentRole,
   fallback?: string,
+  workflowId?: Id<"agentWorkflows">,
 ) {
   const rows = await ctx.db
     .query("agentProfiles")
@@ -95,10 +98,14 @@ export async function resolveAgentProfile(
     .take(101);
   if (rows.length > 100) fail("LIMIT_EXCEEDED");
   const enabled = rows.filter((row) => row.enabled);
-  const product = productId ? enabled.filter((row) => row.productId === productId) : [];
+  const workflow = workflowId ? enabled.filter((row) => row.workflowId === workflowId) : [];
+  const product = productId
+    ? enabled.filter((row) => row.productId === productId && row.workflowId === undefined)
+    : [];
   const global = enabled.filter((row) => row.productId === undefined);
-  if (product.length > 1 || global.length > 1) fail("AGENT_PROFILE_CONFLICT");
-  const profile = product[0] ?? global[0];
+  if (workflow.length > 1 || product.length > 1 || global.length > 1)
+    fail("AGENT_PROFILE_CONFLICT");
+  const profile = workflow[0] ?? product[0] ?? global[0];
   const runtime = profile?.runtime ?? fallback ?? (await defaultRuntime(ctx, ownerId));
   return { runtime, profile };
 }

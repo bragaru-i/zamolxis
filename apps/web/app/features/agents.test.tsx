@@ -66,6 +66,7 @@ import {
   scopeProfile,
   sharedRuntime,
   upsertArgs,
+  workflowSources,
 } from "./agents";
 
 const product = "p1" as Id<"products">;
@@ -169,6 +170,61 @@ describe("profile resolution", () => {
         "claude",
       ),
     ).toEqual(["claude", "codex"]);
+  });
+
+  it("resolves a workflow's role first, then the product's Default, then All products", () => {
+    const flow = profile({ role: "builder", model: "flow" });
+    const product = profile({ role: "verifier", model: "product" });
+    const global = profile({ role: "repair", model: "global" });
+    expect(effectiveProfile("builder", [product], [global], [flow])).toMatchObject({
+      source: "workflow",
+      profile: { model: "flow" },
+    });
+    expect(effectiveProfile("verifier", [product], [global], [flow]).source).toBe("product");
+    expect(effectiveProfile("repair", [product], [global], [flow]).source).toBe("global");
+    expect(effectiveProfile("supervisor", [product], [global], [flow]).source).toBe("default");
+  });
+
+  it("offers every product's Default and workflows to start from, and saves into a workflow", () => {
+    const products = [
+      { _id: "p1" as Id<"products">, name: "Shop" },
+      { _id: "p2" as Id<"products">, name: "Blog" },
+    ] as never[];
+    expect(
+      workflowSources(products, [
+        { _id: "w1" as Id<"agentWorkflows">, productId: "p2" as Id<"products">, name: "Cheap" },
+      ]).map((option) => option.label),
+    ).toEqual([
+      "Empty (every role uses the Default)",
+      "Shop · Default",
+      "Blog · Default",
+      "Blog · Cheap",
+    ]);
+    const args = upsertArgs({
+      role: "builder",
+      name: "Builder",
+      productId: "p1" as Id<"products">,
+      workflowId: "w1" as Id<"agentWorkflows">,
+      existing: undefined,
+      runtime: "codex",
+      model: "",
+      effort: "",
+      enabled: true,
+      maxConcurrency: "",
+    });
+    expect(args).toMatchObject({ productId: "p1", workflowId: "w1" });
+    // A workflow always belongs to a product: never sent for All products.
+    expect(
+      upsertArgs({
+        ...args,
+        workflowId: "w1" as Id<"agentWorkflows">,
+        productId: undefined,
+        existing: undefined,
+        model: "",
+        effort: "",
+        maxConcurrency: "",
+      } as never),
+    ).not.toHaveProperty("workflowId");
   });
 
   it("describes a role's chain and saves its backups", () => {

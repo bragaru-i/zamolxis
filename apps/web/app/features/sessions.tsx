@@ -595,6 +595,11 @@ function OpenProposal({
     repositoryId ? { repositoryId } : "skip",
   ) as Computer[] | undefined;
   const [workstationId, setWorkstationId] = useState<Id<"workstations"> | "">("");
+  // The product's workflows; "" is its Default.
+  const workflows = useQuery(api.workflows.list, productId ? { productId } : "skip") as
+    | Array<{ _id: Id<"agentWorkflows">; name: string; roles: number }>
+    | undefined;
+  const [workflowId, setWorkflowId] = useState<Id<"agentWorkflows"> | "">("");
   if (message.proposalSessionId) return null;
   if (!productId || !repositoryId)
     return (
@@ -647,6 +652,25 @@ function OpenProposal({
                 onChange={(value) => setWorkstationId(value as Id<"workstations"> | "")}
               />
             )}
+            {workflows && workflows.length > 0 && (
+              <Picker
+                label="Workflow"
+                value={workflowId}
+                options={[
+                  {
+                    value: "",
+                    label: "Default",
+                    description: "The product's own agent settings.",
+                  },
+                  ...workflows.map((item) => ({
+                    value: item._id,
+                    label: item.name,
+                    description: `Its own agents for ${item.roles} ${item.roles === 1 ? "role" : "roles"}; the rest from the Default.`,
+                  })),
+                ]}
+                onChange={(value) => setWorkflowId(value as Id<"agentWorkflows"> | "")}
+              />
+            )}
           </div>
           <div className="z-row">
             <Button variant="secondary" onClick={() => setReviewing(false)}>
@@ -664,6 +688,7 @@ function OpenProposal({
                       productId,
                       repositoryId,
                       ...(workstationId ? { workstationId } : {}),
+                      ...(workflowId ? { workflowId } : {}),
                     }),
                   );
                 } catch (failure) {

@@ -7,6 +7,7 @@ import { seedHuman } from "./fixtures/auth";
 const modules = {
   "./_generated/server.ts": () => import("../convex/_generated/server"),
   "./agentProfiles.ts": () => import("../convex/agentProfiles"),
+  "./workflows.ts": () => import("../convex/workflows"),
   "./orchestrator.ts": () => import("../convex/orchestrator"),
   "./supervisor.ts": () => import("../convex/supervisor"),
   "./profiles.ts": () => import("../convex/profiles"),
@@ -651,4 +652,133 @@ it("names a chat created before titles after its first message", async () => {
   expect(chats).toEqual([
     expect.objectContaining({ _id: conversationId, title: "How does the verifier work?" }),
   ]);
+});
+
+it("keeps named workflows per product, copies them and runs a Session with one", async () => {
+  const f = await fixture();
+  // The product's Default: Builder on Codex with model a.
+  await f.user.mutation(api.agentProfiles.upsert, {
+    name: "Builder",
+    role: "builder",
+    productId: f.productId,
+    runtime: "codex",
+    model: "a",
+    enabled: true,
+  });
+  // "Cheap" starts as a copy of the Default, then its Builder uses model b.
+  const cheap = await f.user.mutation(api.workflows.create, {
+    productId: f.productId,
+    name: "Cheap",
+    copyFrom: { productId: f.productId },
+  });
+  const [copied] = await f.user.query(api.agentProfiles.list, {
+    productId: f.productId,
+    workflowId: cheap,
+  });
+  if (!copied) throw new Error("not copied");
+  expect(copied).toMatchObject({
+    role: "builder",
+    runtime: "codex",
+    model: "a",
+    workflowId: cheap,
+  });
+  await f.user.mutation(api.agentProfiles.upsert, {
+    profileId: copied._id,
+    productId: f.productId,
+    workflowId: cheap,
+    name: "Builder",
+    role: "builder",
+    runtime: "codex",
+    model: "b",
+    enabled: true,
+  });
+  // The Default's list does not include the workflow's profiles.
+  expect(
+    (await f.user.query(api.agentProfiles.list, { productId: f.productId })).map(
+      (row) => row.model,
+    ),
+  ).toEqual(["a"]);
+  await expect(
+    f.user.mutation(api.workflows.create, { productId: f.productId, name: "cheap" }),
+  ).rejects.toThrow("WORKFLOW_NAME_TAKEN");
+  expect(await f.user.query(api.workflows.list, { productId: f.productId })).toEqual([
+    { _id: cheap, name: "Cheap", roles: 1, activeSessions: 0 },
+  ]);
+  // Another owner can neither see nor use it.
+  await expect(f.other.query(api.workflows.list, { productId: f.productId })).rejects.toThrow();
+
+  // A Session opened with "Cheap" keeps it, and so do its follow-ups.
+  const sessionId = await f.user.mutation(api.supervisor.submit, {
+    productId: f.productId,
+    repositoryId: f.repositoryId,
+    text: "Fix the totals",
+    idempotencyKey: "wf-1",
+    workflowId: cheap,
+  });
+  const session = await f.t.run((ctx) => ctx.db.get("workSessions", sessionId));
+  expect(session).toMatchObject({ workflowId: cheap, workstationId: f.workstationId });
+  await f.user.mutation(api.supervisor.submit, {
+    productId: f.productId,
+    repositoryId: f.repositoryId,
+    text: "And the tests",
+    idempotencyKey: "wf-2",
+    sessionId,
+  });
+  expect((await f.t.run((ctx) => ctx.db.get("workSessions", sessionId)))?.workflowId).toBe(cheap);
+  expect(await f.user.query(api.workflows.list, { productId: f.productId })).toMatchObject([
+    { name: "Cheap", activeSessions: 1 },
+  ]);
+  // In use: it cannot be deleted until its Session is finished.
+  await expect(f.user.mutation(api.workflows.remove, { workflowId: cheap })).rejects.toThrow(
+    "WORKFLOW_IN_USE",
+  );
+  await f.t.run((ctx) => ctx.db.patch("workSessions", sessionId, { status: "completed" }));
+  await f.user.mutation(api.workflows.rename, { workflowId: cheap, name: "Cheap v2" });
+  await f.user.mutation(api.workflows.remove, { workflowId: cheap });
+  expect(await f.user.query(api.workflows.list, { productId: f.productId })).toEqual([]);
+});
+
+it("resolves a role from the Session's workflow, then the product's Default, then global", async () => {
+  const f = await fixture();
+  const { resolveAgentProfile } = await import("../convex/lib/agentProfiles");
+  await f.user.mutation(api.agentProfiles.upsert, {
+    name: "Global builder",
+    role: "builder",
+    runtime: "codex",
+    model: "global",
+    enabled: true,
+  });
+  await f.user.mutation(api.agentProfiles.upsert, {
+    name: "Default verifier",
+    role: "verifier",
+    productId: f.productId,
+    runtime: "codex",
+    model: "default",
+    enabled: true,
+  });
+  const workflowId = await f.user.mutation(api.workflows.create, {
+    productId: f.productId,
+    name: "Strict",
+  });
+  await f.user.mutation(api.agentProfiles.upsert, {
+    name: "Strict builder",
+    role: "builder",
+    productId: f.productId,
+    workflowId,
+    runtime: "codex",
+    model: "strict",
+    enabled: true,
+  });
+  const models = await f.t.run(async (ctx) => {
+    const owner = (await ctx.db.query("users").first())?._id;
+    if (!owner) throw new Error("no owner");
+    const pick = async (role: "builder" | "verifier", flow?: typeof workflowId) =>
+      (await resolveAgentProfile(ctx, owner, f.productId, role, undefined, flow)).profile?.model;
+    return [
+      await pick("builder", workflowId),
+      await pick("verifier", workflowId),
+      await pick("builder"),
+    ];
+  });
+  expect(models).toEqual(["strict", "default", "global"]);
 });
