@@ -36,6 +36,7 @@ import type * as tasks from "../tasks.js";
 import type * as traces from "../traces.js";
 import type * as trust from "../trust.js";
 import type * as usage from "../usage.js";
+import type * as workflows from "../workflows.js";
 import type * as workspaces from "../workspaces.js";
 import type * as workstations from "../workstations.js";
 
@@ -75,6 +76,7 @@ const fullApi: ApiFromModules<{
   traces: typeof traces;
   trust: typeof trust;
   usage: typeof usage;
+  workflows: typeof workflows;
   workspaces: typeof workspaces;
   workstations: typeof workstations;
 }> = anyApi as any;

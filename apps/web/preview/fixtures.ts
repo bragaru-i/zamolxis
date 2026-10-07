@@ -1065,7 +1065,23 @@ function build(name: string) {
           };
         }
         case "agentProfiles:list":
-          return args.productId ? [] : profiles;
+          return args.workflowId
+            ? profiles
+                .filter((row) => row.role === "builder")
+                .map((row) => ({
+                  ...row,
+                  _id: "wf-a1",
+                  model: "gpt-5.1-codex-mini",
+                  workflowId: args.workflowId,
+                }))
+            : args.productId
+              ? []
+              : profiles;
+        // One named workflow per product in the preview: "Save tokens".
+        case "workflows:list":
+          return empty ? [] : [{ _id: "wf1", name: "Save tokens", roles: 1, activeSessions: 0 }];
+        case "workflows:listAll":
+          return empty ? [] : [{ _id: "wf1", productId: "p1", name: "Save tokens" }];
         case "agentProfiles:defaultRuntime":
           return "codex";
         case "agentProfiles:models":

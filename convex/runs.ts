@@ -59,6 +59,7 @@ export async function queueRun(
     session.productId,
     role,
     input.runtime,
+    session.workflowId,
   );
   const { profile } = resolved;
   // Only an agent of the profile's own chain can be started: the profile's own or a backup

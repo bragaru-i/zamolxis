@@ -478,6 +478,18 @@ module aliases exist only when the variable is set.
   say "backup N". Not yet: switching to a backup when a running agent fails (usage limit,
   provider error); that is the next PR, then workflows per product.
 
+- **Workflows per product (2026-10-07):** `agentWorkflows` (owner, product, name) with
+  profiles per role (`agentProfiles.workflowId`); `resolveAgentProfile(..., workflowId)` uses
+  workflow → product Default → global. `workflows.create` (empty or `copyFrom` any product's
+  Default or workflow), `rename`, `remove` (archive, profiles off, refused with
+  `WORKFLOW_IN_USE`), `list`, `listAll`. `workSessions.workflowId` is set when a Session opens
+  (`supervisor.submit` / `orchestrator.openProposal` take `workflowId`) and used by planning,
+  dispatch and `queueRun`. Settings → Agents has a Workflow picker per product; the review
+  sheet offers it next to Run on; the Session header shows it. Sessions never move computers:
+  a follow-up of a Session without a stored computer uses its latest workspace's and pins it.
+  Owner decision (2026-10-07): no automatic switch to a backup when a running agent fails;
+  a failure will offer "Try again with [agent]" on the same computer (not built yet).
+
 ## Next steps, in order
 
 1. For #114, re-run a logo-redesign-sized task and compare the Builder's processed

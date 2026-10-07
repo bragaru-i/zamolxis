@@ -49,6 +49,8 @@ interface Session {
   contextSummary?: string;
   /** The computer the Session's work runs on (Sessions from before have none). */
   workstationName?: string;
+  /** The product workflow the Session uses, when not the Default. */
+  workflowName?: string;
 }
 interface UserMessage extends ConversationMessage {
   _id: string;
@@ -149,6 +151,9 @@ export function SessionView({
               {session && <SessionStatusBadge status={session.status} />}
               {session?.workstationName && (
                 <span className="z-xsmall z-muted">Runs on {session.workstationName}</span>
+              )}
+              {session?.workflowName && (
+                <span className="z-xsmall z-muted">Workflow: {session.workflowName}</span>
               )}
               {indicator}
             </>

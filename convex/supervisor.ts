@@ -104,7 +104,19 @@ const submitArgs = {
   // that has the repository and the Builder runtime is taken. Ignored for follow-ups,
   // which stay on their Session's computer.
   workstationId: v.optional(v.id("workstations")),
+  // The product workflow a new Session uses (absent: the product's Default). Ignored for
+  // follow-ups, which keep their Session's workflow.
+  workflowId: v.optional(v.id("agentWorkflows")),
 };
+/** The computer a Session's work lives on: that of its latest workspace, if any. */
+async function sessionComputer(ctx: MutationCtx, workSessionId: Id<"workSessions">) {
+  const workspace = await ctx.db
+    .query("workspaces")
+    .withIndex("by_session", (q) => q.eq("workSessionId", workSessionId))
+    .order("desc")
+    .first();
+  return workspace?.workstationId;
+}
 export async function submitText(
   ctx: MutationCtx,
   args: {
@@ -114,6 +126,7 @@ export async function submitText(
     idempotencyKey: string;
     sessionId?: Id<"workSessions">;
     workstationId?: Id<"workstations">;
+    workflowId?: Id<"agentWorkflows">;
   },
 ) {
   const owner = await requireUser(ctx);
@@ -149,13 +162,43 @@ export async function submitText(
       fail("COMMAND_CONFLICT");
     return previous.workSessionId;
   }
-  const effective = await resolveAgentProfile(ctx, owner._id, product._id, "builder");
+  const existing = args.sessionId ? await ownSession(ctx, args.sessionId) : undefined;
+  // A follow-up keeps its Session's workflow; a new Session takes the chosen one.
+  const workflowId = existing ? existing.workflowId : args.workflowId;
+  if (!existing && workflowId) {
+    const workflow = await ctx.db.get("agentWorkflows", workflowId);
+    if (
+      !workflow ||
+      workflow.ownerId !== owner._id ||
+      workflow.productId !== product._id ||
+      workflow.archivedAt !== undefined
+    )
+      fail("WORKFLOW_MISMATCH");
+  }
+  const effective = await resolveAgentProfile(
+    ctx,
+    owner._id,
+    product._id,
+    "builder",
+    undefined,
+    workflowId,
+  );
   // The Supervisor runtime is a snapshot for the Node; it is not required to be
   // installed here because older Nodes plan deterministically without it.
-  const supervisor = await resolveAgentProfile(ctx, owner._id, product._id, "supervisor");
-  const existing = args.sessionId ? await ownSession(ctx, args.sessionId) : undefined;
-  // A follow-up stays on its Session's computer; a new Session takes the chosen one.
-  const wanted = existing ? (existing.workstationId ?? args.workstationId) : args.workstationId;
+  const supervisor = await resolveAgentProfile(
+    ctx,
+    owner._id,
+    product._id,
+    "supervisor",
+    undefined,
+    workflowId,
+  );
+  // A Session never moves to another computer: a follow-up stays on its Session's computer
+  // (one recorded before computers were stored stays where its work is); a new Session takes
+  // the chosen one.
+  const wanted = existing
+    ? (existing.workstationId ?? (await sessionComputer(ctx, existing._id)) ?? args.workstationId)
+    : args.workstationId;
   if (wanted) {
     const device = await ctx.db.get("workstations", wanted);
     if (!device || device.ownerId !== owner._id || device.status === "revoked")
@@ -201,6 +244,8 @@ export async function submitText(
     const reopen = session.status === "completed" || session.status === "failed";
     await ctx.db.patch("workSessions", session._id, {
       ...(reopen ? { status: "planning" as const, completedAt: undefined, reopenedAt: now } : {}),
+      // Recorded once, so the Session stays on this computer from now on.
+      ...(session.workstationId ? {} : { workstationId: location.workstationId }),
       updatedAt: now,
       lastActivityAt: now,
     });
@@ -219,6 +264,7 @@ export async function submitText(
       updatedAt: now,
       lastActivityAt: now,
       workstationId: location.workstationId,
+      ...(workflowId ? { workflowId } : {}),
     });
     await ctx.db.insert("sessionRepositories", {
       workSessionId: sessionId,
@@ -823,7 +869,14 @@ export const dispatch = mutation({
         (role === "verifier" ? 1 : 3)
       )
         continue;
-      const effective = await resolveAgentProfile(ctx, session.ownerId, session.productId, role);
+      const effective = await resolveAgentProfile(
+        ctx,
+        session.ownerId,
+        session.productId,
+        role,
+        undefined,
+        session.workflowId,
+      );
       if (effective.profile?.maxConcurrency) {
         const profileId = effective.profile._id;
         const profileRuns = await unfinishedRuns(ctx, (status) =>

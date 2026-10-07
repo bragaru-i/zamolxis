@@ -1,5 +1,6 @@
 import { type Infer, v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
+import { mutation, type QueryCtx, query } from "./_generated/server";
 import { fail, requireUser } from "./lib/access";
 import { agentBackup, MAX_BACKUPS } from "./lib/agentBackup";
 import {
@@ -24,17 +25,42 @@ const role = v.union(
   v.literal("integration"),
 );
 
+/** A workflow the owner may edit: it belongs to `productId` and is not archived. */
+async function ownWorkflow(
+  ctx: QueryCtx,
+  ownerId: Id<"users">,
+  productId: Id<"products"> | undefined,
+  workflowId: Id<"agentWorkflows"> | undefined,
+) {
+  if (!workflowId) return undefined;
+  const workflow = await ctx.db.get(workflowId);
+  if (
+    !workflow ||
+    workflow.ownerId !== ownerId ||
+    workflow.productId !== productId ||
+    workflow.archivedAt !== undefined
+  )
+    fail("WORKFLOW_MISMATCH");
+  return workflow;
+}
+
+// One scope: global (no product), a product's Default (no workflow) or a named workflow.
 export const list = query({
-  args: { productId: v.optional(v.id("products")) },
+  args: {
+    productId: v.optional(v.id("products")),
+    workflowId: v.optional(v.id("agentWorkflows")),
+  },
   returns: v.array(v.any()),
   handler: async (ctx, args) => {
     const owner = await requireUser(ctx);
     const rows = await ctx.db
       .query("agentProfiles")
       .withIndex("by_owner", (q) => q.eq("ownerId", owner._id))
-      .take(101);
-    if (rows.length > 100) fail("LIMIT_EXCEEDED");
-    return rows.filter((row) => row.productId === args.productId);
+      .take(201);
+    if (rows.length > 200) fail("LIMIT_EXCEEDED");
+    return rows.filter(
+      (row) => row.productId === args.productId && row.workflowId === args.workflowId,
+    );
   },
 });
 
@@ -103,7 +129,11 @@ export const defaultRuntime = query({
  * instructions and limits stay. Running and past runs keep their snapshot.
  */
 export const setRuntimeForAllRoles = mutation({
-  args: { productId: v.optional(v.id("products")), runtime: v.string() },
+  args: {
+    productId: v.optional(v.id("products")),
+    workflowId: v.optional(v.id("agentWorkflows")),
+    runtime: v.string(),
+  },
   returns: v.null(),
   handler: async (ctx, args) => {
     const owner = await requireUser(ctx);
@@ -117,15 +147,22 @@ export const setRuntimeForAllRoles = mutation({
       if (!product || product.ownerId !== owner._id || product.archivedAt) fail("PRODUCT_MISMATCH");
       scopeName = product.name;
     }
+    const workflow = await ownWorkflow(ctx, owner._id, args.productId, args.workflowId);
+    if (workflow) scopeName = `${scopeName} · ${workflow.name}`;
     const rows = await ctx.db
       .query("agentProfiles")
       .withIndex("by_owner", (q) => q.eq("ownerId", owner._id))
-      .take(101);
-    if (rows.length > 100) fail("LIMIT_EXCEEDED");
+      .take(201);
+    if (rows.length > 200) fail("LIMIT_EXCEEDED");
     const now = Date.now();
     let count = rows.length;
     for (const role of AGENT_ROLES) {
-      const own = rows.filter((row) => row.role === role && row.productId === args.productId);
+      const own = rows.filter(
+        (row) =>
+          row.role === role &&
+          row.productId === args.productId &&
+          row.workflowId === args.workflowId,
+      );
       const target =
         own.find((row) => row.enabled) ?? [...own].sort((a, b) => b.updatedAt - a.updatedAt)[0];
       if (target) {
@@ -139,10 +176,11 @@ export const setRuntimeForAllRoles = mutation({
         });
         continue;
       }
-      if (++count > 100) fail("LIMIT_EXCEEDED");
+      if (++count > 200) fail("LIMIT_EXCEEDED");
       await ctx.db.insert("agentProfiles", {
         ownerId: owner._id,
         ...(args.productId ? { productId: args.productId } : {}),
+        ...(args.workflowId ? { workflowId: args.workflowId } : {}),
         name: `${ROLE_LABELS[role]} · ${scopeName}`,
         role,
         runtime,
@@ -160,6 +198,8 @@ export const upsert = mutation({
   args: {
     profileId: v.optional(v.id("agentProfiles")),
     productId: v.optional(v.id("products")),
+    // A named workflow of `productId`; absent: the product's Default (or global).
+    workflowId: v.optional(v.id("agentWorkflows")),
     name: v.string(),
     role,
     runtime: v.string(),
@@ -221,6 +261,7 @@ export const upsert = mutation({
       const product = await ctx.db.get(args.productId);
       if (!product || product.ownerId !== owner._id || product.archivedAt) fail("PRODUCT_MISMATCH");
     }
+    await ownWorkflow(ctx, owner._id, args.productId, args.workflowId);
     const peers = await ctx.db
       .query("agentProfiles")
       .withIndex("by_owner_role", (q) => q.eq("ownerId", owner._id).eq("role", args.role))
@@ -229,7 +270,11 @@ export const upsert = mutation({
     if (
       args.enabled &&
       peers.some(
-        (peer) => peer._id !== args.profileId && peer.enabled && peer.productId === args.productId,
+        (peer) =>
+          peer._id !== args.profileId &&
+          peer.enabled &&
+          peer.productId === args.productId &&
+          peer.workflowId === args.workflowId,
       )
     )
       fail("AGENT_PROFILE_CONFLICT");
@@ -239,6 +284,7 @@ export const upsert = mutation({
       if (!existing || existing.ownerId !== owner._id) fail("NOT_FOUND");
       await ctx.db.patch(existing._id, {
         productId: args.productId,
+        workflowId: args.workflowId,
         name: args.name.trim(),
         role: args.role,
         runtime: args.runtime.trim(),
@@ -258,6 +304,7 @@ export const upsert = mutation({
     return ctx.db.insert("agentProfiles", {
       ownerId: owner._id,
       ...(args.productId ? { productId: args.productId } : {}),
+      ...(args.workflowId ? { workflowId: args.workflowId } : {}),
       name: args.name.trim(),
       role: args.role,
       runtime: args.runtime.trim(),
