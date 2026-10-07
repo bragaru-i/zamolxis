@@ -250,6 +250,8 @@ describe("repository removal", () => {
         repositoryName: "repo",
         canonicalPath: "/repo",
         status: "available",
+        // Its product, for the workflow new work here starts with.
+        productId: expect.any(String),
       },
     ]);
     await expect(

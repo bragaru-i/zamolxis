@@ -387,6 +387,9 @@ export default defineSchema({
     gitCommonDir: v.optional(v.string()),
     defaultBranch: v.optional(v.string()),
     lastKnownHead: v.optional(v.string()),
+    // The workflow new Sessions of this repository on this computer start with (a workflow
+    // of the repository's product); absent: the product's Default.
+    defaultWorkflowId: v.optional(v.id("agentWorkflows")),
     status: v.union(
       v.literal("available"),
       v.literal("missing"),

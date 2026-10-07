@@ -104,9 +104,11 @@ const submitArgs = {
   // that has the repository and the Builder runtime is taken. Ignored for follow-ups,
   // which stay on their Session's computer.
   workstationId: v.optional(v.id("workstations")),
-  // The product workflow a new Session uses (absent: the product's Default). Ignored for
-  // follow-ups, which keep their Session's workflow.
+  // The product workflow a new Session uses. Absent: the computer's saved workflow for this
+  // repository, else the product's Default; `defaultWorkflow` asks for the Default
+  // explicitly. Ignored for follow-ups, which keep their Session's workflow.
   workflowId: v.optional(v.id("agentWorkflows")),
+  defaultWorkflow: v.optional(v.boolean()),
 };
 /** The computer a Session's work lives on: that of its latest workspace, if any. */
 async function sessionComputer(ctx: MutationCtx, workSessionId: Id<"workSessions">) {
@@ -127,6 +129,7 @@ export async function submitText(
     sessionId?: Id<"workSessions">;
     workstationId?: Id<"workstations">;
     workflowId?: Id<"agentWorkflows">;
+    defaultWorkflow?: boolean;
   },
 ) {
   const owner = await requireUser(ctx);
@@ -163,36 +166,21 @@ export async function submitText(
     return previous.workSessionId;
   }
   const existing = args.sessionId ? await ownSession(ctx, args.sessionId) : undefined;
-  // A follow-up keeps its Session's workflow; a new Session takes the chosen one.
-  const workflowId = existing ? existing.workflowId : args.workflowId;
-  if (!existing && workflowId) {
-    const workflow = await ctx.db.get("agentWorkflows", workflowId);
-    if (
-      !workflow ||
-      workflow.ownerId !== owner._id ||
-      workflow.productId !== product._id ||
-      workflow.archivedAt !== undefined
-    )
-      fail("WORKFLOW_MISMATCH");
-  }
-  const effective = await resolveAgentProfile(
-    ctx,
-    owner._id,
-    product._id,
-    "builder",
-    undefined,
-    workflowId,
-  );
-  // The Supervisor runtime is a snapshot for the Node; it is not required to be
-  // installed here because older Nodes plan deterministically without it.
-  const supervisor = await resolveAgentProfile(
-    ctx,
-    owner._id,
-    product._id,
-    "supervisor",
-    undefined,
-    workflowId,
-  );
+  // A follow-up keeps its Session's workflow; a new Session takes the chosen one, else the
+  // computer's saved workflow for this repository, else the product's Default.
+  const chosen = existing || args.defaultWorkflow ? existing?.workflowId : args.workflowId;
+  const usable = async (id: Id<"agentWorkflows"> | undefined) => {
+    if (!id) return undefined;
+    const workflow = await ctx.db.get("agentWorkflows", id);
+    return workflow &&
+      workflow.ownerId === owner._id &&
+      workflow.productId === product._id &&
+      workflow.archivedAt === undefined
+      ? id
+      : undefined;
+  };
+  if (!existing && args.workflowId && !(await usable(args.workflowId))) fail("WORKFLOW_MISMATCH");
+  const followsComputer = !existing && !args.workflowId && !args.defaultWorkflow;
   // A Session never moves to another computer: a follow-up stays on its Session's computer
   // (one recorded before computers were stored stays where its work is); a new Session takes
   // the chosen one.
@@ -212,21 +200,39 @@ export async function submitText(
   if (wanted && !locations.some((item) => item.workstationId === wanted))
     fail("INVALID_ARGUMENT", "That computer does not have this repository");
   let location: Doc<"repositoryLocations"> | undefined;
+  let workflowId = chosen;
   for (const item of locations) {
     if (wanted && item.workstationId !== wanted) continue;
     const device = await load(ctx, "workstations", item.workstationId);
+    if (device.ownerId !== owner._id || !deviceOnline(device) || item.status !== "available")
+      continue;
+    const flow = followsComputer ? await usable(item.defaultWorkflowId) : chosen;
+    const builder = await resolveAgentProfile(
+      ctx,
+      owner._id,
+      product._id,
+      "builder",
+      undefined,
+      flow,
+    );
     // Any Builder of the chain (its own or a backup) this computer can start will do.
-    if (
-      device.ownerId === owner._id &&
-      deviceOnline(device) &&
-      item.status === "available" &&
-      (await firstAvailable(ctx, device._id, agentChain(effective.profile, effective.runtime)))
-    ) {
+    if (await firstAvailable(ctx, device._id, agentChain(builder.profile, builder.runtime))) {
       location = item;
+      workflowId = flow;
       break;
     }
   }
   if (!location) fail("NODE_OR_RUNTIME_OFFLINE");
+  // The Supervisor runtime is a snapshot for the Node; it is not required to be
+  // installed here because older Nodes plan deterministically without it.
+  const supervisor = await resolveAgentProfile(
+    ctx,
+    owner._id,
+    product._id,
+    "supervisor",
+    undefined,
+    workflowId,
+  );
   const now = Date.now();
   let sessionId = args.sessionId;
   if (sessionId) {

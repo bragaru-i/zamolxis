@@ -270,3 +270,30 @@ export const setForSession = mutation({
     return null;
   },
 });
+
+/**
+ * The workflow new Sessions of a repository start with on one computer (absent: the
+ * product's Default), so each machine can keep its own, e.g. Codex only on a computer
+ * without Claude.
+ */
+export const setForLocation = mutation({
+  args: {
+    repositoryLocationId: v.id("repositoryLocations"),
+    workflowId: v.optional(v.id("agentWorkflows")),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const owner = await requireUser(ctx);
+    const location = await ctx.db.get(args.repositoryLocationId);
+    if (!location) fail("NOT_FOUND");
+    const device = await ctx.db.get(location.workstationId);
+    if (!device || device.ownerId !== owner._id) fail("FORBIDDEN");
+    if (args.workflowId) {
+      const workflow = await ownWorkflow(ctx, owner._id, args.workflowId);
+      const repository = await ctx.db.get(location.repositoryId);
+      if (!repository || repository.productId !== workflow.productId) fail("WORKFLOW_MISMATCH");
+    }
+    await ctx.db.patch(location._id, { defaultWorkflowId: args.workflowId });
+    return null;
+  },
+});

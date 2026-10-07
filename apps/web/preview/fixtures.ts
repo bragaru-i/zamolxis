@@ -767,6 +767,8 @@ function build(name: string) {
         },
       ];
 
+  // The Mac's saved workflow for zamolxis (Settings → Computers).
+  let locationWorkflow: string | undefined = "wf1";
   const approvals: Row[] = attention
     ? [
         {
@@ -1013,6 +1015,7 @@ function build(name: string) {
               platform: "darwin",
               online: true,
               runtimes: ["claude", "codex"],
+              ...(locationWorkflow ? { defaultWorkflowId: locationWorkflow } : {}),
             },
             {
               workstationId: "w2",
@@ -1150,6 +1153,8 @@ function build(name: string) {
               repositoryName: "zamolxis",
               canonicalPath: "/Users/Shared/projects/zamolxis",
               status: "available",
+              productId: "p1",
+              ...(locationWorkflow ? { defaultWorkflowId: locationWorkflow } : {}),
               github: {
                 slug: "bragaru-i/zamolxis",
                 tokenUrl:
@@ -1282,6 +1287,9 @@ function build(name: string) {
           for (const run of runs[args.workSessionId as string] ?? []) run.status = "cancelled";
           return null;
         }
+        case "workflows:setForLocation":
+          locationWorkflow = args.workflowId as string | undefined;
+          return null;
         case "workflows:setForSession": {
           const session = sessions.find((row) => row._id === args.workSessionId);
           if (session) {

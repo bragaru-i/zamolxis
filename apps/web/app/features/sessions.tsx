@@ -548,8 +548,30 @@ interface Computer {
   platform?: string;
   online: boolean;
   runtimes: string[];
+  /** The workflow new work on this repository starts with on this computer. */
+  defaultWorkflowId?: Id<"agentWorkflows">;
 }
-const RUNTIME_NAMES: Record<string, string> = { codex: "Codex", claude: "Claude" };
+const RUNTIME_NAMES: Record<string, string> = {
+  codex: "Codex",
+  claude: "Claude",
+  local: "Local model",
+};
+/**
+ * The workflow shown before the owner picks one: the chosen computer's saved workflow (or
+ * the only computer's); "auto" while several computers could take the work.
+ */
+export function suggestedWorkflow(
+  computers: Pick<Computer, "workstationId" | "defaultWorkflowId">[] | undefined,
+  workstationId: string,
+): string {
+  const chosen = workstationId
+    ? computers?.find((computer) => computer.workstationId === workstationId)
+    : computers?.length === 1
+      ? computers[0]
+      : undefined;
+  if (chosen) return chosen.defaultWorkflowId ?? "";
+  return (computers?.length ?? 0) > 1 ? "auto" : "";
+}
 /** "Online · Codex, Claude" / "Offline"; the agents it has are what matters for the choice. */
 export function computerDescription(computer: Pick<Computer, "online" | "runtimes">): string {
   const agents = computer.runtimes.map((runtime) => RUNTIME_NAMES[runtime] ?? runtime);
@@ -599,7 +621,9 @@ function OpenProposal({
   const workflows = useQuery(api.workflows.list, productId ? { productId } : "skip") as
     | Array<{ _id: Id<"agentWorkflows">; name: string; roles: number }>
     | undefined;
-  const [workflowId, setWorkflowId] = useState<Id<"agentWorkflows"> | "">("");
+  // undefined until the owner picks one: then each computer's saved workflow applies.
+  const [picked, setPicked] = useState<Id<"agentWorkflows"> | "">();
+  const workflowId = picked ?? suggestedWorkflow(computers, workstationId);
   if (message.proposalSessionId) return null;
   if (!productId || !repositoryId)
     return (
@@ -657,6 +681,15 @@ function OpenProposal({
                 label="Workflow"
                 value={workflowId}
                 options={[
+                  ...(workflowId === "auto"
+                    ? [
+                        {
+                          value: "auto",
+                          label: "The computer's own",
+                          description: "Each computer's saved workflow (Settings → Computers).",
+                        },
+                      ]
+                    : []),
                   {
                     value: "",
                     label: "Default",
@@ -668,7 +701,9 @@ function OpenProposal({
                     description: `Its own agents for ${item.roles} ${item.roles === 1 ? "role" : "roles"}; the rest from the Default.`,
                   })),
                 ]}
-                onChange={(value) => setWorkflowId(value as Id<"agentWorkflows"> | "")}
+                onChange={(value) =>
+                  setPicked(value === "auto" ? undefined : (value as Id<"agentWorkflows"> | ""))
+                }
               />
             )}
           </div>
@@ -688,7 +723,12 @@ function OpenProposal({
                       productId,
                       repositoryId,
                       ...(workstationId ? { workstationId } : {}),
-                      ...(workflowId ? { workflowId } : {}),
+                      // Not picked: the backend applies the computer's saved workflow.
+                      ...(picked
+                        ? { workflowId: picked }
+                        : picked === ""
+                          ? { defaultWorkflow: true }
+                          : {}),
                     }),
                   );
                 } catch (failure) {

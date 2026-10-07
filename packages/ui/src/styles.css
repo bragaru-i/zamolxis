@@ -2027,8 +2027,11 @@ code,
   background: var(--z-surface);
 }
 @media (min-width: 720px) {
+  /* A fixed size: switching Settings pages scrolls the content instead of resizing (and
+     re-centring) the window. */
   .z-sheet.z-sheet--xl {
     max-width: 960px;
+    height: min(85dvh, 820px);
   }
   .z-settings--wide {
     display: grid;

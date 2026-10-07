@@ -46,8 +46,25 @@ describe("Settings → Computers", () => {
     expect(html).toContain("Rename");
     expect(html).toContain("Repositories");
     expect(html).toContain("Remove this computer…");
-    // Nothing is queried until the repositories are opened.
-    expect(state.calls).toEqual([]);
+    // Only the computer's repositories are read, for their workflows.
+    expect(state.calls.map((call) => call.name)).toEqual(["repositories:listLocations"]);
+  });
+
+  it("shows the workflow each repository starts new work with on this computer", () => {
+    state.data["repositories:listLocations"] = [
+      {
+        repositoryLocationId: "l1",
+        repositoryName: "zamolxis",
+        canonicalPath: "/repo",
+        status: "available",
+        productId: "p1",
+        defaultWorkflowId: "wf1",
+      },
+    ];
+    state.data["workflows:list"] = [{ _id: "wf1", name: "Save tokens", roles: 5 }];
+    const html = render();
+    expect(html).toContain("zamolxis: workflow for new work here");
+    expect(html).toContain("Save tokens");
   });
 
   it("reports any available agent runtime", () => {
