@@ -704,20 +704,28 @@ export class ControlPlaneDriver {
             result = parseSupervisorDecision(outcome.summary, checks);
             // A plan whose task list is unusable gets one correction round: the same
             // Supervisor rewrites its reply as the contract, without reading files again.
-            if (result.unusablePlan && outcome.summary) {
+            // So does a Supervisor that answered "Open this work" without tasks (it described
+            // the plan and asked for confirmation the owner already gave).
+            const opensWork = OPENS_WORK.test(command.payload.text);
+            const noTasks = opensWork && !result.tasks.length && result.decision !== "ask";
+            if ((result.unusablePlan || noTasks) && outcome.summary) {
               const repaired = await this.#supervise(
                 command.payload,
-                planRepairInstruction({ original: instruction, previousReply: outcome.summary }),
+                planRepairInstruction({
+                  original: instruction,
+                  previousReply: outcome.summary,
+                  ...(result.unusablePlan ? {} : { mustDelegate: true }),
+                }),
                 log,
                 "repair",
               );
               usage = addUsage(usage, repaired.usage);
               const second = parseSupervisorDecision(repaired.summary, checks);
-              if (!second.unusablePlan) result = second;
+              if (!second.unusablePlan && (!noTasks || second.tasks.length)) result = second;
             }
             // "Open this work" is the owner's explicit go: a proposal for it starts the work
             // instead of asking again (local models often propose anyway).
-            if (result.decision === "propose" && OPENS_WORK.test(command.payload.text))
+            if (result.decision === "propose" && opensWork)
               result = { ...result, decision: "delegate" };
             log.decided(result);
           } catch (error) {
