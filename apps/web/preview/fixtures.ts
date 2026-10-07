@@ -1434,7 +1434,10 @@ function build(name: string) {
           let changed = 0;
           for (const agent of agents)
             for (const entry of agent.chain as Row[])
-              if (entry.runtime === args.runtime && !entry.model) {
+              if (
+                entry.runtime === args.runtime &&
+                (!entry.model || ((args.replace as string[]) ?? []).includes(entry.model as string))
+              ) {
                 entry.model = args.model;
                 changed++;
               }

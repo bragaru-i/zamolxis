@@ -382,11 +382,15 @@ export const unassign = mutation({
 
 /**
  * Names a model wherever the owner's agents and jobs use a runtime without one (its own
- * default), e.g. Codex's GPT-6-Luna instead of its default GPT-6.1-Sol. Returns how many
- * agents and jobs changed. Running and past runs keep their snapshot.
+ * default) or with one of `replace`, e.g. Codex's GPT-6-Luna instead of its Sol models.
+ * Returns how many agents and jobs changed. Running and past runs keep their snapshot.
  */
 export const setUnnamedModel = mutation({
-  args: { runtime: v.string(), model: v.string() },
+  args: {
+    runtime: v.string(),
+    model: v.string(),
+    replace: v.optional(v.array(v.string())),
+  },
   returns: v.number(),
   handler: async (ctx, args) => {
     const owner = await requireUser(ctx);
@@ -394,8 +398,11 @@ export const setUnnamedModel = mutation({
     if (!model || model.length > 256) fail("INVALID_ARGUMENT");
     const offered = (await offeredModels(ctx, owner._id)).get(args.runtime) ?? [];
     if (!offered.includes(model)) fail("INVALID_ARGUMENT", "No computer offers that model");
+    if ((args.replace?.length ?? 0) > 50) fail("INVALID_ARGUMENT");
+    const replaced = (current: string | undefined) =>
+      !current || (current !== model && (args.replace ?? []).includes(current));
     const name = <T extends { runtime: string; model?: string }>(entry: T): T =>
-      entry.runtime === args.runtime && !entry.model ? { ...entry, model } : entry;
+      entry.runtime === args.runtime && replaced(entry.model) ? { ...entry, model } : entry;
     const now = Date.now();
     let changed = 0;
     const agents = await ctx.db
@@ -410,7 +417,7 @@ export const setUnnamedModel = mutation({
       changed++;
     }
     for (const profile of await ownerProfiles(ctx, owner._id)) {
-      const firstChanged = profile.runtime === args.runtime && !profile.model;
+      const firstChanged = profile.runtime === args.runtime && replaced(profile.model);
       const backups = profile.backups?.map(name);
       const backupsChanged = backups?.some((entry, index) => entry !== profile.backups?.[index]);
       if (!firstChanged && !backupsChanged) continue;

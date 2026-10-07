@@ -1010,20 +1010,32 @@ it("names Codex's affordable model instead of its default, for starters and in o
     chain: [{ runtime: "codex" }],
   });
   await f.user.mutation(api.agents.assign, { role: "builder", agentId: old });
+  // One chosen by hand: an older Sol as the last backup.
+  await f.user.mutation(api.agents.save, {
+    name: "Picked Sol",
+    chain: [{ runtime: "codex", model: "gpt-5.6-sol" }],
+  });
   await f.user.mutation(api.agents.ensureStarter, {});
   const starters = await f.user.query(api.agents.list, {});
   // ensureStarter only runs for an owner without agents; starters are checked separately.
-  expect(starters.map((agent) => agent.name)).toEqual(["Old Codex"]);
+  expect(starters.map((agent) => agent.name)).toEqual(["Old Codex", "Picked Sol"]);
 
   await expect(
     f.user.mutation(api.agents.setUnnamedModel, { runtime: "codex", model: "gpt-9" }),
   ).rejects.toThrow("INVALID_ARGUMENT");
+  // Without `replace` a model chosen by hand stays.
   expect(
     await f.user.mutation(api.agents.setUnnamedModel, { runtime: "codex", model: "gpt-6-luna" }),
   ).toBe(2);
-  expect((await f.user.query(api.agents.list, {}))[0]?.chain).toEqual([
-    { runtime: "codex", model: "gpt-6-luna" },
-  ]);
+  expect(
+    await f.user.mutation(api.agents.setUnnamedModel, {
+      runtime: "codex",
+      model: "gpt-6-luna",
+      replace: ["gpt-6.1-sol", "gpt-5.6-sol"],
+    }),
+  ).toBe(1);
+  for (const agent of await f.user.query(api.agents.list, {}))
+    expect(agent.chain).toEqual([{ runtime: "codex", model: "gpt-6-luna" }]);
   const builder = (await f.user.query(api.agentProfiles.list, {})).find(
     (row: { role: string }) => row.role === "builder",
   );
