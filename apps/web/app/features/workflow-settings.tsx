@@ -574,6 +574,19 @@ export function MyAgentsSettings({
 }) {
   const agents = useStarterAgents(active);
   const [editing, setEditing] = useState<SavedAgent | "new">();
+  const catalogs = useQuery(api.agentProfiles.models, active ? {} : "skip") as
+    | RuntimeModels[]
+    | undefined;
+  const setUnnamed = useMutation(api.agents.setUnnamedModel);
+  const [switched, setSwitched] = useState("");
+  // Codex without a named model runs its own default (GPT-6.1-Sol), which uses the plan
+  // fastest; its affordable model is offered in one tap.
+  const codexModels = catalogs?.find((item) => item.runtime === "codex")?.models ?? [];
+  const codexDefault = codexModels.find((model) => model.isDefault);
+  const affordable = codexModels.find((model) => /luna/i.test(model.id));
+  const unnamed = (agents ?? []).filter((agent) =>
+    agent.chain.some((entry) => entry.runtime === "codex" && !entry.model),
+  ).length;
   return (
     <section className="z-stack" aria-label="My agents">
       <div className="z-page-head">
@@ -587,6 +600,32 @@ export function MyAgentsSettings({
           </Button>
         )}
       </div>
+      {unnamed > 0 && codexDefault && affordable && codexDefault.id !== affordable.id && (
+        <Notice tone="warning">
+          <span className="z-stack">
+            <span>
+              {unnamed} {unnamed === 1 ? "agent uses" : "agents use"} Codex&apos;s default model,{" "}
+              {codexDefault.displayName}, which uses your plan fastest. {affordable.displayName} is
+              Codex&apos;s affordable model.
+            </span>
+            <Button
+              size="small"
+              variant="secondary"
+              onClick={async () => {
+                const changed = await setUnnamed({ runtime: "codex", model: affordable.id });
+                setSwitched(
+                  `${affordable.displayName} now runs wherever Codex had no model (${changed} ${
+                    changed === 1 ? "place" : "places"
+                  }). Work already running keeps its model.`,
+                );
+              }}
+            >
+              Use {affordable.displayName} instead
+            </Button>
+          </span>
+        </Notice>
+      )}
+      {switched && <Notice tone="success">{switched}</Notice>}
       {editing && (
         <AgentEditor
           key={editing === "new" ? "new" : editing._id}
@@ -677,7 +716,18 @@ function AgentEditor({
     // A local model is always named: the local server has no "default" Codex could send.
     const local = LOCAL_RUNTIMES.includes(entry.runtime) && models.length > 0;
     return [
-      ...(local ? [] : [{ value: "", label: "Its default model" }]),
+      ...(local
+        ? []
+        : [
+            {
+              value: "",
+              label: `${entry.runtime === "codex" ? "Codex" : "Its"} default${
+                models.find((model) => model.isDefault)
+                  ? ` (${models.find((model) => model.isDefault)?.displayName})`
+                  : " model"
+              }`,
+            },
+          ]),
       ...models.map((model) => ({ value: model.id, label: modelName(entry.runtime, model.id) })),
       ...(entry.model && !models.some((model) => model.id === entry.model)
         ? [{ value: entry.model, label: modelName(entry.runtime, entry.model) }]

@@ -118,6 +118,9 @@ export const list = query({
   },
 });
 
+// Codex's own default (GPT-6.1-Sol) uses the plan fastest; starters name its affordable model.
+const CODEX = { runtime: "codex", model: "luna" };
+
 // A starter agent: model hints are matched to what the owner's computers report; agents
 // with nothing a computer offers are left out.
 const STARTERS: Array<{
@@ -125,19 +128,19 @@ const STARTERS: Array<{
   chain: Array<{ runtime: string; model?: string }>;
   checksOnly?: true;
 }> = [
-  { name: "Local chat", chain: [{ runtime: "local", model: "qwen" }, { runtime: "codex" }] },
+  { name: "Local chat", chain: [{ runtime: "local", model: "qwen" }, CODEX] },
   {
     name: "Local planner",
     chain: [
       { runtime: "codex-local", model: "qwen" },
       { runtime: "claude", model: "haiku" },
-      { runtime: "codex" },
+      CODEX,
     ],
   },
-  { name: "Claude Opus", chain: [{ runtime: "claude", model: "opus" }, { runtime: "codex" }] },
-  { name: "Claude Sonnet", chain: [{ runtime: "claude", model: "sonnet" }, { runtime: "codex" }] },
-  { name: "Claude Haiku", chain: [{ runtime: "claude", model: "haiku" }, { runtime: "codex" }] },
-  { name: "Codex", chain: [{ runtime: "codex" }] },
+  { name: "Claude Opus", chain: [{ runtime: "claude", model: "opus" }, CODEX] },
+  { name: "Claude Sonnet", chain: [{ runtime: "claude", model: "sonnet" }, CODEX] },
+  { name: "Claude Haiku", chain: [{ runtime: "claude", model: "haiku" }, CODEX] },
+  { name: "Codex", chain: [CODEX] },
   { name: "Checks only (no AI)", chain: [{ runtime: "codex" }], checksOnly: true },
 ];
 
@@ -374,5 +377,51 @@ export const unassign = mutation({
       if (row.workflowId === workflow._id && row.role === args.role && row.enabled)
         await ctx.db.patch(row._id, { enabled: false, revision: row.revision + 1, updatedAt: now });
     return null;
+  },
+});
+
+/**
+ * Names a model wherever the owner's agents and jobs use a runtime without one (its own
+ * default), e.g. Codex's GPT-6-Luna instead of its default GPT-6.1-Sol. Returns how many
+ * agents and jobs changed. Running and past runs keep their snapshot.
+ */
+export const setUnnamedModel = mutation({
+  args: { runtime: v.string(), model: v.string() },
+  returns: v.number(),
+  handler: async (ctx, args) => {
+    const owner = await requireUser(ctx);
+    const model = args.model.trim();
+    if (!model || model.length > 256) fail("INVALID_ARGUMENT");
+    const offered = (await offeredModels(ctx, owner._id)).get(args.runtime) ?? [];
+    if (!offered.includes(model)) fail("INVALID_ARGUMENT", "No computer offers that model");
+    const name = <T extends { runtime: string; model?: string }>(entry: T): T =>
+      entry.runtime === args.runtime && !entry.model ? { ...entry, model } : entry;
+    const now = Date.now();
+    let changed = 0;
+    const agents = await ctx.db
+      .query("agentDefinitions")
+      .withIndex("by_owner", (q) => q.eq("ownerId", owner._id))
+      .take(MAX_AGENTS + 1);
+    for (const agent of agents) {
+      if (agent.archivedAt !== undefined) continue;
+      const chain = agent.chain.map(name);
+      if (chain.every((entry, index) => entry === agent.chain[index])) continue;
+      await ctx.db.patch(agent._id, { chain, updatedAt: now });
+      changed++;
+    }
+    for (const profile of await ownerProfiles(ctx, owner._id)) {
+      const firstChanged = profile.runtime === args.runtime && !profile.model;
+      const backups = profile.backups?.map(name);
+      const backupsChanged = backups?.some((entry, index) => entry !== profile.backups?.[index]);
+      if (!firstChanged && !backupsChanged) continue;
+      await ctx.db.patch(profile._id, {
+        ...(firstChanged ? { model } : {}),
+        ...(backupsChanged ? { backups } : {}),
+        revision: profile.revision + 1,
+        updatedAt: now,
+      });
+      changed++;
+    }
+    return changed;
   },
 });

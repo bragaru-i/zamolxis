@@ -57,6 +57,11 @@ const MODELS = {
   ],
   codex: [
     {
+      id: "gpt-6-luna",
+      displayName: "GPT-6-Luna",
+      description: "Fast and affordable model for easier tasks.",
+    },
+    {
       id: "gpt-5.1-codex",
       displayName: "GPT-5.1 Codex",
       description: "Optimized for agentic coding",
@@ -1425,6 +1430,16 @@ function build(name: string) {
         case "agents:unassign":
           delete workflowJobs[args.workflowId as string]?.[args.role as string];
           return null;
+        case "agents:setUnnamedModel": {
+          let changed = 0;
+          for (const agent of agents)
+            for (const entry of agent.chain as Row[])
+              if (entry.runtime === args.runtime && !entry.model) {
+                entry.model = args.model;
+                changed++;
+              }
+          return changed;
+        }
         case "agents:ensureStarter":
           return 0;
         case "agents:save": {
