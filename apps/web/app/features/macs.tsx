@@ -1,11 +1,12 @@
 "use client";
-import { Button, Notice, Picker, StatusBadge, TextInput } from "@zamolxis/ui";
+import { Button, Notice, StatusBadge, TextInput } from "@zamolxis/ui";
 import { useMutation, useQuery } from "convex/react";
 import { useId, useState } from "react";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
 import { errorCode, explainError } from "./errors";
 import { type GithubAccess, GithubAccessRow, type GithubRepository } from "./github-access";
+import { ComputerWorkflow, ProjectWorkflow } from "./workflow-settings";
 
 export interface Device {
   _id: Id<"workstations">;
@@ -17,6 +18,8 @@ export interface Device {
   /** The commit the Node runs from, as it last reported it ("<sha>" or "<sha>+dirty"). */
   nodeVersion?: string;
   runtimes: Array<{ runtime: string; status: string }>;
+  /** The workflow new work on this computer starts with (absent: the Default). */
+  defaultWorkflowId?: Id<"agentWorkflows">;
 }
 /** "macOS · Node 1a2b3c4d5e6f": what kind of computer and which Node code it runs. */
 export function deviceDetail(device: Pick<Device, "platform" | "nodeVersion">): string | undefined {
@@ -80,7 +83,7 @@ const RUNTIME_NAMES: Record<string, string> = {
   codex: "Codex",
   claude: "Claude Code",
   local: "Local model",
-  "codex-local": "Codex + local model",
+  "codex-local": "Local model",
 };
 
 type MacMode = "idle" | "rename" | "repositories" | "revoke";
@@ -104,10 +107,14 @@ export function MacItem({
   const [problem, setProblem] = useState("");
   const nameId = useId();
   const state = deviceState(device, now);
-  const available = device.runtimes
-    .filter((candidate) => candidate.status === "available")
-    .map((candidate) => RUNTIME_NAMES[candidate.runtime] ?? candidate.runtime)
-    .sort();
+  // A local model counts once, whether it chats alone or reads code through Codex.
+  const available = [
+    ...new Set(
+      device.runtimes
+        .filter((candidate) => candidate.status === "available")
+        .map((candidate) => RUNTIME_NAMES[candidate.runtime] ?? candidate.runtime),
+    ),
+  ].sort();
   const runtime = available.length > 0;
   // "Codex", "Claude Code and Codex", "Claude Code, Codex and Local model".
   const runtimeName =
@@ -208,7 +215,12 @@ export function MacItem({
           </Button>
         </div>
       )}
-      {state !== "revoked" && mode === "idle" && <MacWorkflows device={device} />}
+      {state !== "revoked" && mode === "idle" && (
+        <>
+          <ComputerWorkflow device={device} active />
+          <ProjectExceptions device={device} />
+        </>
+      )}
       {state !== "revoked" && mode === "idle" && (
         <div className="z-row">
           <Button variant="ghost" size="small" onClick={() => choose("rename")}>
@@ -318,57 +330,30 @@ function MacRepositories({
 }
 
 /**
- * The workflow each repository on this computer starts new work with. A new Session picks
- * it up when it runs here; the owner can still choose another when opening the work.
+ * A project that uses another workflow on this computer than the computer's own. Hidden
+ * until asked for, since most owners keep one workflow per computer.
  */
-function MacWorkflows({ device }: { device: Device }) {
+function ProjectExceptions({ device }: { device: Device }) {
   const locations = useQuery(api.repositories.listLocations, { workstationId: device._id }) as
     | MacLocation[]
     | undefined;
   const shown = (locations ?? []).filter((location) => location.productId);
+  const [open, setOpen] = useState(shown.some((location) => location.defaultWorkflowId));
   if (!shown.length) return null;
-  return (
-    <section className="z-stack" aria-label={`Workflows on ${device.name}`}>
+  const names = shown.map((location) => location.repositoryName).join(", ");
+  return open ? (
+    <section className="z-stack" aria-label={`Project workflows on ${device.name}`}>
+      <span className="z-xsmall z-muted">A project here can use its own workflow instead.</span>
       {shown.map((location) => (
-        <LocationWorkflow key={location.repositoryLocationId} location={location} />
+        <ProjectWorkflow key={location.repositoryLocationId} location={location} active />
       ))}
     </section>
-  );
-}
-
-function LocationWorkflow({ location }: { location: MacLocation }) {
-  const workflows = useQuery(
-    api.workflows.list,
-    location.productId ? { productId: location.productId } : "skip",
-  ) as Array<{ _id: Id<"agentWorkflows">; name: string; roles: number }> | undefined;
-  const save = useMutation(api.workflows.setForLocation);
-  const [problem, setProblem] = useState("");
-  return (
+  ) : (
     <div className="z-stack">
-      <Picker
-        label={`${location.repositoryName}: workflow for new work here`}
-        value={location.defaultWorkflowId ?? ""}
-        options={[
-          { value: "", label: "Default", description: "The product's own agent settings." },
-          ...(workflows ?? []).map((item) => ({
-            value: item._id,
-            label: item.name,
-            description: `Its own agents for ${item.roles} ${item.roles === 1 ? "role" : "roles"}; the rest from the Default.`,
-          })),
-        ]}
-        onChange={async (next) => {
-          setProblem("");
-          try {
-            await save({
-              repositoryLocationId: location.repositoryLocationId,
-              ...(next ? { workflowId: next as Id<"agentWorkflows"> } : {}),
-            });
-          } catch (error) {
-            setProblem(explainError(error, "Could not save the workflow."));
-          }
-        }}
-      />
-      {problem && <Notice tone="danger">{problem}</Notice>}
+      <span className="z-xsmall z-muted">All projects here use it: {names}.</span>
+      <Button variant="ghost" size="small" className="z-back-link" onClick={() => setOpen(true)}>
+        Different workflow for one project…
+      </Button>
     </div>
   );
 }

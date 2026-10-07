@@ -214,7 +214,7 @@ export function stepAgent(
     .sort((a, b) => b._creationTime - a._creationTime)[0];
   if (latest)
     return `${runtimeLabel(latest.runtime)} · ${latest.modelActual ?? latest.modelRequested ?? "default model"}`;
-  // The Session's workflow first, then the product's Default, then All products.
+  // The Session's workflow first, then the product's own settings, then the Default.
   const effective = effectiveProfile(
     role,
     profiles.product,

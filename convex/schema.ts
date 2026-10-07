@@ -252,6 +252,9 @@ export default defineSchema({
     revokedAt: v.optional(v.number()),
     // Set when this entry was revoked because the same computer paired again (#45).
     replacedBy: v.optional(v.id("workstations")),
+    // The workflow new work on this computer uses (agentWorkflows); a repository on it may
+    // have its own (repositoryLocations.defaultWorkflowId).
+    defaultWorkflowId: v.optional(v.id("agentWorkflows")),
   })
     .index("by_owner", ["ownerId"])
     .index("by_owner_status", ["ownerId", "status"])
@@ -562,18 +565,38 @@ export default defineSchema({
 
   // A product's named set of agent settings (one profile per role, `agentProfiles.workflowId`).
   // Each product also has an implicit Default: its profiles without a workflow.
+  // The owner's saved agents: a name and 1-3 models in order (the first, then backups),
+  // assigned to jobs in workflows (agentProfiles.agentId). Editing one updates every job
+  // it does.
+  agentDefinitions: defineTable({
+    ownerId: v.id("users"),
+    name: v.string(),
+    chain: v.array(agentBackup),
+    // The Verifier runs the project's checks only, with no model.
+    checksOnly: v.optional(v.boolean()),
+    instructions: v.optional(v.string()),
+    instructionsDigest: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    archivedAt: v.optional(v.number()),
+  }).index("by_owner", ["ownerId"]),
   agentWorkflows: defineTable({
     ownerId: v.id("users"),
-    productId: v.id("products"),
+    // Workflows belong to the owner; this is only the project one was first made for.
+    productId: v.optional(v.id("products")),
     name: v.string(),
     createdAt: v.number(),
     updatedAt: v.number(),
     archivedAt: v.optional(v.number()),
-  }).index("by_product", ["productId"]),
+  })
+    .index("by_product", ["productId"])
+    .index("by_owner", ["ownerId"]),
   agentProfiles: defineTable({
     ownerId: v.id("users"),
     productId: v.optional(v.id("products")),
     // A named workflow of the product (agentWorkflows); absent: the product's Default.
+    // The saved agent this job uses (agentDefinitions); its settings are copied here.
+    agentId: v.optional(v.id("agentDefinitions")),
     workflowId: v.optional(v.id("agentWorkflows")),
     name: v.string(),
     role: v.union(

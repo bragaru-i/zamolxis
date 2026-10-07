@@ -6,6 +6,7 @@ import { bounded, fail, load, requireNode, requireUser } from "./lib/access";
 import { deviceOnline } from "./lib/devices";
 import { canonicalRepository } from "./lib/repositories";
 import { githubAccess } from "./schema";
+import { computerWorkflow } from "./workflows";
 export const create = mutation({
   args: {
     name: v.string(),
@@ -162,7 +163,8 @@ export const computers = query({
       platform: v.optional(v.string()),
       online: v.boolean(),
       runtimes: v.array(v.string()),
-      // The workflow new Sessions of this repository start with on this computer.
+      // The workflow new Sessions of this repository start with on this computer: the
+      // repository's own there, else the computer's.
       defaultWorkflowId: v.optional(v.id("agentWorkflows")),
     }),
   ),
@@ -185,6 +187,7 @@ export const computers = query({
         .query("runtimeInstallations")
         .withIndex("by_workstation", (q) => q.eq("workstationId", device._id))
         .take(33);
+      const workflowId = await computerWorkflow(ctx, device._id, location);
       result.push({
         workstationId: device._id,
         name: device.name,
@@ -194,7 +197,7 @@ export const computers = query({
           .filter((runtime) => runtime.status === "available")
           .map((runtime) => runtime.runtime)
           .sort(),
-        ...(location.defaultWorkflowId ? { defaultWorkflowId: location.defaultWorkflowId } : {}),
+        ...(workflowId ? { defaultWorkflowId: workflowId } : {}),
       });
     }
     return result.sort((a, b) => a.name.localeCompare(b.name));

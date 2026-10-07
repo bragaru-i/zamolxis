@@ -230,11 +230,7 @@ export function SessionView({
     >
       {notices}
       {session?.productId && !ended && (
-        <SessionWorkflow
-          sessionId={sessionId}
-          productId={session.productId}
-          value={session.workflowId ?? ""}
-        />
+        <SessionWorkflow sessionId={sessionId} value={session.workflowId ?? ""} />
       )}
       <SessionApprovals sessionId={sessionId} ready={ready} />
       {confirmStop && (
@@ -559,19 +555,11 @@ function AssistantMessage({
 }
 
 /**
- * The workflow this Session's next agents use: Default or one of the product's workflows.
+ * The workflow this Session's next agents use: the Default or one of the owner's workflows.
  * Changing it does not touch agents already running or finished.
  */
-function SessionWorkflow({
-  sessionId,
-  productId,
-  value,
-}: {
-  sessionId: Id<"workSessions">;
-  productId: Id<"products">;
-  value: string;
-}) {
-  const workflows = useQuery(api.workflows.list, { productId }) as
+function SessionWorkflow({ sessionId, value }: { sessionId: Id<"workSessions">; value: string }) {
+  const workflows = useQuery(api.workflows.list, {}) as
     | Array<{ _id: Id<"agentWorkflows">; name: string; roles: number }>
     | undefined;
   const setWorkflow = useMutation(api.workflows.setForSession);
@@ -582,7 +570,11 @@ function SessionWorkflow({
         label="Workflow"
         value={value}
         options={[
-          { value: "", label: "Default", description: "The product's own agent settings." },
+          {
+            value: "",
+            label: "Default",
+            description: "Your Default agents (Settings → Workflows).",
+          },
           ...(workflows ?? []).map((item) => ({
             value: item._id,
             label: item.name,
@@ -604,7 +596,7 @@ function SessionWorkflow({
       <span className="z-xsmall z-muted">
         {workflows?.length
           ? "Applies to the agents this session starts from now on."
-          : "Make workflows (for example Save tokens) in Settings → Agents → this product."}
+          : "Make workflows (for example Save tokens) in Settings → Workflows."}
       </span>
       {problem && <Notice tone="danger">{problem}</Notice>}
     </section>

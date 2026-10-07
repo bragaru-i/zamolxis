@@ -98,7 +98,22 @@ function build(name: string) {
           runtimes: [
             { runtime: "codex", status: "available" },
             { runtime: "claude", status: "available" },
+            { runtime: "codex-local", status: "available" },
+            { runtime: "local", status: "available" },
           ],
+          defaultWorkflowId: "wf1",
+        },
+        {
+          _id: "w2",
+          name: "ubuntu",
+          status: "online",
+          platform: "linux",
+          lastHeartbeatAt: now - 9000,
+          runtimes: [
+            { runtime: "codex", status: "available" },
+            { runtime: "claude", status: "available" },
+          ],
+          defaultWorkflowId: "wf2",
         },
       ];
 
@@ -768,7 +783,83 @@ function build(name: string) {
       ];
 
   // The Mac's saved workflow for zamolxis (Settings → Computers).
-  let locationWorkflow: string | undefined = "wf1";
+  let locationWorkflow: string | undefined;
+  // Settings → Workflows and My agents: the owner's saved agents and two workflows.
+  const QWEN = "qwen/qwen3-coder-30b";
+  const agents: Row[] = empty
+    ? []
+    : [
+        {
+          _id: "ag1",
+          name: "Local chat",
+          chain: [{ runtime: "local", model: QWEN }, { runtime: "codex" }],
+        },
+        {
+          _id: "ag2",
+          name: "Local planner",
+          chain: [
+            { runtime: "codex-local", model: QWEN },
+            { runtime: "claude", model: "claude-haiku-4-5-20251001" },
+            { runtime: "codex" },
+          ],
+        },
+        {
+          _id: "ag3",
+          name: "Claude Sonnet",
+          chain: [{ runtime: "claude", model: "claude-sonnet-5-5" }, { runtime: "codex" }],
+        },
+        {
+          _id: "ag4",
+          name: "Claude Opus",
+          chain: [{ runtime: "claude", model: "claude-opus-5-5" }, { runtime: "codex" }],
+        },
+        { _id: "ag5", name: "Codex", chain: [{ runtime: "codex" }] },
+        {
+          _id: "ag6",
+          name: "Checks only (no AI)",
+          chain: [{ runtime: "codex" }],
+          checksOnly: true,
+        },
+      ];
+  const agentJobs = (agent: Row) => {
+    const chain = agent.chain as Array<{ runtime: string }>;
+    if (agent.checksOnly) return ["verifier"];
+    return ["orchestrator", "supervisor", "builder", "verifier", "repair"].filter((role) =>
+      chain.every((entry) =>
+        entry.runtime === "local"
+          ? role === "orchestrator"
+          : entry.runtime === "codex-local"
+            ? ["orchestrator", "supervisor", "verifier"].includes(role)
+            : true,
+      ),
+    );
+  };
+  const workflows: Row[] = empty
+    ? []
+    : [
+        { _id: "wf1", name: "Save tokens" },
+        { _id: "wf2", name: "Codex only" },
+      ];
+  const workflowJobs: Record<string, Record<string, string>> = {
+    wf1: { orchestrator: "ag1", supervisor: "ag2", builder: "ag3", verifier: "ag6", repair: "ag3" },
+    wf2: { orchestrator: "ag5", supervisor: "ag5", builder: "ag5", verifier: "ag5", repair: "ag5" },
+  };
+  const jobRow = (workflowId: string, role: string, agentId: string): Row => {
+    const agent = agents.find((row) => row._id === agentId);
+    const [first, ...backups] = (agent?.chain ?? [{ runtime: "codex" }]) as Row[];
+    return {
+      _id: `${workflowId}-${role}`,
+      name: agent?.name ?? "Agent",
+      role,
+      workflowId,
+      agentId,
+      ...first,
+      ...(backups.length ? { backups } : {}),
+      ...(agent?.checksOnly ? { verification: "checks_only" } : {}),
+      enabled: true,
+      updatedAt: now - HOUR,
+    };
+  };
   const approvals: Row[] = attention
     ? [
         {
@@ -1070,22 +1161,32 @@ function build(name: string) {
         }
         case "agentProfiles:list":
           return args.workflowId
-            ? profiles
-                .filter((row) => row.role === "builder")
-                .map((row) => ({
-                  ...row,
-                  _id: "wf-a1",
-                  model: "gpt-5.1-codex-mini",
-                  workflowId: args.workflowId,
-                }))
+            ? Object.entries(workflowJobs[args.workflowId as string] ?? {}).map(([role, agentId]) =>
+                jobRow(args.workflowId as string, role, agentId),
+              )
             : args.productId
               ? []
               : profiles;
-        // One named workflow per product in the preview: "Save tokens".
         case "workflows:list":
-          return empty ? [] : [{ _id: "wf1", name: "Save tokens", roles: 1, activeSessions: 0 }];
-        case "workflows:listAll":
-          return empty ? [] : [{ _id: "wf1", productId: "p1", name: "Save tokens" }];
+          return workflows.map((workflow) => ({
+            _id: workflow._id,
+            name: workflow.name,
+            roles: Object.keys(workflowJobs[workflow._id as string] ?? {}).length,
+            activeSessions: 0,
+            computers: workstations
+              .filter((device) => device.defaultWorkflowId === workflow._id)
+              .map((device) => device.name),
+          }));
+        case "agents:list":
+          return agents.map((agent) => ({
+            ...agent,
+            checksOnly: agent.checksOnly === true,
+            jobs: agentJobs(agent),
+            usedBy: Object.values(workflowJobs).reduce(
+              (sum, jobs) => sum + Object.values(jobs).filter((id) => id === agent._id).length,
+              0,
+            ),
+          }));
         case "agentProfiles:defaultRuntime":
           return "codex";
         case "agentProfiles:models":
@@ -1287,6 +1388,62 @@ function build(name: string) {
           for (const run of runs[args.workSessionId as string] ?? []) run.status = "cancelled";
           return null;
         }
+        case "workflows:setForComputer": {
+          const device = workstations.find((row) => row._id === args.workstationId);
+          if (device) device.defaultWorkflowId = args.workflowId;
+          return null;
+        }
+        case "workflows:create": {
+          const id = `wf${Date.now()}`;
+          workflows.push({ _id: id, name: args.name });
+          const from = (args.copyFrom as Row | undefined)?.workflowId as string | undefined;
+          workflowJobs[id] = args.preset
+            ? { ...workflowJobs.wf1 }
+            : from
+              ? { ...workflowJobs[from] }
+              : {};
+          return id;
+        }
+        case "workflows:rename": {
+          const row = workflows.find((item) => item._id === args.workflowId);
+          if (row) row.name = args.name;
+          return null;
+        }
+        case "workflows:remove": {
+          const at = workflows.findIndex((item) => item._id === args.workflowId);
+          if (at >= 0) workflows.splice(at, 1);
+          for (const device of workstations)
+            if (device.defaultWorkflowId === args.workflowId) device.defaultWorkflowId = undefined;
+          return null;
+        }
+        case "agents:assign": {
+          if (!args.workflowId) return null;
+          const id = args.workflowId as string;
+          workflowJobs[id] = { ...workflowJobs[id], [args.role as string]: args.agentId as string };
+          return null;
+        }
+        case "agents:unassign":
+          delete workflowJobs[args.workflowId as string]?.[args.role as string];
+          return null;
+        case "agents:ensureStarter":
+          return 0;
+        case "agents:save": {
+          const row = agents.find((item) => item._id === args.agentId);
+          const fields = {
+            name: args.name,
+            chain: args.chain,
+            checksOnly: args.checksOnly === true,
+            ...(args.instructions ? { instructions: args.instructions } : {}),
+          };
+          if (row) Object.assign(row, fields);
+          else agents.push({ _id: `ag${Date.now()}`, ...fields });
+          return row?._id ?? null;
+        }
+        case "agents:remove": {
+          const at = agents.findIndex((item) => item._id === args.agentId);
+          if (at >= 0) agents.splice(at, 1);
+          return null;
+        }
         case "workflows:setForLocation":
           locationWorkflow = args.workflowId as string | undefined;
           return null;
@@ -1294,7 +1451,7 @@ function build(name: string) {
           const session = sessions.find((row) => row._id === args.workSessionId);
           if (session) {
             session.workflowId = args.workflowId;
-            session.workflowName = args.workflowId ? "Save tokens" : undefined;
+            session.workflowName = workflows.find((row) => row._id === args.workflowId)?.name;
           }
           return null;
         }

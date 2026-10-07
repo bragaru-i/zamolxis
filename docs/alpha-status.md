@@ -503,6 +503,21 @@ module aliases exist only when the variable is set.
   pre-selects the chosen computer's. The wide Settings sheet has a fixed height, so switching
   pages no longer resizes and re-centres it (it moved about 100 px before).
 
+- **Settings rework: global workflows, My agents (2026-10-07):** workflows now belong to the
+  owner, not a product (`agentWorkflows.productId` optional; `workflows.list` takes no args).
+  Each computer picks one (`workstations.defaultWorkflowId`, `workflows.setForComputer`); a
+  project may override it on one computer (`repositoryLocations.defaultWorkflowId`). Order
+  when work starts: chosen → project on that computer → computer → Default.
+  `agentDefinitions` ("My agents", `convex/agents.ts`) are named chains of 1–3 models;
+  `agents.assign` copies one into a job's profile (`agentProfiles.agentId`), `unassign` turns
+  a workflow's job back to the Default, editing an agent updates every job using it, and a
+  hand edit of a job's models unlinks it. Settings menu: Workflows · My agents · Computers &
+  projects (with "What runs here": the first model of each job's chain that computer has,
+  marked when it is a backup) · Usage · Storage · People & devices. On a laptop the menu and
+  the page scroll separately and Sign out stays pinned. **Gap:** older product-level
+  profiles still resolve (Session workflow → product → Default) but Settings no longer
+  shows them.
+
 - **Codex + local model (2026-10-07):** runtime `codex-local` is a second `CodexRuntime`
   (`local: { id, modelProvider, models }`) whose threads use Codex's built-in `lmstudio` /
   `ollama` provider. Reading roles only (`READ_ONLY_RUNTIMES`; adapter refuses others).

@@ -9,6 +9,7 @@ const modules = {
   "./_generated/server.ts": () => import("../convex/_generated/server"),
   "./agentProfiles.ts": () => import("../convex/agentProfiles"),
   "./workflows.ts": () => import("../convex/workflows"),
+  "./agents.ts": () => import("../convex/agents"),
   "./orchestrator.ts": () => import("../convex/orchestrator"),
   "./supervisor.ts": () => import("../convex/supervisor"),
   "./profiles.ts": () => import("../convex/profiles"),
@@ -657,20 +658,18 @@ it("names a chat created before titles after its first message", async () => {
 
 it("keeps named workflows per product, copies them and runs a Session with one", async () => {
   const f = await fixture();
-  // The product's Default: Builder on Codex with model a.
+  // The Default: Builder on Codex with model a.
   await f.user.mutation(api.agentProfiles.upsert, {
     name: "Builder",
     role: "builder",
-    productId: f.productId,
     runtime: "codex",
     model: "a",
     enabled: true,
   });
   // "Cheap" starts as a copy of the Default, then its Builder uses model b.
   const cheap = await f.user.mutation(api.workflows.create, {
-    productId: f.productId,
     name: "Cheap",
-    copyFrom: { productId: f.productId },
+    copyFrom: {},
   });
   const [copied] = await f.user.query(api.agentProfiles.list, {
     productId: f.productId,
@@ -694,19 +693,15 @@ it("keeps named workflows per product, copies them and runs a Session with one",
     enabled: true,
   });
   // The Default's list does not include the workflow's profiles.
-  expect(
-    (await f.user.query(api.agentProfiles.list, { productId: f.productId })).map(
-      (row) => row.model,
-    ),
-  ).toEqual(["a"]);
-  await expect(
-    f.user.mutation(api.workflows.create, { productId: f.productId, name: "cheap" }),
-  ).rejects.toThrow("WORKFLOW_NAME_TAKEN");
-  expect(await f.user.query(api.workflows.list, { productId: f.productId })).toEqual([
-    { _id: cheap, name: "Cheap", roles: 1, activeSessions: 0 },
+  expect((await f.user.query(api.agentProfiles.list, {})).map((row) => row.model)).toEqual(["a"]);
+  await expect(f.user.mutation(api.workflows.create, { name: "cheap" })).rejects.toThrow(
+    "WORKFLOW_NAME_TAKEN",
+  );
+  expect(await f.user.query(api.workflows.list, {})).toEqual([
+    { _id: cheap, name: "Cheap", roles: 1, activeSessions: 0, computers: [] },
   ]);
   // Another owner can neither see nor use it.
-  await expect(f.other.query(api.workflows.list, { productId: f.productId })).rejects.toThrow();
+  expect(await f.other.query(api.workflows.list, {})).toEqual([]);
 
   // A Session opened with "Cheap" keeps it, and so do its follow-ups.
   const sessionId = await f.user.mutation(api.supervisor.submit, {
@@ -726,7 +721,7 @@ it("keeps named workflows per product, copies them and runs a Session with one",
     sessionId,
   });
   expect((await f.t.run((ctx) => ctx.db.get("workSessions", sessionId)))?.workflowId).toBe(cheap);
-  expect(await f.user.query(api.workflows.list, { productId: f.productId })).toMatchObject([
+  expect(await f.user.query(api.workflows.list, {})).toMatchObject([
     { name: "Cheap", activeSessions: 1 },
   ]);
   // In use: it cannot be deleted until its Session is finished.
@@ -736,7 +731,7 @@ it("keeps named workflows per product, copies them and runs a Session with one",
   await f.t.run((ctx) => ctx.db.patch("workSessions", sessionId, { status: "completed" }));
   await f.user.mutation(api.workflows.rename, { workflowId: cheap, name: "Cheap v2" });
   await f.user.mutation(api.workflows.remove, { workflowId: cheap });
-  expect(await f.user.query(api.workflows.list, { productId: f.productId })).toEqual([]);
+  expect(await f.user.query(api.workflows.list, {})).toEqual([]);
 });
 
 it("resolves a role from the Session's workflow, then the product's Default, then global", async () => {
@@ -758,7 +753,6 @@ it("resolves a role from the Session's workflow, then the product's Default, the
     enabled: true,
   });
   const workflowId = await f.user.mutation(api.workflows.create, {
-    productId: f.productId,
     name: "Strict",
   });
   await f.user.mutation(api.agentProfiles.upsert, {
@@ -810,7 +804,6 @@ it("creates a recommended workflow matched to the agents and models the computer
     ],
   });
   const workflowId = await f.user.mutation(api.workflows.create, {
-    productId: f.productId,
     name: "Save tokens",
     preset: "save_tokens",
   });
@@ -833,10 +826,9 @@ it("creates a recommended workflow matched to the agents and models the computer
   });
   await expect(
     f.user.mutation(api.workflows.create, {
-      productId: f.productId,
       name: "Both",
       preset: "balanced",
-      copyFrom: { productId: f.productId },
+      copyFrom: {},
     }),
   ).rejects.toThrow("INVALID_ARGUMENT");
 });
@@ -845,7 +837,6 @@ it("keeps only agents a computer offers and switches an open Session's workflow"
   const f = await fixture();
   // This computer only has Codex: Claude and the local model drop out of every chain.
   const workflowId = await f.user.mutation(api.workflows.create, {
-    productId: f.productId,
     name: "Balanced",
     preset: "balanced",
   });
@@ -885,7 +876,6 @@ it("keeps only agents a computer offers and switches an open Session's workflow"
 it("starts new work with the computer's saved workflow unless another one is chosen", async () => {
   const f = await fixture();
   const workflowId = await f.user.mutation(api.workflows.create, {
-    productId: f.productId,
     name: "Codex only",
     preset: "codex_only",
   });
@@ -948,7 +938,6 @@ it("answers Home chat with the Orchestrator of the computer's saved workflow", a
     ],
   });
   const workflowId = await f.user.mutation(api.workflows.create, {
-    productId: f.productId,
     name: "Save tokens",
     preset: "save_tokens",
   });
@@ -994,4 +983,165 @@ it("lets Codex + local model plan and check, never build or repair", async () =>
   await expect(
     f.user.mutation(api.agentProfiles.setRuntimeForAllRoles, { runtime: "codex-local" }),
   ).rejects.toThrow("INVALID_ARGUMENT");
+});
+
+it("keeps my agents: a starter set, jobs they may do, edits that reach every job", async () => {
+  const f = await fixture();
+  const instanceId = (await f.t.run((ctx) => ctx.db.get("workstations", f.workstationId)))
+    ?.nodeInstanceId;
+  await f.node.mutation(api.node.heartbeat, {
+    workstationId: f.workstationId,
+    instanceId: instanceId ?? "instance",
+    runtimeCapabilities: [
+      { runtime: "codex", capabilities: ["start", "stop"] },
+      {
+        runtime: "claude",
+        capabilities: ["start", "stop"],
+        models: [
+          { id: "claude-opus-5-5", displayName: "Opus 5.5" },
+          { id: "claude-haiku-4-5", displayName: "Haiku 4.5" },
+        ],
+      },
+      {
+        runtime: "codex-local",
+        capabilities: ["start", "stop"],
+        models: [{ id: "qwen/qwen3-coder-30b", displayName: "qwen" }],
+      },
+    ],
+  });
+  expect(await f.user.mutation(api.agents.ensureStarter, {})).toBeGreaterThan(0);
+  expect(await f.user.mutation(api.agents.ensureStarter, {})).toBe(0);
+  const agents = await f.user.query(api.agents.list, {});
+  const byName = Object.fromEntries(agents.map((agent) => [agent.name, agent]));
+  // No computer offers a plain local model: "Local chat" keeps only Codex.
+  expect(byName["Local chat"]?.chain).toEqual([{ runtime: "codex" }]);
+  expect(byName["Local planner"]).toMatchObject({
+    chain: [
+      { runtime: "codex-local", model: "qwen/qwen3-coder-30b" },
+      { runtime: "claude", model: "claude-haiku-4-5" },
+      { runtime: "codex" },
+    ],
+    jobs: ["orchestrator", "supervisor", "verifier"],
+  });
+  expect(byName["Checks only (no AI)"]).toMatchObject({ checksOnly: true, jobs: ["verifier"] });
+  // "Sonnet" is not reported: the Claude family name stands in.
+  expect(byName["Claude Sonnet"]?.chain[0]).toEqual({ runtime: "claude", model: "sonnet" });
+
+  const planner = byName["Local planner"]?._id;
+  const opus = byName["Claude Opus"]?._id;
+  if (!planner || !opus) throw new Error("starter agents missing");
+  await f.user.mutation(api.agents.assign, {
+    productId: f.productId,
+    role: "supervisor",
+    agentId: planner,
+  });
+  await expect(
+    f.user.mutation(api.agents.assign, {
+      productId: f.productId,
+      role: "builder",
+      agentId: planner,
+    }),
+  ).rejects.toThrow("AGENT_NOT_ALLOWED_FOR_JOB");
+  await f.user.mutation(api.agents.assign, {
+    productId: f.productId,
+    role: "builder",
+    agentId: opus,
+  });
+  const profiles = await f.user.query(api.agentProfiles.list, { productId: f.productId });
+  expect(profiles.find((row) => row.role === "supervisor")).toMatchObject({
+    agentId: planner,
+    runtime: "codex-local",
+    model: "qwen/qwen3-coder-30b",
+    backups: [{ runtime: "claude", model: "claude-haiku-4-5" }, { runtime: "codex" }],
+  });
+  // An edit reaches the job; a change it could no longer do is refused.
+  await f.user.mutation(api.agents.save, {
+    agentId: opus,
+    name: "Strong builder",
+    chain: [{ runtime: "claude", model: "claude-opus-5-5" }],
+  });
+  expect(
+    (await f.user.query(api.agentProfiles.list, { productId: f.productId })).find(
+      (row) => row.role === "builder",
+    ),
+  ).toMatchObject({ runtime: "claude", model: "claude-opus-5-5", agentId: opus });
+  await expect(
+    f.user.mutation(api.agents.save, {
+      agentId: opus,
+      name: "Strong builder",
+      chain: [{ runtime: "codex-local" }],
+    }),
+  ).rejects.toThrow("AGENT_NOT_ALLOWED_FOR_JOB");
+  expect(
+    (await f.user.query(api.agents.list, {})).find((agent) => agent._id === opus)?.usedBy,
+  ).toBe(1);
+  // Deleting it keeps the job's settings.
+  await f.user.mutation(api.agents.remove, { agentId: opus });
+  const builder = (await f.user.query(api.agentProfiles.list, { productId: f.productId })).find(
+    (row) => row.role === "builder",
+  );
+  expect(builder).toMatchObject({ runtime: "claude", model: "claude-opus-5-5" });
+  expect(builder?.agentId).toBeUndefined();
+  await expect(f.other.query(api.agents.list, {})).resolves.toEqual([]);
+});
+
+it("gives each computer its own workflow, with a project's own as the exception", async () => {
+  const f = await fixture();
+  const codexOnly = await f.user.mutation(api.workflows.create, {
+    name: "Codex only",
+    preset: "codex_only",
+  });
+  const save = await f.user.mutation(api.workflows.create, {
+    name: "Save tokens",
+    preset: "save_tokens",
+  });
+  await f.user.mutation(api.workflows.setForComputer, {
+    workstationId: f.workstationId,
+    workflowId: codexOnly,
+  });
+  expect(await f.user.query(api.workflows.list, {})).toMatchObject([
+    { name: "Codex only", computers: ["Node"] },
+    { name: "Save tokens", computers: [] },
+  ]);
+  const open = async (key: string) => {
+    const sessionId = await f.user.mutation(api.supervisor.submit, {
+      productId: f.productId,
+      repositoryId: f.repositoryId,
+      text: "Fix it",
+      idempotencyKey: key,
+    });
+    return (await f.t.run((ctx) => ctx.db.get("workSessions", sessionId)))?.workflowId;
+  };
+  // The computer's workflow applies to new work.
+  expect(await open("c-1")).toBe(codexOnly);
+  // A project's own workflow on this computer wins.
+  const [location] = await f.user.query(api.repositories.listLocations, {
+    workstationId: f.workstationId,
+  });
+  if (!location) throw new Error("no location");
+  await f.user.mutation(api.workflows.setForLocation, {
+    repositoryLocationId: location.repositoryLocationId,
+    workflowId: save,
+  });
+  expect(await open("c-2")).toBe(save);
+  // Deleting a workflow puts its computer back on the Default.
+  await f.user.mutation(api.workflows.setForLocation, {
+    repositoryLocationId: location.repositoryLocationId,
+  });
+  // Refused while a Session that is not finished uses it.
+  await expect(f.user.mutation(api.workflows.remove, { workflowId: codexOnly })).rejects.toThrow(
+    "WORKFLOW_IN_USE",
+  );
+  await f.t.run(async (ctx) => {
+    for (const session of await ctx.db.query("workSessions").collect())
+      await ctx.db.patch("workSessions", session._id, { status: "completed" });
+  });
+  await f.user.mutation(api.workflows.remove, { workflowId: codexOnly });
+  expect(await open("c-3")).toBeUndefined();
+  await expect(
+    f.other.mutation(api.workflows.setForComputer, {
+      workstationId: f.workstationId,
+      workflowId: save,
+    }),
+  ).rejects.toThrow();
 });

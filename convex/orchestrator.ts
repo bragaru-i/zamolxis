@@ -532,20 +532,31 @@ async function workLinks(
 // The workflow a computer starts new work of this product with (Settings → Computers).
 async function computerWorkflow(
   ctx: MutationCtx,
-  workstationId: Id<"workstations">,
-  productId: Id<"products">,
+  device: Doc<"workstations">,
+  productId: Id<"products"> | undefined,
 ) {
-  const locations = await ctx.db
-    .query("repositoryLocations")
-    .withIndex("by_workstation", (q) => q.eq("workstationId", workstationId))
-    .take(65);
-  for (const location of locations) {
-    if (!location.defaultWorkflowId || location.status === "removed") continue;
-    const repository = await ctx.db.get("repositories", location.repositoryId);
-    if (repository?.productId !== productId) continue;
-    const workflow = await ctx.db.get("agentWorkflows", location.defaultWorkflowId);
-    if (workflow && workflow.archivedAt === undefined && workflow.productId === productId)
-      return workflow._id;
+  // A repository of this product with its own workflow on the computer, else the computer's.
+  const locations = productId
+    ? await ctx.db
+        .query("repositoryLocations")
+        .withIndex("by_workstation", (q) => q.eq("workstationId", device._id))
+        .take(65)
+    : [];
+  for (const id of [
+    ...(
+      await Promise.all(
+        locations.map(async (location) => {
+          if (!location.defaultWorkflowId || location.status === "removed") return undefined;
+          const repository = await ctx.db.get("repositories", location.repositoryId);
+          return repository?.productId === productId ? location.defaultWorkflowId : undefined;
+        }),
+      )
+    ).filter((id) => id !== undefined),
+    device.defaultWorkflowId,
+  ]) {
+    if (!id) continue;
+    const workflow = await ctx.db.get("agentWorkflows", id);
+    if (workflow && workflow.archivedAt === undefined) return workflow._id;
   }
   return undefined;
 }
@@ -567,7 +578,7 @@ async function orchestratorTarget(
   ).filter((device) => (device.lastHeartbeatAt ?? 0) > Date.now() - HEARTBEAT_FRESH_MS);
   const candidates = [];
   for (const device of devices) {
-    const flow = productId ? await computerWorkflow(ctx, device._id, productId) : undefined;
+    const flow = await computerWorkflow(ctx, device, productId);
     const effective = await resolveAgentProfile(
       ctx,
       ownerId,
