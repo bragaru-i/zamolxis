@@ -28,17 +28,12 @@ const role = v.union(
 async function ownWorkflow(
   ctx: QueryCtx,
   ownerId: Id<"users">,
-  productId: Id<"products"> | undefined,
+  _productId: Id<"products"> | undefined,
   workflowId: Id<"agentWorkflows"> | undefined,
 ) {
   if (!workflowId) return undefined;
   const workflow = await ctx.db.get(workflowId);
-  if (
-    !workflow ||
-    workflow.ownerId !== ownerId ||
-    workflow.productId !== productId ||
-    workflow.archivedAt !== undefined
-  )
+  if (!workflow || workflow.ownerId !== ownerId || workflow.archivedAt !== undefined)
     fail("WORKFLOW_MISMATCH");
   return workflow;
 }
@@ -58,7 +53,11 @@ export const list = query({
       .take(201);
     if (rows.length > 200) fail("LIMIT_EXCEEDED");
     return rows.filter(
-      (row) => row.productId === args.productId && row.workflowId === args.workflowId,
+      // A workflow's profiles belong to it alone, whatever project it was first made for.
+      (row) =>
+        args.workflowId
+          ? row.workflowId === args.workflowId
+          : row.productId === args.productId && !row.workflowId,
     );
   },
 });
@@ -159,8 +158,9 @@ export const setRuntimeForAllRoles = mutation({
       const own = rows.filter(
         (row) =>
           row.role === role &&
-          row.productId === args.productId &&
-          row.workflowId === args.workflowId,
+          (args.workflowId
+            ? row.workflowId === args.workflowId
+            : row.productId === args.productId && !row.workflowId),
       );
       const target =
         own.find((row) => row.enabled) ?? [...own].sort((a, b) => b.updatedAt - a.updatedAt)[0];
@@ -272,8 +272,9 @@ export const upsert = mutation({
         (peer) =>
           peer._id !== args.profileId &&
           peer.enabled &&
-          peer.productId === args.productId &&
-          peer.workflowId === args.workflowId,
+          (args.workflowId
+            ? peer.workflowId === args.workflowId
+            : peer.productId === args.productId && !peer.workflowId),
       )
     )
       fail("AGENT_PROFILE_CONFLICT");
@@ -281,7 +282,18 @@ export const upsert = mutation({
     if (args.profileId) {
       const existing = await ctx.db.get(args.profileId);
       if (!existing || existing.ownerId !== owner._id) fail("NOT_FOUND");
+      // Changing the models or instructions by hand makes the job its own: it no longer
+      // follows a saved agent (My agents). Approvals and limits are the job's own anyway.
+      const keepsAgent =
+        existing.runtime === args.runtime.trim() &&
+        (existing.model ?? "") === (args.model?.trim() ?? "") &&
+        (existing.reasoningEffort ?? "") === (args.reasoningEffort?.trim() ?? "") &&
+        (!backups || JSON.stringify(existing.backups ?? []) === JSON.stringify(backups)) &&
+        (args.instructions === undefined ||
+          (existing.instructions ?? "") === (instructions ?? "")) &&
+        existing.verification === mode;
       await ctx.db.patch(existing._id, {
+        ...(keepsAgent ? {} : { agentId: undefined }),
         productId: args.productId,
         workflowId: args.workflowId,
         name: args.name.trim(),

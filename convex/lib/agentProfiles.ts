@@ -108,7 +108,8 @@ export async function resolveAgentProfile(
   const product = productId
     ? enabled.filter((row) => row.productId === productId && row.workflowId === undefined)
     : [];
-  const global = enabled.filter((row) => row.productId === undefined);
+  // Global: neither a product's nor a workflow's (workflows have no product).
+  const global = enabled.filter((row) => row.productId === undefined && !row.workflowId);
   if (workflow.length > 1 || product.length > 1 || global.length > 1)
     fail("AGENT_PROFILE_CONFLICT");
   const profile = workflow[0] ?? product[0] ?? global[0];

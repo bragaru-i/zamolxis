@@ -172,10 +172,7 @@ export async function submitText(
   const usable = async (id: Id<"agentWorkflows"> | undefined) => {
     if (!id) return undefined;
     const workflow = await ctx.db.get("agentWorkflows", id);
-    return workflow &&
-      workflow.ownerId === owner._id &&
-      workflow.productId === product._id &&
-      workflow.archivedAt === undefined
+    return workflow && workflow.ownerId === owner._id && workflow.archivedAt === undefined
       ? id
       : undefined;
   };
@@ -206,7 +203,10 @@ export async function submitText(
     const device = await load(ctx, "workstations", item.workstationId);
     if (device.ownerId !== owner._id || !deviceOnline(device) || item.status !== "available")
       continue;
-    const flow = followsComputer ? await usable(item.defaultWorkflowId) : chosen;
+    // The repository's own workflow on this computer, else the computer's.
+    const flow = followsComputer
+      ? ((await usable(item.defaultWorkflowId)) ?? (await usable(device.defaultWorkflowId)))
+      : chosen;
     const builder = await resolveAgentProfile(
       ctx,
       owner._id,

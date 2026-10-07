@@ -11,6 +11,7 @@
 import type * as admin from "../admin.js";
 import type * as auth from "../auth.js";
 import type * as agentProfiles from "../agentProfiles.js";
+import type * as agents from "../agents.js";
 import type * as pairing from "../pairing.js";
 import type * as deviceTokens from "../deviceTokens.js";
 import type * as onboarding from "../onboarding.js";
@@ -51,6 +52,7 @@ const fullApi: ApiFromModules<{
   admin: typeof admin;
   auth: typeof auth;
   agentProfiles: typeof agentProfiles;
+  agents: typeof agents;
   pairing: typeof pairing;
   deviceTokens: typeof deviceTokens;
   onboarding: typeof onboarding;
