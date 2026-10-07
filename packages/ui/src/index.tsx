@@ -13,11 +13,13 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { compactPath, crownPath, facePath } from "./product-mark";
+import { useScrollLock } from "./scroll-lock";
 
 export { AgentRow, compactCount, costLabel, elapsed } from "./agent";
 export { KeyValueList, SegmentedControl, Stat, StatGrid, TextInput } from "./data";
 export type { Block as MarkdownBlock, Inline as MarkdownInline } from "./markdown";
 export { Markdown, parseInline, parseMarkdown, safeHref } from "./markdown";
+export { useScrollLock } from "./scroll-lock";
 export { Disclosure, Facts, Timeline, TimelineItem } from "./timeline";
 
 export type Tone = "success" | "warning" | "danger" | "info" | "neutral";
@@ -733,16 +735,16 @@ export function Composer({
   );
 }
 
-/** True on wide screens (≥720px) after mount; false during server rendering. */
-export function useWide(): boolean {
+/** True on screens at least `minWidth` wide (720px by default) after mount; false on the server. */
+export function useWide(minWidth = 720): boolean {
   const [wide, setWide] = useState(false);
   useEffect(() => {
-    const query = matchMedia("(min-width: 720px)");
+    const query = matchMedia(`(min-width: ${minWidth}px)`);
     const update = () => setWide(query.matches);
     update();
     query.addEventListener("change", update);
     return () => query.removeEventListener("change", update);
-  }, []);
+  }, [minWidth]);
   return wide;
 }
 
@@ -773,6 +775,7 @@ export function Sheet({
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const titleId = useId();
+  useScrollLock(open);
   useEffect(() => {
     const element = dialog.current;
     if (!element) return;
@@ -872,6 +875,18 @@ export function Picker({
   const listId = useId();
   const selected = options.find((option) => option.value === value);
   const popover = open && wide;
+  const [above, setAbove] = useState(false);
+  useScrollLock(popover);
+  // The page cannot scroll while the popover is open, so it opens upwards when the room
+  // under the trigger is too short for it and there is more room above.
+  useLayoutEffect(() => {
+    if (!popover) return;
+    const list = root.current?.querySelector<HTMLElement>(".z-popover");
+    const box = trigger.current?.getBoundingClientRect();
+    if (!list || !box) return;
+    const below = window.innerHeight - box.bottom;
+    setAbove(below < list.offsetHeight + 8 && box.top > below);
+  }, [popover]);
   // The popover closes on an outside press or Escape; the drawer handles its own.
   useEffect(() => {
     if (!popover) return;
@@ -964,7 +979,7 @@ export function Picker({
           <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.8" />
         </svg>
       </button>
-      {popover && <div className="z-popover">{list}</div>}
+      {popover && <div className={above ? "z-popover z-popover--above" : "z-popover"}>{list}</div>}
       <Sheet open={open && !wide} title={label} onClose={() => setOpen(false)}>
         {list}
       </Sheet>

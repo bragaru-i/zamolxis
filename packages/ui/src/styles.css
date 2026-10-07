@@ -1683,6 +1683,11 @@ code,
   border-radius: var(--z-radius-sm);
   box-shadow: var(--z-shadow-overlay);
   animation: z-pop-in var(--z-motion-fast) var(--z-ease);
+  overscroll-behavior: contain;
+}
+.z-popover--above {
+  top: auto;
+  bottom: calc(100% + 4px);
 }
 @keyframes z-pop-in {
   from {
@@ -1759,6 +1764,8 @@ code,
   background: var(--z-surface);
   color: var(--z-fg);
   box-shadow: var(--z-shadow-overlay);
+  /* The page behind is locked (useScrollLock); long content scrolls inside the sheet. */
+  overflow-y: auto;
   overscroll-behavior: contain;
 }
 .z-sheet[open] {
