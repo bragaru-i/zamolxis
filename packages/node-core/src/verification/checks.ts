@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { lstatSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { withoutGitHubTokens } from "@zamolxis/runtime-core";
 export interface CheckEvidence {
@@ -20,6 +20,15 @@ export interface CheckObservation {
   readonly output: string;
 }
 const OBSERVED_OUTPUT = 8000;
+const SCRIPT_TIMEOUT = 120_000;
+// A lockfile-exact install of a fresh worktree; the Builder's own install took longer.
+const INSTALL_TIMEOUT = 600_000;
+// The lockfile-only install for each supported package manager. A verifier worktree is
+// fresh, so without this every scripted check fails for the lack of node_modules.
+const INSTALLS: Record<string, { readonly lockfile: string; readonly args: string[] }> = {
+  pnpm: { lockfile: "pnpm-lock.yaml", args: ["install", "--frozen-lockfile", "--prefer-offline"] },
+  npm: { lockfile: "package-lock.json", args: ["ci"] },
+};
 // Node executes repository-owned scripts, never shell text from Supervisor output.
 export async function runVerificationChecks(
   cwd: string,
@@ -27,14 +36,19 @@ export async function runVerificationChecks(
   required: readonly string[],
   observe?: (check: CheckObservation) => void,
 ): Promise<CheckEvidence[]> {
-  const execute = (executable: string, args: string[], script?: string) => {
+  const execute = (
+    executable: string,
+    args: string[],
+    script?: string,
+    timeout = SCRIPT_TIMEOUT,
+  ) => {
     const startedAt = Date.now();
     return new Promise<boolean>((resolve) =>
       execFile(
         executable,
         args,
         // Repository scripts get no GitHub tokens, like the agents that wrote them.
-        { cwd, env: withoutGitHubTokens(), timeout: 120_000, maxBuffer: 256 * 1024 },
+        { cwd, env: withoutGitHubTokens(), timeout, maxBuffer: 1024 * 1024 },
         (error, stdout, stderr) => {
           const code = (error as { code?: unknown } | null)?.code;
           const output = [stdout, stderr].filter(Boolean).join("\n");
@@ -75,10 +89,19 @@ export async function runVerificationChecks(
     /* Missing manifest is a failed scripted check, not proof. */
   }
   let passed = scripts.length > 0;
+  // Dependencies come from the repository's own lockfile (its lifecycle scripts run as
+  // they do for the Builder); a repository without one runs its scripts as checked out.
+  const install = INSTALLS[manager];
+  const installed =
+    !scripts.length || !install || !existsSync(join(cwd, install.lockfile))
+      ? true
+      : await execute(manager, install.args, undefined, INSTALL_TIMEOUT);
   const summaries: string[] = [];
   for (const script of scripts) {
     const runnable =
-      /^[a-zA-Z0-9:_-]{1,64}$/.test(script) && typeof configured[script] === "string";
+      installed &&
+      /^[a-zA-Z0-9:_-]{1,64}$/.test(script) &&
+      typeof configured[script] === "string";
     if (!runnable) {
       const at = Date.now();
       observe?.({
@@ -87,7 +110,9 @@ export async function runVerificationChecks(
         result: "failed",
         startedAt: at,
         finishedAt: at,
-        output: "Not run: the script is not defined in package.json.",
+        output: installed
+          ? "Not run: the script is not defined in package.json."
+          : "Not run: the dependencies could not be installed from the lockfile.",
       });
     }
     const ok = runnable && (await execute(manager, ["run", script], script));

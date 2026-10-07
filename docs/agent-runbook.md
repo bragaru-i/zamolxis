@@ -230,6 +230,9 @@ against a written contract. When lanes are integrated:
   per worktree; the Node's `node-state.sqlite` (`event_outbox`, `command_executions`)
   holds the run summaries and check output. Recover by cherry-picking the candidate onto
   `origin/main` in a worktree, running `pnpm check`, and publishing as `bragaru-i`.
+  Since the fix the checks install from the lockfile first; a verification that still
+  reports "Not run: the dependencies could not be installed" means the lockfile does not
+  match the manifest, or the pnpm store lacks a package and the Node had no network.
 - GitHub CI sometimes leaves a job queued without a runner until it is cancelled
   after 15 minutes; re-run it before treating it as a failure.
 - "Open pull request" never uses the Mac's active `gh` account or global Git
