@@ -194,7 +194,7 @@ export async function queueRun(
         (role === "verifier"
           ? `Independently review exact SHA ${workspace.baseSha}. Do not modify files or Git state. Acceptance: ${task.description}. Provide a concise review; deterministic Node checks establish trust.\n${PROOF_INSTRUCTION}`
           : `${task.description}
-Start from the files the task names and read only what you need to change them; search the repository only when they are not enough. Leave all intended implementation edits in your assigned worktree. Zamolxis captures the candidate commit. Do not publish, merge, or modify other checkouts.\n${SANDBOX_INSTRUCTION}\n${PROOF_INSTRUCTION}`) +
+Start from the files the task names and read only what you need to change them; search the repository only when they are not enough. Leave all intended implementation edits in your assigned worktree. Zamolxis captures the candidate commit. Do not publish, merge, or modify other checkouts. End with a short summary for the pull request: what you changed and why, in two to five plain sentences for a reviewer.\n${SANDBOX_INSTRUCTION}\n${PROOF_INSTRUCTION}`) +
         // Owner text is appended last and labelled; it cannot change trust or approval.
         ownerInstructionsSection(profile?.instructions),
       ...(role === "verifier"

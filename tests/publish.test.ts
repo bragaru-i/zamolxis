@@ -7,6 +7,7 @@ import {
   parseExecutionCommand,
 } from "../apps/node/src/convex-control-plane";
 import { api } from "../convex/_generated/api";
+import { pullRequestText } from "../convex/integration";
 import type { Doc, Id } from "../convex/_generated/dataModel";
 import schema from "../convex/schema";
 import { git } from "../packages/git/src/repository-inspector";
@@ -231,8 +232,10 @@ it("publishes only on the owner's request, once, to a Zamolxis branch with evide
   const body = command!.payload.body as string;
   expect(body).toContain("Make the form submit.");
   expect(body).not.toContain("old failure");
-  expect(body).toContain("- test: passed — pnpm test: 12 passed");
-  expect(body).toContain(f.sha);
+  expect(body).toContain("- ✅ Tests: pnpm test: 12 passed");
+  // Short: the Node's secret filter would hide a full commit id as "***".
+  expect(body).toContain(f.sha.slice(0, 12));
+  expect(body).not.toContain(f.sha);
   expect(body).toContain("Opened by Zamolxis; merge is a human decision.");
   // The Node parses it into the command it executes.
   expect(parseExecutionCommand(command).type).toBe("integration.publish");
@@ -450,4 +453,39 @@ it("publishes end to end: owner request → Node push to a local bare origin →
   // The canonical checkout is untouched.
   expect(git(repo.path, ["rev-parse", "HEAD"])).toBe(sha);
   expect(git(repo.path, ["status", "--porcelain"])).toBe(originalStatus);
+});
+
+it("describes the change in the agents' words, with checks in plain words", () => {
+  const body = pullRequestText({
+    request:
+      "Remove Usage and Settings from the sidebar in apps/web/app/features/sessions.tsx around lines 260-290.",
+    builder: "Removed the Usage and Settings buttons from the sidebar; the top bar still has both.",
+    repairs: ["Restored the sidebar test that still expected the buttons."],
+    evidence: [
+      { modality: "static", result: "passed", summary: "git diff --check HEAD^ HEAD" },
+      { modality: "behavioral", result: "passed", summary: "pnpm run test: passed" },
+    ],
+    sha: "a".repeat(40),
+    reasons: [],
+  });
+  expect(body.split("\n").slice(0, 2)).toEqual([
+    "## Summary",
+    "Removed the Usage and Settings buttons from the sidebar; the top bar still has both.",
+  ]);
+  expect(body).toContain("**Fixed after a failed check:** Restored the sidebar test");
+  expect(body).toContain("- ✅ Code hygiene: git diff --check HEAD^ HEAD");
+  expect(body).toContain("- ✅ Behaviour: pnpm run test: passed");
+  // The request is there for reference, folded away.
+  expect(body).toMatch(/<details><summary>What was requested<\/summary>\n\nRemove Usage/);
+  expect(body).toContain("`aaaaaaaaaaaa`");
+  // Without the agents' words the request stands in, on one line.
+  expect(
+    pullRequestText({
+      request: "Fix\nthe form",
+      repairs: [],
+      evidence: [],
+      sha: "b".repeat(40),
+      reasons: [],
+    }),
+  ).toMatch(/^## Summary\nFix the form\n/);
 });
