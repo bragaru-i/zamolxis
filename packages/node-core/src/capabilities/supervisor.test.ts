@@ -198,6 +198,9 @@ describe("supervisorInstruction and repositoryChecks", () => {
         "Never ask an agent to read AGENTS.md",
         "Split a large request into independent tasks",
         "Read only what you need to decide",
+        // The file rule: a builder starts on named files instead of searching (#114).
+        "File rule: a task description lists, as paths from the repository root",
+        "A task whose files you cannot name is not ready",
       ])
         expect(prompt).toContain(fragment);
       expect(repositoryChecks(join(dir, "missing"))).toEqual({

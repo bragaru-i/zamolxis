@@ -73,6 +73,8 @@ export interface RunDetailData {
     _id: Id<"agentRuns">;
     _creationTime: number;
     role: string;
+    /** A verifier run that ran the repository checks only, without a reviewer model. */
+    checksOnly?: boolean;
     status: string;
     runtime: string;
     runtimeVersion?: string;
@@ -136,7 +138,12 @@ export function RunDetail({ runId, onClose }: { runId: Id<"agentRuns">; onClose:
   const detail = useQuery(api.runDetail.get, { runId }) as RunDetailData | undefined;
   const role = detail ? (ROLE_LABEL[detail.run.role] ?? "Agent") : "Agent";
   return (
-    <Sheet open title={`${role} run`} size="lg" onClose={onClose}>
+    <Sheet
+      open
+      title={`${role} run${detail?.run.checksOnly ? " (checks only)" : ""}`}
+      size="lg"
+      onClose={onClose}
+    >
       {detail === undefined ? (
         <p className="z-muted" role="status">
           Loading run…

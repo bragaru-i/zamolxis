@@ -82,6 +82,7 @@ export const get = query({
         _creationTime: run._creationTime,
         taskId: run.taskId,
         role,
+        ...(run.checksOnly ? { checksOnly: true } : {}),
         status: run.status,
         runtime: run.runtime,
         runtimeVersion: run.runtimeVersion,

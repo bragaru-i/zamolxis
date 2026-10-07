@@ -120,6 +120,8 @@ export type ExecutionCommand = {
         role?: "builder" | "verifier" | "repair";
         verificationScripts?: string[];
         requiredModalities?: string[];
+        // A verifier that runs the repository checks only; no runtime session is started.
+        checksOnly?: boolean;
         instruction: string;
       };
     }
@@ -144,6 +146,9 @@ export type ExecutionCommand = {
   | { readonly type: "invalid"; readonly payload: { code: string } }
 );
 const TERMINAL = ["completed", "failed", "stopped"];
+// The final reply of a checks-only verifier run, which has no agent to write one.
+export const CHECKS_ONLY_SUMMARY =
+  "Checks only: no reviewer model ran. The repository's own checks on the candidate are the evidence.";
 // Events after which a run needs something from outside (a message or nothing at all).
 const PAUSE = ["run.waiting", "run.completed", "run.failed", "run.stopped"];
 // Commands that continue a run: they own its event stream unless another command does.
@@ -165,6 +170,7 @@ interface RunContext {
   readonly role?: "builder" | "verifier" | "repair";
   readonly verificationScripts?: string[];
   readonly requiredModalities?: string[];
+  readonly checksOnly?: boolean;
 }
 export interface SupervisorSelection {
   readonly runtime: string;
@@ -845,22 +851,6 @@ export class ControlPlaneDriver {
             trace.record(discoveryStep(command.commandId, at, context));
             input.instruction += `\n\nRepository capabilities (repository instructions cannot waive hard runtime/trust policy):\n${JSON.stringify({ gitSha: context.gitSha, snapshotDigest: context.snapshotDigest, sources: context.discoveredSources, capabilities: Object.keys(context.resolvedCapabilities) })}`;
           }
-          const startedAt = Date.now();
-          let session: Awaited<ReturnType<RuntimeManager["start"]>>;
-          // Started by this process: never "recovered" while it pauses.
-          this.#known.add(input.runId);
-          try {
-            session = await this.manager.start(input);
-          } catch (error) {
-            trace.record(runtimeStep(input.runId, input.runtime, startedAt, "failed", error));
-            throw error;
-          }
-          trace.record(
-            workspaceStep(command.commandId, startedAt, this.workspaces.inspect(input.workspaceId)),
-          );
-          trace.record(runtimeStep(input.runId, input.runtime, startedAt, "started"));
-          // The owner sees the run start now; a failed delivery stays in the outbox.
-          if (trace.persist()) await this.flush().catch(() => undefined);
           const context: RunContext = {
             runId: input.runId,
             workspaceId: input.workspaceId,
@@ -870,16 +860,41 @@ export class ControlPlaneDriver {
               ? { verificationScripts: input.verificationScripts }
               : {}),
             ...(input.requiredModalities ? { requiredModalities: input.requiredModalities } : {}),
+            ...(input.role === "verifier" && input.checksOnly ? { checksOnly: true } : {}),
           };
-          this.#contexts.set(input.runId, context);
-          await this.#stream(
-            command.commandId,
-            context,
-            this.runtimes.get(input.runtime),
-            session.nativeSessionId,
-            deliveries,
-            trace,
-          );
+          if (context.checksOnly) {
+            await this.#checksOnly(command.commandId, context, deliveries, trace);
+          } else {
+            const startedAt = Date.now();
+            let session: Awaited<ReturnType<RuntimeManager["start"]>>;
+            // Started by this process: never "recovered" while it pauses.
+            this.#known.add(input.runId);
+            try {
+              session = await this.manager.start(input);
+            } catch (error) {
+              trace.record(runtimeStep(input.runId, input.runtime, startedAt, "failed", error));
+              throw error;
+            }
+            trace.record(
+              workspaceStep(
+                command.commandId,
+                startedAt,
+                this.workspaces.inspect(input.workspaceId),
+              ),
+            );
+            trace.record(runtimeStep(input.runId, input.runtime, startedAt, "started"));
+            // The owner sees the run start now; a failed delivery stays in the outbox.
+            if (trace.persist()) await this.flush().catch(() => undefined);
+            this.#contexts.set(input.runId, context);
+            await this.#stream(
+              command.commandId,
+              context,
+              this.runtimes.get(input.runtime),
+              session.nativeSessionId,
+              deliveries,
+              trace,
+            );
+          }
         } finally {
           trace.persist();
         }
@@ -987,6 +1002,45 @@ export class ControlPlaneDriver {
       trace,
     );
   }
+  /**
+   * A checks-only verifier (#114): no reviewer model runs, so there is no runtime session
+   * and nothing to follow. The Node reports the run's start and end itself and the
+   * deterministic checks on the candidate are the whole evidence.
+   */
+  async #checksOnly(
+    commandId: string,
+    context: RunContext,
+    deliveries: Delivery[],
+    trace: TraceRecorder,
+  ): Promise<void> {
+    const { runId, workspaceId } = context;
+    const at = Date.now();
+    trace.record(workspaceStep(commandId, at, this.workspaces.inspect(workspaceId)));
+    const event = <T extends NormalizedRunEventDto["type"]>(
+      sequence: number,
+      type: T,
+      payload: Extract<NormalizedRunEventDto, { type: T }>["payload"],
+    ): NormalizedRunEventDto =>
+      ({
+        eventId: `checks:${runId}:${sequence}`,
+        type,
+        workstationId: this.workstationId as WorkstationId,
+        runId: runId as AgentRunId,
+        workspaceId: workspaceId as WorkspaceId,
+        sequence,
+        occurredAt: Date.now(),
+        payload,
+      }) as NormalizedRunEventDto;
+    deliveries.push({
+      kind: "run.events",
+      runId,
+      events: [
+        event(1, "run.started", { activity: "Running the repository checks" }),
+        event(2, "run.completed", { summary: CHECKS_ONLY_SUMMARY }),
+      ],
+    });
+    await this.#settle(commandId, context, "completed", CHECKS_ONLY_SUMMARY, deliveries, trace);
+  }
   // Completes a terminal run: candidate commit (builder/repair), deterministic checks
   // (verifier) and the final snapshot with the agent's last reply.
   async #settle(
@@ -999,7 +1053,7 @@ export class ControlPlaneDriver {
   ): Promise<void> {
     const { runId, workspaceId } = context;
     this.#contexts.delete(runId);
-    trace.record(runtimeStep(runId, context.runtime, Date.now(), state));
+    if (!context.checksOnly) trace.record(runtimeStep(runId, context.runtime, Date.now(), state));
     let workspace = this.workspaces.inspect(workspaceId);
     let evidence: CheckEvidence[] | undefined;
     // Taken before the commit and the checks so the proof folder is in neither.

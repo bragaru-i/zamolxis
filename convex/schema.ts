@@ -2,6 +2,7 @@ import { authTables } from "@convex-dev/auth/server";
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { approvalPolicy } from "./lib/approvalPolicy";
+import { verification } from "./lib/verification";
 
 // Supervisor log steps (mirrors packages/contracts/src/trace/supervisor-log.ts).
 export const supervisorLogKind = v.union(
@@ -572,6 +573,8 @@ export default defineSchema({
     instructionsDigest: v.optional(v.string()),
     // Which command approvals the backend grants for this role (lib/approvalPolicy).
     approvalPolicy: v.optional(approvalPolicy),
+    // Verifier role only: absent means a reviewer model runs (lib/verification).
+    verification: v.optional(verification),
     revision: v.number(),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -596,6 +599,8 @@ export default defineSchema({
     reasoningEffort: v.optional(v.string()),
     // Snapshot of the profile's approval policy when the run was queued.
     approvalPolicy: v.optional(approvalPolicy),
+    // A verifier run that runs the deterministic checks only, without a reviewer model.
+    checksOnly: v.optional(v.boolean()),
     runtimeVersion: v.optional(v.string()),
     inputTokens: v.optional(v.number()),
     cachedInputTokens: v.optional(v.number()),

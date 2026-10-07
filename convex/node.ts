@@ -725,8 +725,9 @@ export const recoverCompletedCommand = mutation({
       const id = ctx.db.normalizeId("agentRuns", command.targetId);
       if (!id) fail("INVALID_ARGUMENT");
       const run = await nodeRun(ctx, device._id, id);
+      // A checks-only verifier run has no native session: the Node ran only the checks.
       if (
-        !run.nativeSessionId ||
+        (!run.nativeSessionId && !run.checksOnly) ||
         !["running", "waiting", "needs_approval", "completed", "failed", "stopped"].includes(
           run.status,
         ) ||

@@ -359,6 +359,17 @@ module aliases exist only when the variable is set.
    the branch alike (the read-only Supervisor, Orchestrator and model-catalog
    acceptances pass there with the lean config). Recommended but not enforced: a
    smaller model or low effort for the Verifier and Supervisor profiles.
+   **Checks-only verification (2026-10-07):** a Verifier profile may say "Checks only"
+   (Settings → Agents → Verifier → Verification). The run is queued with `checksOnly`,
+   the Node starts no runtime session, reports `run.started`/`run.completed` itself
+   (`checks:<run>:1..2`), runs the repository checks on the candidate and delivers the
+   evidence; trust is decided exactly as before. Run detail titles the run "Verifier run
+   (checks only)" and shows no tokens. Measured need: on 2026-10-07 the reviewer model of
+   one Verifier run cost 510k processed tokens and 18 calls while trust came from the
+   checks alone. The Supervisor prompt also carries a file rule: every delegated task
+   names, as repository paths, the files to change and to read first, or is not ready
+   (ask/propose); Builder and Repair instructions tell the agent to start from those
+   files and search only when they are not enough.
 5. **Identity (#47), mostly shipped.** Signed-in devices show a self-reported label
    ("Safari on iPhone"); a minimal service worker makes the app installable with an
    offline page (no caching of app data or API responses); a second-account isolation

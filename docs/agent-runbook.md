@@ -198,7 +198,14 @@ against a written contract. When lanes are integrated:
   Settings → Usage show calls, fresh, cached and output per role, so a run whose cached
   input dwarfs its fresh input is a long conversation, not a bug in the accounting.
   Codex features Zamolxis agents never use are disabled in the Node's Codex home
-  (`codex-home.ts`, `CODEX_CONFIG`); a Node restart rewrites that file.
+  (`codex-home.ts`, `CODEX_CONFIG`); a Node restart rewrites that file. Claude Code
+  costs about 23,600 tokens of system prompt and tool schemas per model call before any
+  conversation (measured 2026-10-07 with a one-word prompt; the Node's lean flags do not
+  change it), so the lever is fewer calls: a working sandbox (each approval is a call),
+  a Supervisor that names the files (the "File rule" in `supervisor.ts`, so the Builder
+  edits on its first call instead of searching), and "Checks only" verification
+  (Settings → Agents → Verifier), which skips the reviewer model entirely because trust
+  comes from the deterministic checks either way.
 - Setup's service reload must wait for launchd to finish unloading (#70).
 - **Merged repository id (2026-10-07):** after the duplicate Product was archived, the Linux
   Node crash-looped at start with `LOCATION_ALREADY_REGISTERED`: setup had rewritten the

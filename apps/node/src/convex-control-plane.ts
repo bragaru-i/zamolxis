@@ -117,6 +117,8 @@ export function parseExecutionCommand(value: unknown): ExecutionCommand {
               ),
             }
           : {}),
+        // A checks-only verifier (#114): the Node runs the repository checks and no model.
+        ...(payload.role === "verifier" && payload.checksOnly === true ? { checksOnly: true } : {}),
         instruction: field(payload, "instruction", 32768),
         ...(payload.model !== undefined ? { model: field(payload, "model", 256) } : {}),
         ...(payload.reasoningEffort !== undefined

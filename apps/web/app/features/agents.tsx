@@ -28,8 +28,28 @@ export interface Profile {
   instructionsDigest?: string;
   /** Which command approvals the backend grants for this role; absent means ask. */
   approvalPolicy?: ApprovalPolicy;
+  /** Verifier only: absent means a reviewer model runs before the checks. */
+  verification?: Verification;
   updatedAt: number;
 }
+export type Verification = "review" | "checks_only";
+export const VERIFICATION_OPTIONS: Array<{
+  value: Verification;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "review",
+    label: "Review and checks",
+    description: "A reviewer model reads the change, then the repository's checks run.",
+  },
+  {
+    value: "checks_only",
+    label: "Checks only",
+    description:
+      "No model runs: the repository's typecheck, lint and tests decide. Far cheaper; trust is decided the same way.",
+  },
+];
 export type ApprovalPolicy = "ask" | "auto_low" | "auto_low_medium";
 export const APPROVAL_POLICY_OPTIONS: Array<{
   value: ApprovalPolicy;
@@ -130,6 +150,7 @@ const EFFORT_HELP: Record<string, string> = {
 const RUN_ROLES: readonly Role[] = ["builder", "verifier", "repair"];
 // Only roles that run commands ask for approvals (the Verifier's requests are always refused).
 const APPROVAL_ROLES: readonly Role[] = ["builder", "repair"];
+const VERIFICATION_ROLES: readonly Role[] = ["verifier"];
 const RUNTIME_LABELS: Record<string, string> = { codex: "Codex", claude: "Claude" };
 export function runtimeLabel(runtime: string | undefined): string {
   if (!runtime) return "Agent";
@@ -284,6 +305,8 @@ export function upsertArgs(input: {
   instructions?: string;
   /** Sent for roles that run commands; "ask" clears a stored policy. */
   approvalPolicy?: ApprovalPolicy;
+  /** Sent for the Verifier; "review" clears a stored mode. */
+  verification?: Verification;
 }) {
   const { existing } = input;
   const concurrency = input.maxConcurrency.trim();
@@ -300,6 +323,9 @@ export function upsertArgs(input: {
     ...(input.instructions !== undefined ? { instructions: input.instructions.trim() } : {}),
     ...(input.approvalPolicy !== undefined && APPROVAL_ROLES.includes(input.role)
       ? { approvalPolicy: input.approvalPolicy }
+      : {}),
+    ...(input.verification !== undefined && VERIFICATION_ROLES.includes(input.role)
+      ? { verification: input.verification }
       : {}),
   };
 }
@@ -356,7 +382,7 @@ export function AgentsSettings({
       shown?.approvalPolicy && shown.approvalPolicy !== "ask"
         ? ` · ${approvalPolicyLabel(shown.approvalPolicy).toLowerCase()}`
         : ""
-    }`;
+    }${shown?.verification === "checks_only" ? " · checks only" : ""}`;
   const loading = global === undefined || scopeRows === undefined;
   const open = editing ? ROLES.find((item) => item.role === editing) : undefined;
   if (open && !loading) {
@@ -588,6 +614,9 @@ export function ProfileEditor({
   const [approvalPolicy, setApprovalPolicy] = useState<ApprovalPolicy>(
     prefill?.approvalPolicy ?? "ask",
   );
+  const [verification, setVerification] = useState<Verification>(
+    prefill?.verification ?? "review",
+  );
   const [enabled, setEnabled] = useState(existing?.enabled ?? true);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState("");
@@ -664,6 +693,7 @@ export function ProfileEditor({
           maxConcurrency: concurrency,
           instructions,
           approvalPolicy,
+          verification,
         }),
       ),
     );
@@ -762,6 +792,14 @@ export function ProfileEditor({
           value={approvalPolicy}
           options={APPROVAL_POLICY_OPTIONS}
           onChange={(value) => setApprovalPolicy(value as ApprovalPolicy)}
+        />
+      )}
+      {VERIFICATION_ROLES.includes(role) && (
+        <Picker
+          label="Verification"
+          value={verification}
+          options={VERIFICATION_OPTIONS}
+          onChange={(value) => setVerification(value as Verification)}
         />
       )}
       <label className="z-field" htmlFor={instructionsId}>
