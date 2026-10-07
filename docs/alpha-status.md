@@ -470,6 +470,14 @@ module aliases exist only when the variable is set.
   (qwen/qwen3-coder-30b, MLX 4-bit): the real Orchestrator prompt gave valid answer/ask/
   propose decisions in 0.8-3.2 s; not yet exercised through the deployed backend.
 
+- **Backup agents (2026-10-07):** each role's profile keeps up to two backups
+  (`agentProfiles.backups`); `agentChain` + `firstAvailable` pick the first agent of the chain
+  the computer can start, in `orchestratorTarget`, `submitText` (Builder availability and the
+  Supervisor), `dispatch` and `queueRun` (a requested runtime picks the chain entry on it).
+  Runs record `backup`. Settings → Agents shows and edits the chain; run rows and Run detail
+  say "backup N". Not yet: switching to a backup when a running agent fails (usage limit,
+  provider error); that is the next PR, then workflows per product.
+
 ## Next steps, in order
 
 1. For #114, re-run a logo-redesign-sized task and compare the Builder's processed
