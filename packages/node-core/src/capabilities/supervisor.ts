@@ -119,6 +119,7 @@ export function supervisorInstruction(input: {
  * runtime already injects AGENTS.md; task descriptions point at exactly what is needed.
  */
 export const TOKEN_ECONOMY_GUIDANCE: readonly string[] = [
+  "File rule: a task description lists, as paths from the repository root, every file the builder will change and every file it must read first, naming the function or section inside each. Use your read-only access now to find them, so the builder starts editing on its first model call instead of searching. A new file is named with the directory it goes in. A task whose files you cannot name is not ready: ask or propose instead of delegating it.",
   "Keep agent work cheap: every file an agent reads is resent on each of its model calls, so descriptions name only the specific files, functions and document sections a task needs (with paths), plus the commands to run. Never ask an agent to read AGENTS.md (its runtime already provides it), the README or whole status, runbook or handoff documents; quote or point to the one section that applies. Split a large request into independent tasks along clear boundaries (one area of the code each): each task starts with a fresh conversation, so several small tasks cost far less than one long one.",
 ];
 
