@@ -32,6 +32,8 @@ interface PresetRoleSettings {
 
 const CODEX: PresetAgent = { runtime: "codex" };
 const LOCAL: PresetAgent = { runtime: "local", model: "qwen" };
+// The local model with Codex's tools: it can read the repository to plan or check.
+const CODEX_LOCAL: PresetAgent = { runtime: "codex-local", model: "qwen" };
 const claude = (model: "haiku" | "sonnet" | "opus"): PresetAgent => ({ runtime: "claude", model });
 
 export const PRESETS: Record<
@@ -42,7 +44,7 @@ export const PRESETS: Record<
     name: "Save tokens",
     roles: {
       orchestrator: { chain: [LOCAL, CODEX] },
-      supervisor: { chain: [claude("haiku"), CODEX] },
+      supervisor: { chain: [CODEX_LOCAL, claude("haiku"), CODEX] },
       builder: { chain: [claude("sonnet"), CODEX] },
       verifier: { chain: [CODEX], checksOnly: true },
       repair: { chain: [claude("sonnet"), CODEX] },
@@ -82,7 +84,7 @@ export const PRESETS: Record<
     name: "Local first",
     roles: {
       orchestrator: { chain: [LOCAL, CODEX] },
-      supervisor: { chain: [CODEX] },
+      supervisor: { chain: [CODEX_LOCAL, CODEX] },
       builder: { chain: [CODEX] },
       verifier: { chain: [CODEX], checksOnly: true },
       repair: { chain: [CODEX] },

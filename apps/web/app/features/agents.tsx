@@ -169,9 +169,18 @@ const RUNTIME_LABELS: Record<string, string> = {
   codex: "Codex",
   claude: "Claude",
   local: "Local model",
+  "codex-local": "Codex + local model",
 };
 /** Runtimes that only write text (a model on the owner's computer): Orchestrator only. */
 export const TEXT_ONLY_RUNTIMES: readonly string[] = ["local"];
+/** A local model with Codex's tools: it plans and checks, never builds or repairs. */
+const READ_ONLY_RUNTIMES: readonly string[] = ["codex-local"];
+const READING_ROLES: readonly string[] = ["orchestrator", "supervisor", "verifier"];
+export function runtimeOfferedFor(role: Role | undefined, runtime: string): boolean {
+  if (TEXT_ONLY_RUNTIMES.includes(runtime)) return role === "orchestrator";
+  if (READ_ONLY_RUNTIMES.includes(runtime)) return !!role && READING_ROLES.includes(role);
+  return true;
+}
 export function runtimeLabel(runtime: string | undefined): string {
   if (!runtime) return "Agent";
   return RUNTIME_LABELS[runtime] ?? runtime[0]?.toUpperCase() + runtime.slice(1);
@@ -228,8 +237,7 @@ export function runtimeChoices(
   for (const device of devices ?? []) {
     if (device.status === "revoked") continue;
     for (const runtime of device.runtimes)
-      if (role === "orchestrator" || !TEXT_ONLY_RUNTIMES.includes(runtime.runtime))
-        choices.add(runtime.runtime);
+      if (runtimeOfferedFor(role, runtime.runtime)) choices.add(runtime.runtime);
   }
   if (current) choices.add(current);
   if (!choices.size) choices.add(DEFAULT_RUNTIME);

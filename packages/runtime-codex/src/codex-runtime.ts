@@ -58,6 +58,18 @@ export interface CodexRuntimeOptions {
   readonly approvalTimeoutMs?: number;
   readonly connect?: (cwd: string, env?: NodeJS.ProcessEnv) => CodexConnection;
   readonly now?: () => number;
+  /**
+   * A second Codex runtime whose model runs on this computer: its runtime id (e.g.
+   * "codex-local"), Codex's provider for the local server ("lmstudio" or "ollama") and the
+   * models that server offers. It only reads (Orchestrator, Supervisor, Verifier): a local
+   * model does not build or repair.
+   */
+  readonly local?: {
+    readonly id: string;
+    // Read when a thread starts: the local server in use can change (LM Studio, Ollama).
+    readonly modelProvider: () => string;
+    readonly models: () => Promise<RuntimeModelDto[]>;
+  };
 }
 interface Session {
   input: StartRunInput;
@@ -153,7 +165,7 @@ function terminal(session: Session): boolean {
 }
 
 export class CodexRuntime implements AgentRuntime {
-  readonly id = "codex";
+  readonly id: string;
   readonly #sessions = new Map<string, Session>();
   readonly #starts = new Map<
     string,
@@ -164,7 +176,13 @@ export class CodexRuntime implements AgentRuntime {
     string,
     { input: ResumeRunInput; result: Promise<RuntimeSessionSnapshot> }
   >();
-  constructor(private readonly options: CodexRuntimeOptions = {}) {}
+  constructor(private readonly options: CodexRuntimeOptions = {}) {
+    this.id = options.local?.id ?? "codex";
+  }
+  // The local model's provider for thread/start and thread/resume.
+  get #provider(): Record<string, string> {
+    return this.options.local ? { modelProvider: this.options.local.modelProvider() } : {};
+  }
   capabilities(): RuntimeCapabilitiesDto {
     return {
       runtime: this.id,
@@ -182,6 +200,7 @@ export class CodexRuntime implements AgentRuntime {
    * in a private scratch directory, never a workspace, and is closed afterwards.
    */
   async listModels(): Promise<RuntimeModelDto[]> {
+    if (this.options.local) return this.options.local.models();
     const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "zamolxis-models-")));
     let client: CodexConnection | undefined;
     try {
@@ -231,6 +250,9 @@ export class CodexRuntime implements AgentRuntime {
   start(input: StartRunInput): Promise<RuntimeSessionSnapshot> {
     if (!isAbsolute(input.workspace.cwd) || !input.workspace.branch || !input.workspace.headSha)
       return Promise.reject(new Error("WORKSPACE_ASSIGNMENT_REQUIRED"));
+    // A local model only reads: never a Builder or Repair run.
+    if (this.options.local && !readOnly(input))
+      return Promise.reject(new Error("LOCAL_RUNTIME_READ_ONLY"));
     const existing = this.#starts.get(input.runId);
     if (existing) {
       if (JSON.stringify(existing.input) !== JSON.stringify(input))
@@ -326,6 +348,7 @@ export class CodexRuntime implements AgentRuntime {
         await client.request("thread/start", {
           cwd: input.workspace.cwd,
           sandbox: readOnly(input) ? "read-only" : "workspace-write",
+          ...this.#provider,
           approvalPolicy: "on-request",
           ...((input.model ?? this.options.model)
             ? { model: input.model ?? this.options.model }
@@ -412,6 +435,7 @@ export class CodexRuntime implements AgentRuntime {
           cwd: input.workspace.cwd,
           approvalPolicy: "on-request",
           sandbox: readOnly(input) ? "read-only" : "workspace-write",
+          ...this.#provider,
           ...((input.model ?? this.options.model)
             ? { model: input.model ?? this.options.model }
             : {}),

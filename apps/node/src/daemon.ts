@@ -26,7 +26,6 @@ import { ClaudeCliProcess, ClaudeRuntime } from "@zamolxis/runtime-claude";
 import {
   AppServerClient,
   CodexRuntime,
-  codexEnv,
   prepareCodexHome,
   releaseCodexHome,
 } from "@zamolxis/runtime-codex";
@@ -42,7 +41,12 @@ import {
   KeychainCredentialStore,
   loadDeviceCredential,
 } from "./credential-store";
-import { localModelRuntime } from "./local-model";
+import {
+  CODEX_LOCAL_RUNTIME_ID,
+  codexLocalReady,
+  codexProvider,
+  localModelRuntime,
+} from "./local-model";
 import { nodeVersion } from "./node-version";
 import { configDirectory, configPath, pause, readConfig } from "./setup";
 
@@ -93,26 +97,44 @@ try {
   // Orchestrator only; advertised while a server answers, so starting one is enough.
   const local = localModelRuntime();
   runtimes.register(local);
+  // Codex's app-server for a run, in its assigned workspace, with the Node's Codex profile.
+  const codexConnect = (cwd: string, env?: NodeJS.ProcessEnv) =>
+    new AppServerClient({
+      cwd,
+      ...(env ? { env } : {}),
+      executable: codex?.executable ?? "codex",
+      launch: (executable, assignedCwd, runEnv) => {
+        const child = spawn(executable, ["app-server", "--listen", "stdio://"], {
+          cwd: assignedCwd,
+          // The run's own environment (private TMPDIR, prepared tools on PATH), already
+          // without GitHub tokens: only the Node publishes, with each repository's own.
+          env: { ...runEnv, CODEX_HOME: profile },
+          shell: false,
+          stdio: ["pipe", "pipe", "ignore"],
+        });
+        children.add(child);
+        child.once("exit", () => children.delete(child));
+        return child;
+      },
+    });
   if (codex)
     runtimes.register(
       new CodexRuntime({
-        connect: (cwd) =>
-          new AppServerClient({
-            cwd,
-            executable: codex.executable,
-            launch: (executable, assignedCwd) => {
-              const child = spawn(executable, ["app-server", "--listen", "stdio://"], {
-                cwd: assignedCwd,
-                // No GitHub tokens: only the Node publishes, with each repository's own.
-                env: codexEnv({ CODEX_HOME: profile }),
-                shell: false,
-                stdio: ["pipe", "pipe", "ignore"],
-              });
-              children.add(child);
-              child.once("exit", () => children.delete(child));
-              return child;
-            },
-          }),
+        // `env` carries the run's private TMPDIR and prepared tools (#132, #133).
+        connect: codexConnect,
+      }),
+    );
+  // "Codex + local model": Codex's tools and sandbox, the model served on this computer.
+  // It only reads (Orchestrator, Supervisor, Verifier); advertised while it can run.
+  if (codex)
+    runtimes.register(
+      new CodexRuntime({
+        connect: codexConnect,
+        local: {
+          id: CODEX_LOCAL_RUNTIME_ID,
+          modelProvider: () => codexProvider(local.baseUrl) ?? "lmstudio",
+          models: () => local.listModels(),
+        },
       }),
     );
   // Claude Code is registered only when its CLI runs here. It uses the owner's own Claude
@@ -227,6 +249,15 @@ try {
                 {
                   runtime: LOCAL_RUNTIME_ID,
                   version: "openai-compatible",
+                  capabilities: ["start", "stop"],
+                },
+              ]
+            : []),
+          ...(codex && (await codexLocalReady(local)).ready
+            ? [
+                {
+                  runtime: CODEX_LOCAL_RUNTIME_ID,
+                  version: codex.version,
                   capabilities: ["start", "stop"],
                 },
               ]

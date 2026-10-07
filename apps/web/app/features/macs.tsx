@@ -80,6 +80,7 @@ const RUNTIME_NAMES: Record<string, string> = {
   codex: "Codex",
   claude: "Claude Code",
   local: "Local model",
+  "codex-local": "Codex + local model",
 };
 
 type MacMode = "idle" | "rename" | "repositories" | "revoke";

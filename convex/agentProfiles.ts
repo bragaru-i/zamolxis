@@ -10,7 +10,6 @@ import {
   ROLE_LABELS,
   defaultRuntime as resolveDefaultRuntime,
   runtimeAllowedFor,
-  TEXT_ONLY_RUNTIMES,
 } from "./lib/agentProfiles";
 import { approvalPolicy } from "./lib/approvalPolicy";
 import { verification } from "./lib/verification";
@@ -140,7 +139,7 @@ export const setRuntimeForAllRoles = mutation({
     const runtime = args.runtime.trim();
     if (!runtime || runtime.length > 64) fail("INVALID_ARGUMENT");
     // A text-only runtime can only be the Orchestrator's: never set it for every role.
-    if (TEXT_ONLY_RUNTIMES.includes(runtime)) fail("INVALID_ARGUMENT");
+    if (!runtimeAllowedFor("builder", runtime)) fail("INVALID_ARGUMENT");
     let scopeName = "All products";
     if (args.productId) {
       const product = await ctx.db.get(args.productId);

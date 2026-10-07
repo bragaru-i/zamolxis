@@ -555,6 +555,7 @@ const RUNTIME_NAMES: Record<string, string> = {
   codex: "Codex",
   claude: "Claude",
   local: "Local model",
+  "codex-local": "Codex + local model",
 };
 /**
  * The workflow shown before the owner picks one: the chosen computer's saved workflow (or

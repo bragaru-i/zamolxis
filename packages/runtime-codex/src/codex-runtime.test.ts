@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import type {
   AgentRunId,
   NormalizedRunEventDto,
@@ -9,7 +10,6 @@ import {
   defineRuntimeAdapterContract,
   defineRuntimeApprovalContract,
 } from "@zamolxis/test-kit/runtime-contract";
-import { existsSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import type {
   AppServerNotification,
@@ -377,6 +377,34 @@ describe("Codex native lifecycle", () => {
     await h.runtime.stop({ nativeSessionId: "native" });
     h.connection.close();
     expect(existsSync(tmp)).toBe(false);
+  });
+  it("runs a local model through Codex for reading roles only", async () => {
+    const connection = new ControlledConnection();
+    const runtime = new CodexRuntime({
+      connect: () => connection,
+      stopTimeoutMs: 5,
+      now: () => 0,
+      local: {
+        id: "codex-local",
+        modelProvider: () => "lmstudio",
+        models: async () => [{ id: "qwen/qwen3-coder-30b", displayName: "qwen" }],
+      },
+    });
+    expect(runtime.id).toBe("codex-local");
+    expect(runtime.capabilities().runtime).toBe("codex-local");
+    expect(await runtime.listModels()).toEqual([
+      { id: "qwen/qwen3-coder-30b", displayName: "qwen" },
+    ]);
+    await expect(runtime.start({ ...input(), role: "builder" })).rejects.toThrow(
+      "LOCAL_RUNTIME_READ_ONLY",
+    );
+    await runtime.start({ ...input(), role: "verifier", model: "qwen/qwen3-coder-30b" });
+    expect(connection.request.mock.calls[0]?.[1]).toMatchObject({
+      sandbox: "read-only",
+      modelProvider: "lmstudio",
+      model: "qwen/qwen3-coder-30b",
+    });
+    await runtime.stop({ nativeSessionId: "native" });
   });
   it("reports the provider's reason when a turn fails", async () => {
     const h = harness();
