@@ -42,9 +42,9 @@ export interface CommandInfo {
 }
 const AGENTS: Record<string, string> = {
   supervisor: "Supervisor",
-  orchestrator: "Assistant",
+  orchestrator: "Orchestrator",
   "repository.plan": "Supervisor",
-  "orchestrator.answer": "Assistant",
+  "orchestrator.answer": "Orchestrator",
 };
 // "Codex turn failed: <reason>" repeats what the line already says.
 const reasonText = (value: unknown) =>

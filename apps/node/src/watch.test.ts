@@ -114,7 +114,7 @@ describe("pnpm zamolxis watch", () => {
     ].flatMap((value) => state.ingest(value));
     expect(lines.map((line) => [line.who, line.text, line.tone])).toEqual([
       ["Supervisor", "failed · claude claude-opus-5-5 · You've hit your session limit", "fail"],
-      ["Assistant", "failed · codex · orchestrator failed", "fail"],
+      ["Orchestrator", "failed · codex · orchestrator failed", "fail"],
       ["Builder abcd", "failed · gpt-6.1-sol · 9.0k tokens · Quota exceeded", "fail"],
     ]);
     expect(lines[0]?.at).toBe(42);

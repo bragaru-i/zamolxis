@@ -12,7 +12,7 @@ export interface FailureInfo {
 
 const ROLE_NAMES: Record<string, string> = {
   supervisor: "Supervisor",
-  orchestrator: "Assistant",
+  orchestrator: "Orchestrator",
   builder: "Builder",
   verifier: "Verifier",
   repair: "Repair",
