@@ -272,8 +272,11 @@ describe("ClaudeRuntime launch", () => {
     expect(args[args.indexOf("--permission-prompt-tool") + 1]).toBe("stdio");
     expect(args[args.indexOf("--permission-mode") + 1]).toBe("acceptEdits");
     expect(args[args.indexOf("--tools") + 1]).toBe("Bash,Read,Glob,Grep,Edit,Write,NotebookEdit");
+    // Every command runs sandboxed without a prompt, and nothing may leave the sandbox:
+    // allowing Bash without forbidding unsandboxed commands would let those run unasked.
     expect(JSON.parse(String(args[args.indexOf("--settings") + 1]))).toEqual({
-      sandbox: { enabled: true, autoAllowBashIfSandboxed: true },
+      sandbox: { enabled: true, autoAllowBashIfSandboxed: true, allowUnsandboxedCommands: false },
+      permissions: { allow: ["Bash"] },
     });
     expect(args[args.indexOf("--setting-sources") + 1]).toBe("");
     expect(args).toContain("--strict-mcp-config");
@@ -602,6 +605,46 @@ describe("ClaudeRuntime stop", () => {
     await expect(runtime.stop({ nativeSessionId: id })).rejects.toThrow("CLAUDE_STOP_UNCONFIRMED");
     await expect(runtime.inspect(id)).rejects.toThrow("RECONCILIATION_REQUIRED");
     expect(current().closed).toBe(true);
+  });
+});
+
+describe("ClaudeRuntime live usage", () => {
+  it("reports tokens after each model call and never less at the end", async () => {
+    const { runtime, current } = harness();
+    const { nativeSessionId: id } = await runtime.start(input());
+    const call = (messageId: string, input_tokens: number, output_tokens: number) =>
+      current().emit({
+        type: "assistant",
+        parent_tool_use_id: null,
+        message: {
+          id: messageId,
+          model: "claude-test-1",
+          role: "assistant",
+          content: [{ type: "text", text: "Working" }],
+          usage: { input_tokens, cache_read_input_tokens: 100, output_tokens },
+        },
+      });
+    call("m1", 10, 5);
+    call("m1", 10, 7); // a later frame of the same call replaces its usage
+    call("m2", 20, 3);
+    // The turn's own total is lower than the live sum: counters must not go down.
+    current().result("success", "Done", {
+      input_tokens: 25,
+      cache_read_input_tokens: 150,
+      output_tokens: 9,
+    });
+    const usage = (await all(runtime, id))
+      .filter((event) => event.type === "run.usage" && "totalTokens" in event.payload)
+      .map((event) => event.payload as Record<string, number>);
+    expect(usage.map((value) => value.totalTokens)).toEqual([115, 117, 240]);
+    expect(usage.at(-1)).toEqual({
+      inputTokens: 230,
+      cachedInputTokens: 200,
+      cacheWriteInputTokens: 0,
+      outputTokens: 10,
+      totalTokens: 240,
+      modelCalls: 2,
+    });
   });
 });
 

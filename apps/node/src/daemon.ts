@@ -21,7 +21,7 @@ import {
   WorkspaceManager,
   WorkspaceToolchain,
 } from "@zamolxis/node-core";
-import { ClaudeCliProcess, ClaudeRuntime, claudeEnv } from "@zamolxis/runtime-claude";
+import { ClaudeCliProcess, ClaudeRuntime } from "@zamolxis/runtime-claude";
 import {
   AppServerClient,
   CodexRuntime,
@@ -122,10 +122,10 @@ try {
           new ClaudeCliProcess({
             ...launch,
             executable: claude.executable,
-            spawnChild: (file, args, cwd) => {
+            spawnChild: (file, args, cwd, env) => {
               const child = spawn(file, [...args], {
                 cwd,
-                env: claudeEnv(),
+                env,
                 shell: false,
                 stdio: ["pipe", "pipe", "ignore"],
               });

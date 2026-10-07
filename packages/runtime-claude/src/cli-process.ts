@@ -17,6 +17,8 @@ export interface ClaudeProcess {
 export interface ClaudeLaunch {
   readonly cwd: string;
   readonly args: readonly string[];
+  /** The child's environment before credentials are stripped (default: the Node's own). */
+  readonly env?: NodeJS.ProcessEnv;
 }
 export interface ChildLike {
   readonly stdout: Readable;
@@ -29,8 +31,12 @@ export interface ClaudeCliProcessOptions extends ClaudeLaunch {
   /** Lines longer than this are skipped (large tool output is never needed). */
   readonly maxFrameBytes?: number;
   readonly killAfterMs?: number;
-  readonly env?: NodeJS.ProcessEnv;
-  readonly spawnChild?: (executable: string, args: readonly string[], cwd: string) => ChildLike;
+  readonly spawnChild?: (
+    executable: string,
+    args: readonly string[],
+    cwd: string,
+    env: NodeJS.ProcessEnv,
+  ) => ChildLike;
 }
 
 // The owner's Claude subscription login is used, never an API key: these variables would
@@ -65,14 +71,14 @@ export class ClaudeCliProcess implements ClaudeProcess {
     const executable = options.executable ?? "claude";
     this.#child = (
       options.spawnChild ??
-      ((file, args, cwd) =>
+      ((file, args, cwd, env) =>
         spawn(file, [...args], {
           cwd,
-          env: claudeEnv(options.env),
+          env,
           shell: false,
           stdio: ["pipe", "pipe", "ignore"],
         }))
-    )(executable, options.args, options.cwd);
+    )(executable, options.args, options.cwd, claudeEnv(options.env));
     this.#child.stdout.setEncoding("utf8");
     this.#child.stdout.on("data", (chunk: string) => this.#receive(chunk));
     this.#child.stdout.on("error", () => this.#end());
