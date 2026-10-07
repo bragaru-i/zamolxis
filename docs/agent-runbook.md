@@ -72,6 +72,12 @@ code until it is restarted on the new checkout, so:
   heartbeat with a redacted `Server Error` (2026-10-07: #128 added a heartbeat argument;
   the Linux Node restarted before the deploy and crash-looped every 15 s until it landed;
   systemd/launchd recover it by themselves, but the computer is offline meanwhile).
+- **One command does all of it, on macOS and Linux:** `pnpm zamolxis update` in the
+  computer's checkout. It refuses local changes, a branch other than `main` or a diverged
+  checkout; fast-forwards to `origin/main`; runs `pnpm install --frozen-lockfile`; waits
+  (up to 20 minutes) until `<appUrl>/api/bootstrap` reports that commit or a later one
+  containing it; then restarts the service (launchd or systemd) and waits for a heartbeat
+  from the new process (the same check as `setup --repair`).
 - **Never a machine reboot.** Restarting the service is enough: `launchctl kickstart -k`
   on the Mac, `systemctl --user restart` on Linux. The one root-level setting on Linux
   (`kernel.apparmor_restrict_unprivileged_userns`, see "Pitfalls") also takes effect
