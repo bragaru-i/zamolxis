@@ -20,6 +20,7 @@ import type * as supervisor from "../supervisor.js";
 import type * as approvals from "../approvals.js";
 import type * as events from "../events.js";
 import type * as integration from "../integration.js";
+import type * as migrations from "../migrations.js";
 import type * as lib_access from "../lib/access.js";
 import type * as lib_commands from "../lib/commands.js";
 import type * as lib_repositories from "../lib/repositories.js";
@@ -61,6 +62,7 @@ const fullApi: ApiFromModules<{
   approvals: typeof approvals;
   events: typeof events;
   integration: typeof integration;
+  migrations: typeof migrations;
   "lib/access": typeof lib_access;
   "lib/commands": typeof lib_commands;
   "lib/repositories": typeof lib_repositories;

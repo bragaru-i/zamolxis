@@ -1,7 +1,8 @@
 name: Deploy production
 # workflow_run runs are listed under the branch tip; name them after the commit they deploy.
 run-name: Deploy ${{ github.event.workflow_run.head_sha || github.sha }}
-# Runs after CI succeeds on main: Convex backend first, then the web app on Vercel.
+# Runs after CI succeeds on main: Convex backend first (self-hosted on the owner's Mac when
+# CONVEX_SELF_HOSTED_ADMIN_KEY is set, else the Convex cloud), then the web app on Vercel.
 # The Node service on the owner's Mac is not updated here (see docs/alpha-status.md).
 on:
   workflow_run:
@@ -52,14 +53,25 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Deploy Convex backend
         if: steps.current.outputs.deploy == 'true'
+        # Self-hosted (the owner's Mac, through a Cloudflare Tunnel) when its admin key is
+        # set; otherwise the Convex cloud deployment.
         env:
-          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+          CONVEX_SELF_HOSTED_URL: ${{ vars.CONVEX_SELF_HOSTED_URL }}
+          SELF_HOSTED_ADMIN_KEY: ${{ secrets.CONVEX_SELF_HOSTED_ADMIN_KEY }}
+          CLOUD_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
         run: |
-          case "$CONVEX_DEPLOY_KEY" in
-            prod:*) ;;
-            *) echo "CONVEX_DEPLOY_KEY must be a production deployment key"; exit 1 ;;
-          esac
-          pnpm exec convex deploy
+          if [ -n "$SELF_HOSTED_ADMIN_KEY" ]; then
+            [ -n "$CONVEX_SELF_HOSTED_URL" ] || { echo "Set the CONVEX_SELF_HOSTED_URL variable"; exit 1; }
+            curl -fsS --max-time 20 "$CONVEX_SELF_HOSTED_URL/version" >/dev/null ||
+              { echo "The self-hosted Convex server does not answer (is the Mac on?)"; exit 1; }
+            CONVEX_SELF_HOSTED_ADMIN_KEY="$SELF_HOSTED_ADMIN_KEY" pnpm exec convex deploy -y
+          else
+            case "$CLOUD_DEPLOY_KEY" in
+              prod:*) ;;
+              *) echo "CONVEX_DEPLOY_KEY must be a production deployment key"; exit 1 ;;
+            esac
+            CONVEX_DEPLOY_KEY="$CLOUD_DEPLOY_KEY" pnpm exec convex deploy
+          fi
       - name: Build and deploy web app
         if: steps.current.outputs.deploy == 'true'
         env:

@@ -69,6 +69,28 @@ permissive files are refused. The Node runs as the `app.zamolxis.node` systemd u
 service; inspect it with `systemctl --user status app.zamolxis.node` and
 `journalctl --user -u app.zamolxis.node.service`.
 
+## Self-hosted Convex on the owner's Mac (since 2026-10-19)
+
+The Convex cloud free plan was disabled on 2026-10-08 (limits exceeded, mostly Node
+heartbeats). Production now runs on the owner's Mac:
+
+- **Server:** `~/zamolxis-server` (Docker via OrbStack): `docker compose up -d`, `docker compose ps`,
+  `docker compose logs backend`. Data in `~/zamolxis-server/data` (SQLite). Ports listen on
+  127.0.0.1 only. Dashboard: http://127.0.0.1:6791 (admin key in `admin.env`, owner-only).
+- **Public addresses:** Cloudflare Tunnel `zamolxis` (LaunchAgent `com.cloudflare.cloudflared`,
+  config `~/.cloudflared/config.yml`): `https://convex.bragaru.cc` (backend, 3210) and
+  `https://convex-site.bragaru.cc` (HTTP actions and sign-in, 3211). The Mac must be on and
+  logged in; when it sleeps, Zamolxis is unavailable everywhere.
+- **Deploy:** CI deploys there when the `CONVEX_SELF_HOSTED_ADMIN_KEY` secret and the
+  `CONVEX_SELF_HOSTED_URL` variable are set; locally:
+  `set -a; . ~/zamolxis-server/admin.env; set +a; unset CONVEX_DEPLOY_KEY; npx convex deploy -y`
+  from a worktree (the canonical checkout's `.env.local` holds the cloud key).
+- **Settings:** set by the owner with `~/zamolxis-server/configure-secrets.sh` (new keys; the
+  Google client is copied from the cloud project). Agents must not read or write them.
+- **Backups:** `npx convex export --path ~/zamolxis-server/backups/<date>.zip` with the
+  self-hosted env; the 2026-10-19 cloud export is there. Restore with `npx convex import --replace-all`.
+- **Never** print `admin.env`, `.env` or `npx convex env list` (multi-line keys leak past filters).
+
 ## Inspecting production safely
 
 `node scripts/prod-inspect.mjs data <table> [limit] [fields]` prints recent rows
