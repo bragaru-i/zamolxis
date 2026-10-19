@@ -22,6 +22,8 @@ export interface LocalChatRuntimeOptions {
   readonly baseUrls: readonly string[];
   readonly fetch?: typeof fetch;
   readonly now?: () => number;
+  /** Makes the model ready before a reply (e.g. loads it in LM Studio); optional. */
+  readonly prepare?: (model: string) => Promise<void>;
 }
 
 interface Session {
@@ -205,6 +207,7 @@ export class LocalChatRuntime implements AgentRuntime {
     try {
       const model = session.input.model ?? (await this.#models(10_000))[0];
       if (!model) throw new Error("No local model is loaded");
+      await this.options.prepare?.(model);
       this.#emit(session, "run.activity", { label: "Writing a reply" });
       const response = await this.#fetch(`${await this.#base()}/chat/completions`, {
         method: "POST",

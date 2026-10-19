@@ -42,11 +42,13 @@ import {
   loadDeviceCredential,
 } from "./credential-store";
 import {
+  CODEX_LOCAL_MIN_CONTEXT,
   CODEX_LOCAL_RUNTIME_ID,
   codexLocalReady,
   codexProvider,
   localModelRuntime,
 } from "./local-model";
+import { execLms, LocalModelSwitch, lmsPath } from "./local-switch";
 import { nodeVersion } from "./node-version";
 import { configDirectory, configPath, pause, readConfig } from "./setup";
 
@@ -95,7 +97,17 @@ try {
   const runtimes = new RuntimeRegistry();
   // A model served on this computer (LM Studio, Ollama, mlx_lm.server) for the
   // Orchestrator only; advertised while a server answers, so starting one is enough.
-  const local = localModelRuntime();
+  // LM Studio models are loaded on demand (one at a time, with enough context for Codex).
+  const lms = lmsPath();
+  const localSwitch = lms
+    ? new LocalModelSwitch({ exec: execLms(lms), minContext: CODEX_LOCAL_MIN_CONTEXT })
+    : undefined;
+  const prepareLocal = localSwitch
+    ? async (model: string) => {
+        if (codexProvider(local.baseUrl) === "lmstudio") await localSwitch.ensure(model);
+      }
+    : undefined;
+  const local = localModelRuntime(prepareLocal);
   runtimes.register(local);
   // Codex's app-server for a run, in its assigned workspace, with the Node's Codex profile.
   const codexConnect = (cwd: string, env?: NodeJS.ProcessEnv) =>
@@ -134,6 +146,7 @@ try {
           id: CODEX_LOCAL_RUNTIME_ID,
           modelProvider: () => codexProvider(local.baseUrl) ?? "lmstudio",
           models: () => local.listModels(),
+          ...(prepareLocal ? { prepare: prepareLocal } : {}),
         },
       }),
     );
@@ -253,7 +266,7 @@ try {
                 },
               ]
             : []),
-          ...(codex && (await codexLocalReady(local)).ready
+          ...(codex && (await codexLocalReady(local, Boolean(localSwitch))).ready
             ? [
                 {
                   runtime: CODEX_LOCAL_RUNTIME_ID,

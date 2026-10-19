@@ -69,6 +69,8 @@ export interface CodexRuntimeOptions {
     // Read when a thread starts: the local server in use can change (LM Studio, Ollama).
     readonly modelProvider: () => string;
     readonly models: () => Promise<RuntimeModelDto[]>;
+    /** Makes the model ready before a thread starts (e.g. loads it in LM Studio). */
+    readonly prepare?: (model: string) => Promise<void>;
   };
 }
 interface Session {
@@ -189,11 +191,11 @@ export class CodexRuntime implements AgentRuntime {
    */
   async #model(input: StartRunInput): Promise<Record<string, string>> {
     const chosen = input.model ?? this.options.model;
-    if (chosen) return { model: chosen };
-    if (!this.options.local) return {};
-    const models = await this.options.local.models().catch(() => []);
-    const fallback = models.find((model) => model.isDefault) ?? models[0];
-    return fallback ? { model: fallback.id } : {};
+    if (!this.options.local) return chosen ? { model: chosen } : {};
+    const models = chosen ? [] : await this.options.local.models().catch(() => []);
+    const model = chosen ?? (models.find((item) => item.isDefault) ?? models[0])?.id;
+    if (model) await this.options.local.prepare?.(model);
+    return model ? { model } : {};
   }
   capabilities(): RuntimeCapabilitiesDto {
     return {

@@ -17,8 +17,11 @@ export const LOCAL_MODEL_SERVERS: readonly { name: string; url: string }[] = [
   { name: "MLX (mlx_lm.server)", url: "http://127.0.0.1:8080/v1" },
 ];
 
-export function localModelRuntime(): LocalChatRuntime {
-  return new LocalChatRuntime({ baseUrls: LOCAL_MODEL_SERVERS.map((server) => server.url) });
+export function localModelRuntime(prepare?: (model: string) => Promise<void>): LocalChatRuntime {
+  return new LocalChatRuntime({
+    baseUrls: LOCAL_MODEL_SERVERS.map((server) => server.url),
+    ...(prepare ? { prepare } : {}),
+  });
 }
 
 /** One line for setup and doctor: what local model this computer offers, if any. */
@@ -74,16 +77,20 @@ export async function loadedContext(baseUrl: string): Promise<number | undefined
  * Whether Codex can use the local model now: a server Codex supports answers and, for LM
  * Studio, a loaded model has enough context for Codex's instructions.
  */
-export async function codexLocalReady(runtime: {
-  reachable(): Promise<boolean>;
-  readonly baseUrl: string | undefined;
-}): Promise<{ ready: boolean; provider?: "lmstudio" | "ollama"; reason?: string }> {
+export async function codexLocalReady(
+  runtime: {
+    reachable(): Promise<boolean>;
+    readonly baseUrl: string | undefined;
+  },
+  // The Node can load the model with enough context itself (LM Studio's `lms`).
+  switchable = false,
+): Promise<{ ready: boolean; provider?: "lmstudio" | "ollama"; reason?: string }> {
   if (!(await runtime.reachable())) return { ready: false, reason: "no local model server" };
   const provider = codexProvider(runtime.baseUrl);
   if (!provider) return { ready: false, reason: "Codex works with LM Studio or Ollama only" };
   if (provider === "lmstudio" && runtime.baseUrl) {
     const context = await loadedContext(runtime.baseUrl);
-    if (context !== undefined && context < CODEX_LOCAL_MIN_CONTEXT)
+    if (!switchable && context !== undefined && context < CODEX_LOCAL_MIN_CONTEXT)
       return {
         ready: false,
         provider,
