@@ -518,6 +518,14 @@ module aliases exist only when the variable is set.
   profiles still resolve (Session workflow → product → Default) but Settings no longer
   shows them.
 
+- **Production backend moved to the owner's Mac (2026-10-19):** the Convex cloud free plan
+  disabled the deployment on 2026-10-08 (limits exceeded; Node heartbeats every 15 s from two
+  computers plus `watch` polling every second). Self-hosted Convex in Docker on the Mac,
+  reachable through a Cloudflare Tunnel at `convex.bragaru.cc` / `convex-site.bragaru.cc`;
+  the cloud data (3,389 documents) was exported and imported; new sign-in and device keys.
+  See the runbook section. **Gaps:** the Mac must stay on; the chatty Node polling still needs
+  quieting; backups are manual.
+
 - **Agents get context; the Checker judges the request (2026-10-08, #162, #163):** the
   Node reads the repository's `.zamolxis/code-map.md` (area -> files, bounded, redacted;
   optional) and gives it to the planner, Builder, Repair and reviewing Verifier. A reviewing
