@@ -1088,7 +1088,7 @@ describe("execution trace", { timeout: 30_000 }, () => {
       delivery.kind === "run.trace" && delivery.runId === runId ? delivery.steps : [],
     );
 
-  it("turns a reviewer's missing acceptance point into failed evidence, and gives agents the code map", async () => {
+  it("turns a reviewer's missing acceptance point into failed evidence, and gives agents the code map and glossary", async () => {
     const f = fixture(() =>
       answer(
         'Reviewed.\n{"acceptance":[{"point":"Opens with Cmd/Ctrl+K","met":false,"where":"no shortcut"},{"point":"Sidebar search removed","met":true,"where":"sessions.tsx"}]}',
@@ -1097,11 +1097,14 @@ describe("execution trace", { timeout: 30_000 }, () => {
     const plan = f.workspaces.inspect("plan").path;
     mkdirSync(join(plan, ".zamolxis"), { recursive: true });
     writeFileSync(join(plan, ".zamolxis", "code-map.md"), "- Sidebar: apps/web/sessions.tsx\n");
+    writeFileSync(join(plan, "CONTEXT.md"), '- **Verifier:** checks a candidate ("Check it").\n');
     git(plan, ["add", "."]);
     git(plan, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "map"]);
     await f.driver.execute(start("r", "plan", "verifier", []));
     expect(f.runtime.started[0]?.instruction).toContain("Repository map (.zamolxis/code-map.md)");
     expect(f.runtime.started[0]?.instruction).toContain("- Sidebar: apps/web/sessions.tsx");
+    expect(f.runtime.started[0]?.instruction).toContain("Repository glossary (CONTEXT.md)");
+    expect(f.runtime.started[0]?.instruction).toContain('checks a candidate ("Check it")');
     const complete = f.deliveries.find((delivery) => delivery.kind === "run.complete");
     expect(complete).toMatchObject({
       evidence: expect.arrayContaining([

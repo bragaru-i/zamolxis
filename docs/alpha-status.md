@@ -530,6 +530,14 @@ module aliases exist only when the variable is set.
   which package scripts the Verifier will run. **Gap:** "Checks only" workflows still skip
   the review; the owner's "Mac > New Local" uses it.
 
+- **Glossary and skills (2026-10-19, #165):** `CONTEXT.md` names each concept once with the
+  owner's word for it; the Node gives a repository's root `CONTEXT.md` (bounded to 8,000
+  characters, redacted, links ignored, optional) to the planner, Builder, Repair and reviewing
+  Verifier next to the code map. Procedures moved from AGENTS.md and the runbook into
+  `.agents/skills/` (`.claude/skills` links to it), modelled on mxbrandcopy. **Gap:** Zamolxis
+  agents run with Codex skills turned off (#114), so they see a skill only when a task names
+  its path; the planner does not yet pick a skill per task.
+
 - **Codex + local model (2026-10-07):** runtime `codex-local` is a second `CodexRuntime`
   (`local: { id, modelProvider, models }`) whose threads use Codex's built-in `lmstudio` /
   `ollama` provider. Reading roles only (`READ_ONLY_RUNTIMES`; adapter refuses others).
@@ -566,7 +574,7 @@ module aliases exist only when the variable is set.
 - Merges to main deploy Convex and the web app automatically through the "Deploy
   production" GitHub Actions workflow (after CI passes). Vercel itself is not
   connected to GitHub; the workflow deploys with a Vercel token. The Mac Node is not
-  updated by it; see `docs/agent-runbook.md` "Updating the Node" (or
+  updated by it; see the `updating-the-node` skill (or
   `pnpm deploy:prod --pull --skip-convex --skip-web`). `pnpm deploy:prod` is the
   manual full release (needs `pnpm dlx vercel@62 login` once).
 - The private prod setup directory is at

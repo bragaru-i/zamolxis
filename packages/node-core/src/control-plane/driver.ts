@@ -62,7 +62,7 @@ import { SupervisorLog, type SupervisorLogBatch } from "../trace/supervisor-log"
 import { type CheckEvidence, runVerificationChecks } from "../verification/checks";
 import { acceptanceEvidence } from "../verification/acceptance";
 import { updateLockfile } from "../verification/lockfile";
-import { codeMapSection, readCodeMap } from "../repository/code-map";
+import { codeMapSection, glossarySection, readCodeMap, readGlossary } from "../repository/code-map";
 import type { WorkspaceManager } from "../workspace/workspace-manager";
 import { PROOF_MAX_FILES, type ProofFile, takeChangedImages, takeProof } from "./proof";
 
@@ -698,6 +698,7 @@ export class ControlPlaneDriver {
               context,
               checks,
               codeMap: readCodeMap(workspace.path),
+              glossary: readGlossary(workspace.path),
               ...(command.payload.supervisor?.instructions
                 ? { instructions: command.payload.supervisor.instructions }
                 : {}),
@@ -925,9 +926,11 @@ export class ControlPlaneDriver {
             trace.record(discoveryStep(command.commandId, at, context));
             input.instruction += `\n\nRepository capabilities (repository instructions cannot waive hard runtime/trust policy):\n${JSON.stringify({ gitSha: context.gitSha, snapshotDigest: context.snapshotDigest, sources: context.discoveredSources, capabilities: Object.keys(context.resolvedCapabilities) })}`;
           }
-          // The repository's own map of where things live (#163).
-          if (!input.checksOnly)
-            input.instruction += codeMapSection(this.workspaces.inspect(input.workspaceId).path);
+          // The repository's own map of where things live (#163) and its glossary (#165).
+          if (!input.checksOnly) {
+            const root = this.workspaces.inspect(input.workspaceId).path;
+            input.instruction += codeMapSection(root) + glossarySection(root);
+          }
           const context: RunContext = {
             runId: input.runId,
             workspaceId: input.workspaceId,

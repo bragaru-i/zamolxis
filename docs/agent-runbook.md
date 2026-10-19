@@ -1,6 +1,6 @@
 # Agent runbook
 
-How agents ship and operate Zamolxis day to day. Read `AGENTS.md` (rules) and
+How agents operate Zamolxis day to day. Read `AGENTS.md` (rules), `CONTEXT.md` (terms) and
 `docs/alpha-status.md` (what works, gaps, next steps) first; this file is the
 procedure. Keep it current when a procedure changes.
 
@@ -10,122 +10,17 @@ By default the owner merges (AGENTS.md). The owner may grant an agent temporary
 merge rights in chat; a grant applies to that agent only. If you have no explicit
 grant, open PRs, report CI and state the merge order.
 
-## Shipping a change
+## Procedures (skills)
 
-1. Work in a worktree from current `origin/main`; small commits with issue
-   references; commit email `50721739+bragaru-i@users.noreply.github.com`; no AI
-   attribution. `apps/web/next-env.d.ts` is rewritten by every build — revert it,
-   never commit it.
-2. `pnpm check` must pass. For changes to `packages/runtime-*`, `packages/node-core`
-   or `apps/node` also run the real-Codex acceptance (below), and the real-Claude
-   acceptance for `packages/runtime-claude` or its Node wiring. Parallel lanes that
-   touched the same files must be re-checked after rebasing onto each other.
-3. Push and open the PR as `bragaru-i` with the per-command token (AGENTS.md).
-4. Wait for CI to finish. Right after `gh pr create` the checks may not be
-   registered yet — poll until the first check reports pass/fail rather than using
-   `gh pr checks --watch` immediately.
-5. Merge (squash) only with merge rights. Every push to main that passes CI runs
-   "Deploy production" (Convex, then Vercel). Runs triggered by `workflow_run` are
-   named after the commit they deploy; a run for a superseded commit skips its steps.
-6. Confirm the live commit: `curl -s https://zamolxis.bragaru.cc/api/bootstrap`
-   must report the merge commit (or a later one that contains it).
-7. If the change affects the Node (runtime, node-core, apps/node, or Node-facing
-   Convex functions), update the Mac Node — see below. Backend first, Node second:
-   a newer Node against an older backend can stall its outbox.
-8. Record the change in `docs/alpha-status.md` in the same PR when it closes or
-   opens a gap, and comment progress on the related GitHub issue.
+Step-by-step procedures live in `.agents/skills/` (also `.claude/skills`), one owner
+each, and load only when a task needs them:
 
-## Checking the web UI in a browser (preview harness)
-
-The owner uses the app on an iPhone; check phone layouts before shipping UI changes.
-
-```bash
-cd apps/web && ZAMOLXIS_PREVIEW=1 pnpm exec next dev -p 3123     # real app, fixture backend
-open "http://localhost:3123/?scenario=owner"                     # also: empty, attention, busy
-open "http://localhost:3123/?session=s1&run=r1"                  # running Session, Run detail
-```
-
-`apps/web/preview/` replaces `convex/react` and `@convex-dev/auth/react` with an in-memory
-store (`fixtures.ts` holds the scenarios; mutations such as sending a message animate a
-reply). For automated checks install Playwright in a scratch directory
-(`npm i playwright && npx playwright install chromium webkit`) and drive the pages with
-`devices["iPhone 14 Pro Max"]` (WebKit) and a 1280px Chromium viewport; assert
-`document.documentElement.scrollWidth <= clientWidth` on every screen (iOS zooms the whole
-layout out when anything overflows horizontally) and that the console stays free of errors.
-
-## Updating the Node on the owner's computers
-
-Every push to main that passes CI deploys the backend (Convex) and the web app (Vercel)
-by itself. The Node on each computer is a separate program that keeps running its old
-code until it is restarted on the new checkout, so:
-
-- **A change under `apps/web/`, `convex/` or `docs/` needs nothing on the computers.**
-  The browser gets it on reload; the running Nodes keep working against the new backend.
-- **A change under `apps/node/` or `packages/`** (runtimes, node-core, contracts, git,
-  domain, application) needs the Node **service** restarted on each computer that should
-  run it, after fast-forwarding that computer's checkout. Until then that computer runs
-  the previous Node; it still heartbeats, but new Node behaviour (for example checks-only
-  verification or the lockfile install) is missing there.
-- **Order: backend first, Nodes second.** Restart a Node only after the deploy run for
-  that commit has finished (`gh run list --workflow deploy.yml --branch main`, or the
-  Actions tab). A Node started on code the backend does not know yet exits on its first
-  heartbeat with a redacted `Server Error` (2026-10-07: #128 added a heartbeat argument;
-  the Linux Node restarted before the deploy and crash-looped every 15 s until it landed;
-  systemd/launchd recover it by themselves, but the computer is offline meanwhile).
-- **One command does all of it, on macOS and Linux:** `pnpm zamolxis update` in the
-  computer's checkout. It refuses local changes, a branch other than `main` or a diverged
-  checkout; fast-forwards to `origin/main`; runs `pnpm install --frozen-lockfile`; waits
-  (up to 20 minutes) until `<appUrl>/api/bootstrap` reports that commit or a later one
-  containing it; then restarts the service (launchd or systemd) and waits for a heartbeat
-  from the new process (the same check as `setup --repair`).
-- **See what a Node is doing:** `pnpm zamolxis watch` on that computer shows its activity
-  live (commands, edits, approvals, Supervisor answers) with tokens per run and today's
-  total, read-only from `node-state.sqlite`; Ctrl+C closes it and the Node keeps running.
-  `--once` prints today's activity and exits. Supervisor tokens appear when it answers
-  (live Supervisor progress is not stored locally).
-- **Never a machine reboot.** Restarting the service is enough: `launchctl kickstart -k`
-  on the Mac, `systemctl --user restart` on Linux. The one root-level setting on Linux
-  (`kernel.apparmor_restrict_unprivileged_userns`, see "Pitfalls") also takes effect
-  at once with `sysctl -w`; its file under `/etc/sysctl.d/` only makes it survive the next
-  boot.
-- Do it between Sessions: a Node restart resumes runs in flight (Codex `thread/resume`),
-  but an approval held at that moment is withdrawn and asked again.
-- **Check it from anywhere:** Settings → Computers & repositories shows each computer's
-  card as "macOS · Node 1a2b3c4d5e6f" (the commit its Node process was started from,
-  "+dirty" when that checkout has uncommitted changes), reported with every heartbeat.
-  Compare with `git log -1 --format=%h origin/main`; an older commit means that
-  computer's Node was not restarted since that merge.
-
-On the Mac:
-
-```bash
-cd /Users/Shared/projects/zamolxis
-node scripts/prod-inspect.mjs data commands 5 type,status   # nothing pending/claimed/acknowledged?
-git checkout -- convex/_generated/api.ts                     # see "Pitfalls"
-git fetch origin main && git merge --ff-only origin/main     # not `git pull` (see "Pitfalls")
-pnpm install --frozen-lockfile
-launchctl kickstart -k gui/$(id -u)/app.zamolxis.node
-```
-
-Then check `launchctl print gui/$(id -u)/app.zamolxis.node` shows `state = running`,
-`node scripts/prod-inspect.mjs data workstations 1 name,status,lastHeartbeatAt`
-shows a heartbeat a few seconds old, and `node-error.log` does not keep growing for a
-minute. A few `NODE_CONTROL_FAILED` / `HEARTBEAT_FAILED` /
-`NODE_RECONCILIATION_OR_DELIVERY_REQUIRED` lines at the moment of a restart or boot
-are expected; lines that keep appearing are not. Runs in flight resume after a
-restart (Codex `thread/resume`), but avoid restarting during active work anyway.
-`pnpm zamolxis setup --repair` is the non-interactive health check and repair.
-
-On the Linux computer (user service, canonical checkout under `~/projects/zamolxis`):
-
-```bash
-cd ~/projects/zamolxis
-git fetch origin main && git merge --ff-only origin/main
-pnpm install --frozen-lockfile --offline || pnpm install --frozen-lockfile
-systemctl --user restart app.zamolxis.node
-systemctl --user is-active app.zamolxis.node                                   # active
-journalctl --user -u app.zamolxis.node --since "1 minute ago" --no-pager       # no repeating errors
-```
+- Commit, PR, CI, merge, deploy check: `shipping-a-change`
+- Restart the Node on the owner's computers after a merge: `updating-the-node`
+- Real Codex and Claude acceptance tests: `real-runtime-acceptance`
+- Check the web UI on phone and laptop (preview harness, Playwright): `ui-check`
+- GitHub issues: `issue-intake`; glossary (`CONTEXT.md`): `glossary`
+- Writing for the owner: `plain-writing`; changing skills: `skill-authoring`
 
 ## GitHub access for publishing (per repository, on the Mac)
 
@@ -183,39 +78,6 @@ service; inspect it with `systemctl --user status app.zamolxis.node` and
 never print it. Never print or commit the contents of that directory. Phone
 debugging: if the phone makes no `profiles:viewer` / `auth:signIn` calls in the logs,
 the client never connected (see the phone sign-in note in `docs/alpha-status.md`).
-
-## Real-Codex acceptance (uses the local Codex login, disposable repositories)
-
-```bash
-ZAMOLXIS_CODEX_ACCEPTANCE=1 pnpm exec vitest run tests/control-plane-loop.test.ts -t "runs text intent"          # plan → build → verify → trust
-ZAMOLXIS_CODEX_ACCEPTANCE=1 pnpm exec vitest run tests/control-plane-loop.test.ts -t "real Codex Supervisor"     # answer, stop
-ZAMOLXIS_CODEX_ACCEPTANCE=1 pnpm exec vitest run tests/control-plane-loop.test.ts -t "real Codex Orchestrator"   # top-level reply, no repository
-ZAMOLXIS_AUTHENTICATED_ACCEPTANCE=1 pnpm exec vitest run tests/approvals-steering.test.ts -t "real Codex approval" # reject, approve
-ZAMOLXIS_CODEX_RESTART_ACCEPTANCE=1 pnpm exec vitest run tests/restart-recovery.test.ts -t "real Codex"          # resume after kill
-```
-
-## Real-Claude acceptance (uses the owner's signed-in `claude` CLI, disposable repositories)
-
-Runs the installed `claude` with the owner's normal login and config (nothing is copied
-into a temporary profile; API key variables are stripped), on `claude-haiku-4-5` with
-minimal prompts. Keep usage modest: run it when `packages/runtime-claude` or its Node
-wiring changes, not in loops. Required before merging changes to
-`packages/runtime-claude`.
-
-```bash
-ZAMOLXIS_CLAUDE_ACCEPTANCE=1 pnpm exec vitest run tests/control-plane-loop.test.ts -t "Claude"                     # all seven below (~2 min)
-ZAMOLXIS_CLAUDE_ACCEPTANCE=1 pnpm exec vitest run tests/control-plane-loop.test.ts -t "runs text intent with real Claude"  # plan → build → verify → trust
-ZAMOLXIS_CLAUDE_ACCEPTANCE=1 pnpm exec vitest run tests/control-plane-loop.test.ts -t "real Claude Orchestrator"   # top-level reply, no repository
-ZAMOLXIS_CLAUDE_ACCEPTANCE=1 pnpm exec vitest run tests/control-plane-loop.test.ts -t "real Claude permission"     # held approval, restart resume, stop
-ZAMOLXIS_CLAUDE_ACCEPTANCE=1 pnpm exec vitest run tests/control-plane-loop.test.ts -t "real Claude Verifier"       # read-only even when told to write
-```
-
-The other Claude tests: Supervisor question (no runs), Builder edit with usage, model
-catalog. `claude auth status` shows whether the CLI is signed in (it prints no tokens).
-
-`--testTimeout 1500000` helps on slow runs. When one fails, log the real outcome
-(e.g. the Supervisor's decision and reply) before changing code — the parser's safe
-fallback ("answer") can hide the real cause.
 
 ## Parallel lanes
 

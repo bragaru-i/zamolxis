@@ -11,65 +11,59 @@ This block is written and re-added by `turbo` before repository-scoped commands 
 
 # Zamolxis engineering rules
 
-Short on purpose: this file is injected into every agent prompt and resent on every
-model call. Read a linked document only when your task needs it. Never describe a
-planned capability as shipped; the executable repository is the source of truth.
+Short on purpose: this file is sent on every model call. Never describe a planned
+capability as shipped; the executable repository is the source of truth.
 
-## Commands
+## Where context lives
 
-- `pnpm check` = lint, boundaries, typechecks (workspaces and Convex), tests, build.
-  Run it before every PR. Discover other commands from `package.json` and CI.
-- Changes to `packages/runtime-*`, `packages/node-core` or `apps/node` also need the
-  real-Codex acceptance when a Codex login is available (fake runtimes do not exercise
-  the adapters; a redaction change once broke every real plan while tests passed):
-  `ZAMOLXIS_CODEX_ACCEPTANCE=1 pnpm exec vitest run tests/control-plane-loop.test.ts -t "runs text intent"`.
-- Tests use disposable Git repositories and worktrees and assert the canonical
-  checkout's HEAD and status are unchanged. Mocks never prove native, cloud or phone
-  end-to-end behavior; report exact commands, results and untested boundaries.
+- `CONTEXT.md`: one name per concept and the owner's word for it. Use those names.
+- `.zamolxis/code-map.md`: which files own each area. Start there instead of exploring.
+- `.agents/skills/<name>/SKILL.md`: procedures. Read the one that matches your step:
+  `shipping-a-change` (commit, PR, CI, deploy check), `updating-the-node`,
+  `real-runtime-acceptance`, `ui-check` (any `apps/web` or `packages/ui` change),
+  `issue-intake`, `plain-writing` (anything a person reads), `glossary`,
+  `skill-authoring`.
+- `docs/alpha-status.md` (what works, gaps, next steps; update it when a gap opens or
+  closes) and `docs/agent-runbook.md` (pitfalls, production inspection): search for
+  the section you need, never read them whole.
 
-## Conventions
+## Always
 
-- Work in an isolated worktree from current `origin/main`; small coherent commits with
-  issue references; commit instruction changes (this file, docs) separately.
-- Git identity for this repository only: `bragaru-i`, email
-  `50721739+bragaru-i@users.noreply.github.com`. No AI attribution (no
-  `Co-Authored-By` for agents, no "Generated with" lines). Never switch global Git or
-  `gh` credentials; publish with a per-command `bragaru-i` token as described in
-  `docs/agent-runbook.md` ("Shipping a change"). If no `bragaru-i` credential is
-  available, stop and ask; never fall back to another account.
-- The owner merges PRs (squash) after CI; agents open PRs and report CI. State the
-  merge order for stacked PRs. Never force push main, bypass CODEOWNERS or protections,
-  or claim a merge without Git/PR evidence. Preserve human changes; inspect sibling
-  work and the sibling `zamolxis-docs` repository before architectural changes.
-- Every push to main that passes CI deploys production (Convex, then Vercel). It does
-  not update the Node on the owner's computers: a change under `apps/node/` or
-  `packages/` needs the Node service restarted there (never the machine; runbook,
-  "Updating the Node"). Current status, known
-  gaps and next steps live in `docs/alpha-status.md`; update it when a gap opens or
-  closes. Procedures and pitfalls live in `docs/agent-runbook.md`.
+- `pnpm check` (lint, boundaries, typechecks, tests, build) passes before every PR.
+  `packages/runtime-*`, `packages/node-core` and `apps/node` changes also need the
+  real-Codex acceptance when a Codex login is available.
+- Tests use disposable Git repositories and assert the canonical checkout's HEAD and
+  status are unchanged. Mocks never prove native, cloud or phone behaviour; report
+  exact commands, results and untested boundaries.
+- Work in a worktree from current `origin/main`. Author and publish as `bragaru-i`
+  only, with a per-command token; no AI attribution. No `bragaru-i` credential: stop
+  and ask. Never switch global Git or `gh` credentials.
+- The owner merges (squash) after CI unless they granted merge rights in chat. Never
+  force push main, bypass protections or claim a merge without evidence. Preserve
+  human changes; check sibling work and `zamolxis-docs` before architectural changes.
+- A push to main that passes CI deploys Convex and Vercel, not the Nodes: changes
+  under `apps/node/` or `packages/` need the Node service restarted (never the machine).
+- When the owner corrects how agents work, record it in the owning skill
+  (`skill-authoring`), so the next agent does not repeat the mistake.
 
 ## Area rules
 
 - **Control plane:** Product -> Repository -> Work Session -> Task -> Workspace ->
-  Agent Run -> Runtime. Human ownership comes from authentication; Node identity is
+  Agent Run -> Runtime. Ownership comes from authentication; Node identity is
   authorized separately. Product isolation, idempotency, capacity and state
-  transitions are enforced server-side; lost or uncertain owned Runs reserve capacity
-  until reconciled. Planning needs SHA-bound repository context; plans are validated
-  (structure, acyclic dependencies) before dispatch. Supervisor proposes, backend
-  authorizes.
-- **Trust:** a Builder completion is a candidate, never trust. An independent Verifier
-  runs in its own worktree at the exact candidate SHA with the acceptance criteria and
-  public failure evidence only (never Builder private reasoning). Evidence and trust
-  decisions are SHA-bound and deterministic; only a trusted exact SHA reaches
-  integration. Repair is bounded (Alpha: two) and preserves history. Protected-main
-  merges stay under human policy. Canonical checkouts are never agent workspaces;
-  parallel lanes use separate worktrees with explicit file ownership.
-- **Runtime and evidence:** runtime is distinct from model. Use runtime-core adapters,
-  native identities, workspace-bound execution, normalized events and conservative
-  uncertain ownership. Effective profiles resolve Product -> owner/global -> Alpha
-  fallback and are snapshotted on each Run; never hardcode the Supervisor runtime or
-  model. Persist actual model, tokens and cost only when the provider reports them.
-- **Token usage (#114):** agents resend their whole conversation on every model call.
-  Task descriptions name the exact files, functions and sections a task needs; do not
-  ask an agent to read this file (already injected), the README or whole status and
-  runbook documents. Split large requests into independent tasks.
+  transitions are enforced server-side; lost or uncertain Runs reserve capacity until
+  reconciled. Plans need SHA-bound repository context and are validated (structure,
+  acyclic dependencies) before dispatch. Supervisor proposes, backend authorizes.
+- **Trust:** a Builder completion is a candidate, never trust. The Verifier runs in
+  its own worktree at the exact candidate SHA with the acceptance points and public
+  failure evidence only. Evidence and trust decisions are SHA-bound and
+  deterministic; only a trusted exact SHA reaches integration. Repair is bounded
+  (Alpha: two) and keeps history. Canonical checkouts are never agent workspaces.
+- **Runtime:** runtime is distinct from model. Use runtime-core adapters, native
+  identities, workspace-bound execution, normalized events and conservative uncertain
+  ownership. Profiles resolve workflow -> Product -> owner/global -> Alpha fallback
+  and are snapshotted on each Run; never hardcode a role's runtime or model. Store
+  actual model, tokens and cost only when the provider reports them.
+- **Tokens (#114):** task descriptions name the exact files, functions and sections
+  needed. Never ask an agent to read this file, the README or whole docs. Split large
+  requests into independent tasks.

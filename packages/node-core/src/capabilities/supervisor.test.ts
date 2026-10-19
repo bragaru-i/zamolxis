@@ -226,6 +226,20 @@ describe("supervisorInstruction and repositoryChecks", () => {
         "A task whose files you cannot name is not ready",
       ])
         expect(prompt).toContain(fragment);
+      expect(prompt).not.toContain("Repository glossary");
+      const withGlossary = supervisorInstruction({
+        text: "Plan it",
+        conversation: [],
+        context: {
+          gitSha: "abc",
+          discoveredSources: [],
+          resolvedCapabilities: {},
+        } as unknown as RepositoryContext,
+        checks: found,
+        glossary: '- **Verifier:** checks a candidate ("Check it").',
+      });
+      expect(withGlossary).toContain("Repository glossary (CONTEXT.md)");
+      expect(withGlossary).toContain('checks a candidate ("Check it")');
       expect(repositoryChecks(join(dir, "missing"))).toEqual({
         scripts: [],
         verificationScripts: [],
