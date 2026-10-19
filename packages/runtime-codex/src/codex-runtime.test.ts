@@ -429,6 +429,27 @@ describe("Codex native lifecycle", () => {
     });
     await runtime.stop({ nativeSessionId: "native" });
   });
+  it("has the local model made ready before a thread starts", async () => {
+    const connection = new ControlledConnection();
+    const prepared: string[] = [];
+    const runtime = new CodexRuntime({
+      connect: () => connection,
+      stopTimeoutMs: 5,
+      now: () => 0,
+      local: {
+        id: "codex-local",
+        modelProvider: () => "lmstudio",
+        models: async () => [{ id: "qwen/qwen3.6-27b", displayName: "qwen", isDefault: true }],
+        prepare: async (model) => {
+          prepared.push(model);
+        },
+      },
+    });
+    await runtime.start({ ...input(), role: "supervisor", model: "qwen/qwen3.6-35b-a3b" });
+    expect(prepared).toEqual(["qwen/qwen3.6-35b-a3b"]);
+    expect(connection.request.mock.calls[0]?.[1]).toMatchObject({ model: "qwen/qwen3.6-35b-a3b" });
+    await runtime.stop({ nativeSessionId: "native" });
+  });
   it("reports the provider's reason when a turn fails", async () => {
     const h = harness();
     await h.runtime.start(input());
