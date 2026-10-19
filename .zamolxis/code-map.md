@@ -35,8 +35,9 @@ Where things live, by area. Agents start from these files. Keep it short: one li
 - Command loop (plans, runs, candidate commit, checks, publish): `packages/node-core/src/control-plane/driver.ts`
 - Planner and Home chat prompts and parsing: `packages/node-core/src/capabilities/supervisor.ts`, `packages/node-core/src/capabilities/orchestrator.ts`
 - Verification checks, lockfile update, acceptance verdict: `packages/node-core/src/verification/`
+- Code map and glossary given to agents: `packages/node-core/src/repository/code-map.ts`
 - Runtimes: `packages/runtime-codex/src`, `packages/runtime-claude/src`, `packages/runtime-local/src`; shared runtime types and secret redaction: `packages/runtime-core/src`
 
 ## Checks and docs
 - Whole check: `pnpm check` (lint, boundaries, typechecks, tests, build); tests sit next to the code (`*.test.ts(x)`) and in `tests/` for backend flows
-- Status and known gaps: `docs/alpha-status.md`; procedures: `docs/agent-runbook.md`
+- Status and known gaps: `docs/alpha-status.md`; procedures: `.agents/skills/`; pitfalls: `docs/agent-runbook.md`; terms: `CONTEXT.md`
