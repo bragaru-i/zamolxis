@@ -69,6 +69,8 @@ export function supervisorInstruction(input: {
   readonly checks: RepositoryChecks;
   // The repository's own map of where things live (.zamolxis/code-map.md), if any.
   readonly codeMap?: string | undefined;
+  // The repository's glossary (CONTEXT.md), if any.
+  readonly glossary?: string | undefined;
   // Owner instructions from the Supervisor profile (#48); prompt text only.
   readonly instructions?: string;
 }): string {
@@ -94,6 +96,13 @@ export function supervisorInstruction(input: {
       ? [
           "Repository map (.zamolxis/code-map.md): read it before exploring. Name the files it points to in task descriptions; search only for areas it does not cover.",
           input.codeMap,
+          "",
+        ]
+      : []),
+    ...(input.glossary
+      ? [
+          "Repository glossary (CONTEXT.md): use these names in task titles, descriptions and your reply; the owner's words are in quotes. Do not read the file again.",
+          input.glossary,
           "",
         ]
       : []),

@@ -9,7 +9,7 @@ export const NODE_VERSION_LIMIT = 64;
  * The code this Node runs: the short commit of the checkout its module lives in, with
  * "+dirty" when that checkout has uncommitted changes to tracked files, or "unknown"
  * outside a Git checkout. Reported with every heartbeat so Settings → Computers can show
- * whether a computer was restarted on the current main (runbook, "Updating the Node").
+ * whether a computer was restarted on the current main (skill `updating-the-node`).
  */
 export function nodeVersion(from = dirname(fileURLToPath(import.meta.url))): string {
   const git = (args: string[]) =>
