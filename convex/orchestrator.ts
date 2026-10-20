@@ -4,6 +4,7 @@ import { type MutationCtx, mutation, type QueryCtx, query } from "./_generated/s
 import { fail, load, requireNode, requireUser } from "./lib/access";
 import { agentChain, firstAvailable, MAX_BACKUPS, resolveAgentProfile } from "./lib/agentProfiles";
 import { enqueue } from "./lib/commands";
+import { HEARTBEAT_FRESH_MS } from "./lib/devices";
 import type { failureDetail } from "./lib/failure";
 import { explicitlyRequestsWork } from "./lib/orchestration";
 import { assertUsage, submitText, usageArgs } from "./supervisor";
@@ -33,7 +34,6 @@ const HISTORY_TEXT_LIMIT = 4000;
 const CONTEXT_LIMIT = 16000;
 const REPLY_LIMIT = 8000;
 const PROPOSAL_LIMIT = 4000;
-const HEARTBEAT_FRESH_MS = 45_000;
 const route = v.union(
   v.literal("answer"),
   v.literal("ask"),

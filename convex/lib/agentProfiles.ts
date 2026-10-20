@@ -2,6 +2,7 @@ import { redactSecrets } from "@zamolxis/runtime-core";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
 import { fail } from "./access";
+import { HEARTBEAT_FRESH_MS } from "./devices";
 export type AgentRole =
   | "orchestrator"
   | "supervisor"
@@ -27,7 +28,6 @@ export const ROLE_LABELS: Record<AgentRole, string> = {
 };
 /** The Alpha runtime when nothing is known about the owner's computers. */
 export const ALPHA_FALLBACK_RUNTIME = "codex";
-const ONLINE_WINDOW_MS = 45_000;
 
 /**
  * The runtime a role uses without an enabled profile: Codex when one of the owner's
@@ -66,7 +66,7 @@ export async function defaultRuntime(ctx: QueryCtx, ownerId: Id<"users">): Promi
     if (installations.length > 32) fail("LIMIT_EXCEEDED");
     const fresh =
       workstation.status === "online" &&
-      (workstation.lastHeartbeatAt ?? 0) > now - ONLINE_WINDOW_MS;
+      (workstation.lastHeartbeatAt ?? 0) > now - HEARTBEAT_FRESH_MS;
     for (const installation of installations) {
       if (
         installation.status !== "available" ||

@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { type MutationCtx, mutation, query } from "./_generated/server";
 import { fail, load, requireNode, requireUser } from "./lib/access";
+import { HEARTBEAT_FRESH_MS } from "./lib/devices";
 import { digest } from "./pairing";
 import { locationBusy } from "./repositories";
 
@@ -191,7 +192,7 @@ export const registerRepositories = mutation({
 // Onboarding progress (#45): how far the owner got from signing in to the first session,
 // derived only from stored state (pairing, credential, heartbeat, runtimes, repository
 // locations, sessions). Nothing is assumed or simulated.
-export const ONLINE_WINDOW_MS = 45_000;
+export const ONLINE_WINDOW_MS = HEARTBEAT_FRESH_MS;
 export type OnboardingState = "done" | "in_progress" | "needs_you" | "failed" | "upcoming";
 type StepId = "signin" | "access" | "pair" | "repositories" | "service" | "runtime" | "session";
 export interface OnboardingStep {

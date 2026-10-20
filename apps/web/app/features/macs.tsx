@@ -40,9 +40,12 @@ export function platformLabel(platform: string | undefined): string | undefined 
   return platform ? (PLATFORM_LABELS[platform] ?? platform) : undefined;
 }
 
+// Mirrors HEARTBEAT_FRESH_MS in convex/lib/devices.ts: the Node reports every minute.
+const HEARTBEAT_FRESH_MS = 150_000;
+
 export function deviceState(device: Device, now: number) {
   if (device.status === "revoked") return "revoked" as const;
-  return device.status === "online" && (device.lastHeartbeatAt ?? 0) > now - 45000
+  return device.status === "online" && (device.lastHeartbeatAt ?? 0) > now - HEARTBEAT_FRESH_MS
     ? ("online" as const)
     : ("offline" as const);
 }
