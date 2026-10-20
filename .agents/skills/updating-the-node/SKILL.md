@@ -11,7 +11,7 @@ CI deploys Convex and Vercel. The Node on each computer keeps its old code until
 
 ## Process
 
-1. Wait until the deploy run for that commit has finished (`gh run list --workflow deploy.yml --branch main`). A Node started on code the backend does not know exits on its first heartbeat with `Server Error` and crash-loops until the deploy lands.
+1. Wait until the deploy run for that commit has finished (`gh run list --workflow deploy.yml --branch main`). A Node started on code the backend does not know is refused with `Server Error` and logs `NODE_START_DEFERRED`, retrying every 15 s up to 10 minutes, offline meanwhile.
 2. Do it between Sessions: runs in flight resume (Codex `thread/resume`), but an approval held at restart is withdrawn and asked again.
 3. On that computer, in its canonical checkout: `pnpm zamolxis update`. It refuses local changes, another branch or a diverged checkout; fast-forwards to `origin/main`; installs from the lockfile; waits for `/api/bootstrap` to report the commit; restarts launchd/systemd and waits for a heartbeat.
 4. Manual path on the Mac (`/Users/Shared/projects/zamolxis`):
