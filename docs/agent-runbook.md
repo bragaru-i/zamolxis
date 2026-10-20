@@ -87,17 +87,22 @@ heartbeats). Production now runs on the owner's Mac:
   from a worktree (the canonical checkout's `.env.local` holds the cloud key).
 - **Settings:** set by the owner with `~/zamolxis-server/configure-secrets.sh` (new keys; the
   Google client is copied from the cloud project). Agents must not read or write them.
-- **Backups:** `npx convex export --path ~/zamolxis-server/backups/<date>.zip` with the
-  self-hosted env; the 2026-10-19 cloud export is there. Restore with `npx convex import --replace-all`.
+- **Backups:** daily at 03:30 (launchd `app.zamolxis.backup`, installed with
+  `node scripts/server-backup.mjs --install` from the canonical checkout; a missed run happens
+  on wake) into `~/zamolxis-server/backups/zamolxis-<date>.zip`, newest 30 kept, log
+  `backups/backup.log`. Back up now: `node scripts/server-backup.mjs`. The 2026-10-19 cloud
+  export is there too. Restore with `npx convex import --replace-all <archive>` and the
+  self-hosted env.
 - **Never** print `admin.env`, `.env` or `npx convex env list` (multi-line keys leak past filters).
 
 ## Inspecting production safely
 
 `node scripts/prod-inspect.mjs data <table> [limit] [fields]` prints recent rows
 (timestamps as ages, emails masked); `node scripts/prod-inspect.mjs logs [history]
-[seconds]` prints recent function logs. Both read the deploy key from
-`~/Library/Application Support/Zamolxis/prod-setup` (or `ZAMOLXIS_PROD_SETUP_DIR`) and
-never print it. Never print or commit the contents of that directory. Phone
+[seconds]` prints recent function logs. Both use the self-hosted server's
+`~/zamolxis-server/admin.env` when it exists (they print "Production: self-hosted"), else the
+cloud deploy key from `~/Library/Application Support/Zamolxis/prod-setup`, and never print
+a key. Never print or commit the contents of that directory. Phone
 debugging: if the phone makes no `profiles:viewer` / `auth:signIn` calls in the logs,
 the client never connected (see the phone sign-in note in `docs/alpha-status.md`).
 
