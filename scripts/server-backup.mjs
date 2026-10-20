@@ -94,7 +94,20 @@ function backUp() {
   );
 }
 
+/**
+ * A node path that survives upgrades: the first `node` on PATH outside Homebrew's versioned
+ * Cellar (e.g. /opt/homebrew/bin/node), else this process's own binary.
+ */
+function stableNode() {
+  for (const directory of (process.env.PATH ?? "").split(":")) {
+    const candidate = join(directory, "node");
+    if (directory && !directory.includes("/Cellar/") && existsSync(candidate)) return candidate;
+  }
+  return process.execPath;
+}
+
 function install() {
+  const node = stableNode();
   const xml = (text) => text.replaceAll("&", "&amp;").replaceAll("<", "&lt;");
   mkdirSync(dirname(plist), { recursive: true });
   mkdirSync(backups, { recursive: true, mode: 0o700 });
@@ -107,12 +120,12 @@ function install() {
   <key>Label</key><string>${LABEL}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${xml(process.execPath)}</string>
+    <string>${xml(node)}</string>
     <string>${xml(fileURLToPath(import.meta.url))}</string>
   </array>
   <key>WorkingDirectory</key><string>${xml(repository)}</string>
   <key>EnvironmentVariables</key>
-  <dict><key>PATH</key><string>${xml(dirname(process.execPath))}:/usr/bin:/bin:/usr/sbin:/sbin</string></dict>
+  <dict><key>PATH</key><string>${xml(dirname(node))}:/usr/bin:/bin:/usr/sbin:/sbin</string></dict>
   <key>StartCalendarInterval</key><dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>30</integer></dict>
   <key>StandardOutPath</key><string>${xml(join(backups, "backup.log"))}</string>
   <key>StandardErrorPath</key><string>${xml(join(backups, "backup.log"))}</string>
