@@ -31,7 +31,7 @@ import {
 } from "@zamolxis/runtime-codex";
 import { RuntimeRegistry } from "@zamolxis/runtime-core";
 import { LOCAL_RUNTIME_ID } from "@zamolxis/runtime-local";
-import { ConvexHttpClient } from "convex/browser";
+import { ConvexClient, ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
 import { claudeSignedIn, findClaude } from "./claude";
 import { codexSignedIn, findCodex } from "./codex";
@@ -50,7 +50,15 @@ import {
 } from "./local-model";
 import { execLms, LocalModelSwitch, lmsPath } from "./local-switch";
 import { nodeVersion } from "./node-version";
-import { configDirectory, configPath, pause, readConfig } from "./setup";
+import { configDirectory, configPath, readConfig } from "./setup";
+import {
+  BUSY_FOR_MS,
+  BUSY_PAUSE_MS,
+  HEARTBEAT_INTERVAL_MS,
+  IDLE_PAUSE_MS,
+  retryDelay,
+  Wake,
+} from "./wake";
 
 const pathIndex = process.argv.indexOf("--config");
 const config = readConfig(pathIndex >= 0 ? process.argv[pathIndex + 1] : configPath());
@@ -222,15 +230,24 @@ try {
   let stopping = false;
   let heartbeatBusy = false;
   let heartbeats: ReturnType<typeof setInterval> | undefined;
+  // The device token lasts 15 minutes; it is renewed only when 5 or fewer are left, not on
+  // every heartbeat, because each renewal is two more backend calls (#169).
+  let auth: { token: string; expiresAt: number } | undefined;
+  const deviceToken = async (force = false): Promise<string> => {
+    if (!force && auth && auth.expiresAt - Date.now() > 5 * 60_000) return auth.token;
+    const token = (await client.action(makeFunctionReference<"action">("deviceTokens:refresh"), {
+      credential: config.credential,
+    })) as { token: string; workstationId: string; expiresAt: number };
+    if (token.workstationId !== config.workstationId) throw new Error("DEVICE_IDENTITY_MISMATCH");
+    auth = { token: token.token, expiresAt: token.expiresAt };
+    client.setAuth(token.token);
+    return token.token;
+  };
   const heartbeat = async () => {
     if (heartbeatBusy) return;
     heartbeatBusy = true;
     try {
-      const token = (await client.action(makeFunctionReference<"action">("deviceTokens:refresh"), {
-        credential: config.credential,
-      })) as { token: string; workstationId: string };
-      if (token.workstationId !== config.workstationId) throw new Error("DEVICE_IDENTITY_MISMATCH");
-      client.setAuth(token.token);
+      await deviceToken();
       await client.mutation(makeFunctionReference<"mutation">("node:heartbeat"), {
         workstationId: config.workstationId,
         instanceId: identity.instanceId,
@@ -283,16 +300,44 @@ try {
       heartbeatBusy = false;
     }
   };
+  const wake = new Wake();
   for (const signal of ["SIGINT", "SIGTERM"] as const)
     process.once(signal, () => {
       stopping = true;
       for (const child of children) child.kill();
+      wake.wake();
     });
+  let live: ConvexClient | undefined;
   try {
-    await heartbeat();
+    // A backend that refuses the Node (disabled, unreachable, deploy in progress) is
+    // retried with growing pauses instead of exiting, so launchd/systemd do not restart
+    // the Node every few seconds (#169).
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await heartbeat();
+        break;
+      } catch (error) {
+        if (stopping) throw error;
+        const delay = retryDelay(attempt);
+        console.error(
+          `NODE_START_DEFERRED: ${error instanceof Error ? error.message : String(error)}; next attempt in ${Math.round(delay / 1000)} s`,
+        );
+        await wake.wait(delay);
+      }
+    }
     heartbeats = setInterval(() => {
       void heartbeat().catch(() => console.error("HEARTBEAT_FAILED"));
-    }, 15_000);
+    }, HEARTBEAT_INTERVAL_MS);
+    // Live subscription to this computer's pending commands: new work, Stop, messages and
+    // approvals wake the loops below at once instead of being polled for (#169).
+    live = new ConvexClient(config.convexUrl);
+    live.setAuth(({ forceRefreshToken }) => deviceToken(forceRefreshToken).catch(() => null));
+    live.onUpdate(
+      makeFunctionReference<"query">("node:listPending"),
+      { workstationId: config.workstationId },
+      () => wake.wake(),
+      () => console.error("NODE_SUBSCRIPTION_FAILED"),
+    );
     const repositories = new RepositoryRegistry(store, grant);
     for (const repository of config.repositories) {
       if (!repository.repositoryId) throw new Error("REPOSITORY_REGISTRATION_MISSING");
@@ -347,6 +392,13 @@ try {
     // reattaches the runs a previous Node process left unfinished (resumed from the
     // persistent CODEX_HOME above, or reported lost).
     driver.setRepositoryDiscovery(new RepositoryDiscovery(workspaces));
+    // Quick while work happens (a run streams, a pass found something, a wake came in the
+    // last minute); otherwise the loops rest until a wake or IDLE_PAUSE_MS.
+    let lastWork = Date.now();
+    const pauseFor = () =>
+      driver.active || Date.now() - Math.max(lastWork, wake.lastWakeAt) < BUSY_FOR_MS
+        ? BUSY_PAUSE_MS
+        : IDLE_PAUSE_MS;
     const control = (async () => {
       while (!stopping) {
         try {
@@ -354,7 +406,8 @@ try {
         } catch {
           console.error("NODE_CONTROL_FAILED");
         }
-        await pause(1000);
+        // Stop, messages and approvals arrive as commands, so they wake this loop.
+        await wake.wait(driver.active ? 5_000 : IDLE_PAUSE_MS);
       }
     })();
     while (!stopping) {
@@ -362,15 +415,16 @@ try {
         await client.mutation(makeFunctionReference<"mutation">("supervisor:dispatch"), {
           workstationId: config.workstationId,
         });
-        await driver.tick();
+        if (await driver.tick()) lastWork = Date.now();
       } catch {
         console.error("NODE_RECONCILIATION_OR_DELIVERY_REQUIRED");
       }
-      await pause(1000);
+      await wake.wait(pauseFor());
     }
     await control;
   } finally {
     if (heartbeats) clearInterval(heartbeats);
+    await live?.close();
     for (const child of children) child.kill("SIGKILL");
     store.close();
   }

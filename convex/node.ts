@@ -11,6 +11,7 @@ import { mutation, query } from "./_generated/server";
 import { applyApprovalEvent, expireRunApprovals } from "./approvals";
 import { failPublish, publishRecorded } from "./integration";
 import { bounded, fail, load, nodeRun, requireNode } from "./lib/access";
+import { deviceOnline } from "./lib/devices";
 import { boundFailure, failureDetail } from "./lib/failure";
 import { decideVerification, refreshSession } from "./lib/lifecycle";
 import { canonicalRepository } from "./lib/repositories";
@@ -821,7 +822,7 @@ export const health = query({
       .take(33);
     if (runtimes.length > 32) fail("LIMIT_EXCEEDED");
     return {
-      online: device.status === "online" && (device.lastHeartbeatAt ?? 0) > Date.now() - 45_000,
+      online: deviceOnline(device),
       runtimeAvailable: runtimes.some(
         (runtime) => runtime.status === "available" && runtime.capabilities.includes("start"),
       ),

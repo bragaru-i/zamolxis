@@ -48,6 +48,7 @@ import type {
   StoredCommand,
   StoredRuntimeSession,
 } from "../persistence/local-state";
+import { codeMapSection, glossarySection, readCodeMap, readGlossary } from "../repository/code-map";
 import type { RuntimeManager } from "../runtime/runtime-manager";
 import { type TraceBatch, TraceRecorder } from "../trace/recorder";
 import {
@@ -59,10 +60,9 @@ import {
   workspaceStep,
 } from "../trace/steps";
 import { SupervisorLog, type SupervisorLogBatch } from "../trace/supervisor-log";
-import { type CheckEvidence, runVerificationChecks } from "../verification/checks";
 import { acceptanceEvidence } from "../verification/acceptance";
+import { type CheckEvidence, runVerificationChecks } from "../verification/checks";
 import { updateLockfile } from "../verification/lockfile";
-import { codeMapSection, glossarySection, readCodeMap, readGlossary } from "../repository/code-map";
 import type { WorkspaceManager } from "../workspace/workspace-manager";
 import { PROOF_MAX_FILES, type ProofFile, takeChangedImages, takeProof } from "./proof";
 
@@ -499,7 +499,7 @@ export class ControlPlaneDriver {
   // Runs followed by their recovery, and those a message or approval reached meanwhile.
   readonly #recovering = new Set<string>();
   readonly #nudged = new Set<string>();
-  #flushing: Promise<void> | undefined;
+  #flushing: Promise<number> | undefined;
   #discovery: RepositoryDiscovery | undefined;
   setRepositoryDiscovery(discovery: RepositoryDiscovery): void {
     this.#discovery = discovery;
@@ -513,11 +513,15 @@ export class ControlPlaneDriver {
     private readonly workstationId: string,
     private readonly options: ControlPlaneDriverOptions = {},
   ) {}
-  async tick(): Promise<void> {
+  /**
+   * One pass: deliver, reattach, run what is pending. Returns whether there was anything
+   * to do, so the Node can wait longer between passes when there was not.
+   */
+  async tick(): Promise<boolean> {
     if (this.#busy) throw new Error("DRIVER_BUSY");
     this.#busy = true;
     try {
-      await this.flush();
+      const delivered = await this.flush();
       const listed = await this.transport.listPending();
       // Runs a previous Node process left unfinished are reattached in the background.
       await this.#recoverRuns(listed);
@@ -546,9 +550,14 @@ export class ControlPlaneDriver {
       );
       const failure = results.find((result) => result.status === "rejected");
       if (failure?.status === "rejected") throw failure.reason;
+      return delivered > 0 || listed.length > 0;
     } finally {
       this.#busy = false;
     }
+  }
+  /** Whether a run streams, a plan is being made or a Home chat reply is being written. */
+  get active(): boolean {
+    return this.#streaming.size > 0 || this.#planning.size > 0 || this.#answers.size > 0;
   }
   /**
    * Stop, message and approval commands must reach runs while tick() is busy streaming.
@@ -1808,22 +1817,25 @@ export class ControlPlaneDriver {
     }
     throw new Error("RECONCILIATION_REQUIRED");
   }
-  async flush(): Promise<void> {
+  /** Delivers the outbox in order; resolves to how many deliveries were sent. */
+  async flush(): Promise<number> {
     if (this.#flushing) return this.#flushing;
     this.#flushing = this.flushOrdered();
     try {
-      await this.#flushing;
+      return await this.#flushing;
     } finally {
       this.#flushing = undefined;
     }
   }
-  private async flushOrdered(): Promise<void> {
+  private async flushOrdered(): Promise<number> {
+    let delivered = 0;
     for (;;) {
       const pending = this.store.listPendingEvents(100, "control-plane.delivery");
-      if (!pending.length) return;
+      if (!pending.length) return delivered;
       for (const event of pending) {
         await this.transport.deliver(event.payload as Delivery);
         this.store.acknowledgeEvent(event.eventId);
+        delivered++;
       }
     }
   }

@@ -523,8 +523,7 @@ module aliases exist only when the variable is set.
   computers plus `watch` polling every second). Self-hosted Convex in Docker on the Mac,
   reachable through a Cloudflare Tunnel at `convex.bragaru.cc` / `convex-site.bragaru.cc`;
   the cloud data (3,389 documents) was exported and imported; new sign-in and device keys.
-  See the runbook section. **Gaps:** the Mac must stay on; the chatty Node polling still needs
-  quieting; backups are manual.
+  See the runbook section. **Gaps:** the Mac must stay on; backups are manual. Node polling: see #169 below.
 
 - **Agents get context; the Checker judges the request (2026-10-08, #162, #163):** the
   Node reads the repository's `.zamolxis/code-map.md` (area -> files, bounded, redacted;
@@ -537,6 +536,18 @@ module aliases exist only when the variable is set.
   their last output lines in the evidence, so Repair sees the real error. Builders are told
   which package scripts the Verifier will run. **Gap:** "Checks only" workflows still skip
   the review; the owner's "Mac > New Local" uses it.
+
+- **Node polling quieted (2026-10-20, #169):** the cloud free plan ran out because an idle
+  Node called Convex about 3 times a second plus a heartbeat every 15 s (about 8M calls a month
+  per computer), and a refused Node exited so launchd restarted it every few seconds (about
+  35,000 times). Now a live subscription to the computer's pending commands wakes the Node
+  (`apps/node/src/wake.ts`); idle, it checks every 2 minutes and reports every minute, renewing
+  its 15-minute token only when 5 minutes are left (about 3 calls a minute instead of ~180);
+  quick (1 s) only while work happens. A refused start waits 15 s, doubling to 10 minutes.
+  "Online" means a heartbeat in the last 150 s (`HEARTBEAT_FRESH_MS`, one constant; the web app
+  mirrors it). Verified with tests and the real-Codex acceptance; calls per day and wake latency
+  on the self-hosted backend still to be measured. `scripts/prod-inspect.mjs` still reads the old
+  cloud deployment, not the self-hosted one.
 
 - **Glossary and skills (2026-10-19, #165):** `CONTEXT.md` names each concept once with the
   owner's word for it; the Node gives a repository's root `CONTEXT.md` (bounded to 8,000

@@ -2,6 +2,7 @@ import { convexTest, type TestConvex } from "convex-test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../convex/_generated/api";
 import type { Id } from "../convex/_generated/dataModel";
+import { HEARTBEAT_FRESH_MS } from "../convex/lib/devices";
 import schema from "../convex/schema";
 import { seedHuman } from "./fixtures/auth";
 
@@ -190,7 +191,7 @@ describe("onboarding progress", () => {
       instanceId: "instance-1",
       runtimeCapabilities: codex,
     });
-    vi.setSystemTime(Date.now() + 60_000);
+    vi.setSystemTime(Date.now() + HEARTBEAT_FRESH_MS + 1_000);
     const progress = await progressOf(user);
     expect(states(progress).service).toBe("failed");
     expect(detail(progress, "service")).toBe(
