@@ -523,7 +523,8 @@ module aliases exist only when the variable is set.
   computers plus `watch` polling every second). Self-hosted Convex in Docker on the Mac,
   reachable through a Cloudflare Tunnel at `convex.bragaru.cc` / `convex-site.bragaru.cc`;
   the cloud data (3,389 documents) was exported and imported; new sign-in and device keys.
-  See the runbook section. **Gaps:** the Mac must stay on; backups are manual. Node polling: see #169 below.
+  See the runbook section. Daily backups since 2026-10-20 (runbook). **Gap:** the Mac must stay on; a restore
+  from a backup has not been tried. Node polling: see #169 below.
 
 - **Agents get context; the Checker judges the request (2026-10-08, #162, #163):** the
   Node reads the repository's `.zamolxis/code-map.md` (area -> files, bounded, redacted;
